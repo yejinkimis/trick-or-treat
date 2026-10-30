@@ -633,3 +633,29 @@ test('held keys and composing keys leave the creation notice visible', async () 
   assert.equal(g.run('document.captureListeners.keydown'), undefined);
   assert.equal(g.run('document.captureListeners.click'), undefined);
 });
+
+test('presence keeps one latest live session per account and drops silent ones', () => {
+  const { run } = game();
+  const peers = run(`livePresence({
+    a: { old: { x: 1, y: 1, at: 1000 }, tab1: { x: 2, y: 2, at: 95000 }, tab2: { x: 3, y: 3, at: 99000 } },
+    b: { gone: { x: 4, y: 4, at: 30000 } },
+  }, 100000)`);
+  assert.deepEqual(JSON.parse(JSON.stringify(peers)), [{ by: 'a', id: 'tab2', presence: { x: 3, y: 3, at: 99000 } }]);
+});
+
+test('an idle player still refreshes presence on the heartbeat', () => {
+  const { run, setNow } = game();
+  run(`var sent = 0; S.room = { presence: async () => { sent += 1; } }; presenceDirty = false; lastPresence = 0;`);
+  setNow(1000); run('sendPresence()');
+  assert.equal(run('sent'), 0);
+  setNow(20000); run('sendPresence()');
+  assert.equal(run('sent'), 1);
+});
+
+test('own costume survives until the village snapshot arrives', () => {
+  const { run } = game();
+  run(`S.me = 'u1'; S.players = { u1: { ...blankPlayer(), nick: '나', costume: 'cat' } }; S.firebasePlayers = {}; applyFirebasePlayers();`);
+  assert.equal(run('myCostume()'), 'cat');
+  run(`S.firebasePlayers = { u1: { ...blankPlayer(), nick: '나', costume: 'witch' } }; applyFirebasePlayers();`);
+  assert.equal(run('myCostume()'), 'witch');
+});

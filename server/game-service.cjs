@@ -98,7 +98,11 @@ async function action(authorization, input) {
         if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
-        if (prior.round === round && !prior.used && now - (prior.createdAt || 0) < STALE_CHALLENGE_MS) fail('진행 중인 노크를 먼저 마쳐 주세요.');
+        const priorAge = now - (prior.createdAt || 0);
+        const priorIsActive = prior.expiresAt ? prior.expiresAt > now : priorAge < STALE_CHALLENGE_MS;
+        if (prior.round === round && !prior.used && priorIsActive) {
+          fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
+        }
         const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
           ? { ...prior.nextLevelByHost } : {};
         const level = Math.min(MAX_LEVEL, Math.max(1, Number(nextLevelByHost[input.host]) || 1));

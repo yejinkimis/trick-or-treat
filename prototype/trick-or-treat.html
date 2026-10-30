@@ -751,6 +751,19 @@ const typingInField = (e) => e.target instanceof HTMLInputElement || e.target in
 const isImeComposing = (e) => e.isComposing || e.keyCode === 229;
 
 let lastPresence = 0, presenceDirty = true;
+const PRESENCE_HEARTBEAT_MS = 20000, PRESENCE_STALE_MS = 60000;
+// 탭마다 접속 기록이 생기므로 계정별로 가장 최근 기록 하나만 남기고, 신호가 끊긴 기록은 버린다.
+function livePresence(tree, serverNow) {
+  const latest = new Map();
+  for (const [by, sessions] of Object.entries(tree || {})) {
+    for (const [id, presence] of Object.entries(sessions || {})) {
+      const at = Number(presence?.at) || 0;
+      if (serverNow - at > PRESENCE_STALE_MS) continue;
+      if (!latest.has(by) || at > latest.get(by).presence.at) latest.set(by, { by, id, presence: { ...presence, at } });
+    }
+  }
+  return [...latest.values()];
+}
 function update(dt) {
   const p = S.pos;
   let vx = 0, vy = 0;
@@ -901,6 +914,7 @@ function botSpot(g) {
 }
 
 function sendPresence() {
+  if (performance.now() - lastPresence >= PRESENCE_HEARTBEAT_MS) presenceDirty = true;
   if (!S.room || !presenceDirty || performance.now() - lastPresence < (S.mode === 'firebase' ? 250 : 90)) return;
   presenceDirty = false;
   lastPresence = performance.now();
@@ -1102,7 +1116,7 @@ function draw() {
   const now = Date.now();
   for (const g of ghosts.values()) actors.push({ a: g, key: g.c, name: g.by ? nameOf(g.by) : '이웃', color: '#c3b4da', fx: g.by ? activeFx(g.by) : null, stun: g.stunUntil > now, basket: hasBasket(g.by), said: bubbleOf(g.bot ? g.by : g.peer) });
   if (S.npc) actors.push({ a: { ...S.npc, f: 1, m: false, walk: 0 }, key: S.npc.c, name: '' });
-  actors.push({ a: { ...S.pos, m: S.pos.moving }, key: myCostume() || 'plain', name: '나', color: '#ffd166', fx: activeFx(S.me), stun: S.stunUntil > now, basket: hasBasket(S.me), said: bubbleOf('me') });
+  if (S.me) actors.push({ a: { ...S.pos, m: S.pos.moving }, key: myCostume() || 'plain', name: '나', color: '#ffd166', fx: activeFx(S.me), stun: S.stunUntil > now, basket: hasBasket(S.me), said: bubbleOf('me') });
   actors.sort((p, q) => p.a.y - q.a.y);
   for (const it of actors) drawActor(it.a, it.key, it.name, it.color, it.fx, it.stun, it.basket, it.said);
   for (const s of S.swings) drawSpr(TILE_SPR.hammer, s.x - 4, s.y - 32 + (s.t / 0.4) * 10);
@@ -2269,9 +2283,12 @@ async function saveMural() {
 
 function applyFirebasePlayers() {
   const round = S.event?.id || 'practice';
-  S.players = Object.fromEntries(Object.entries(S.firebasePlayers || {}).map(([uid, player]) => [uid, {
+  const next = Object.fromEntries(Object.entries(S.firebasePlayers || {}).map(([uid, player]) => [uid, {
     ...player, decor: Object.fromEntries(Object.entries(player.decor || {}).filter(([, item]) => item.round === round).map(([key, item]) => [key, item.at])),
   }]));
+  // 마을 정보가 오기 전에도 로그인 때 받은 내 분장을 유지해 기본 캐릭터가 잠깐 보이지 않게 한다.
+  if (S.me && !next[S.me] && S.players[S.me]) next[S.me] = S.players[S.me];
+  S.players = next;
   lastPeers = null;
   render();
 }
@@ -2281,7 +2298,7 @@ async function connectFirebaseGame(uid) {
   const a = S.account, fs = a.firestoreSdk, rt = a.databaseSdk;
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
-  S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = {};
+  S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
   const stops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
@@ -2319,12 +2336,24 @@ async function connectFirebaseGame(uid) {
       presenceDirty = true;
     } catch { toast('접속 상태를 저장하지 못했어요. 새로고침해 주세요.'); }
   }));
-  stops.push(rt.onValue(rt.ref(a.database, 'presence'), (snapshot) => {
-    peers = Object.entries(snapshot.val() || {}).flatMap(([by, sessions]) => Object.entries(sessions).map(([id, presence]) => ({
+  let presenceTree = {}, serverOffset = 0;
+  const serverNow = () => Date.now() + serverOffset;
+  const refreshPeers = () => {
+    peers = livePresence(presenceTree, serverNow()).map(({ by, id, presence }) => ({
       by, peer: `${by}:${id}`, sameTab: `${by}:${id}` === myPeer, isMe: by === uid, kind: 'viewer',
       presence: { ...presence, c: S.players[by]?.costume || 'plain' },
-    })));
+    }));
     syncPeers();
+  };
+  const sweep = setInterval(refreshPeers, 10000);
+  stops.push(() => clearInterval(sweep));
+  stops.push(rt.onValue(rt.ref(a.database, '.info/serverTimeOffset'), (snapshot) => { serverOffset = Number(snapshot.val()) || 0; }));
+  stops.push(rt.onValue(rt.ref(a.database, 'presence'), (snapshot) => {
+    presenceTree = snapshot.val() || {};
+    for (const [id, presence] of Object.entries(presenceTree[uid] || {})) {
+      if (id !== sid && serverNow() - (Number(presence?.at) || 0) > PRESENCE_STALE_MS) void rt.remove(rt.ref(a.database, `presence/${uid}/${id}`)).catch(() => {});
+    }
+    refreshPeers();
     presenceReady();
   }, (error) => { toast('실시간 접속 권한을 확인해 주세요.'); presenceFailed(error); }));
   const seen = new Set(), joined = Date.now();
