@@ -696,6 +696,48 @@ test('own costume survives until the village snapshot arrives', () => {
   assert.equal(run('myCostume()'), 'witch');
 });
 
+function roofSaves(g) {
+  g.players();
+  g.run(`S.mode = 'firebase'; S.firebasePlayers = {}; S.ownPlayer = { ...S.players.me, door: 1 };
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } } };
+    const sent = [], answers = [];
+    accountRequest = (url, options) => new Promise((resolve, reject) => {
+      sent.push(JSON.parse(options.body)); answers.push({ resolve, reject });
+    });
+    const serverSaw = (door) => { S.ownPlayer = { ...S.ownPlayer, door }; applyFirebasePlayers(); };`);
+}
+
+test('quick roof changes keep the last color while older saves come back, and send only the last one', async () => {
+  const g = game(); roofSaves(g);
+  g.run('saveMe({ door: 2 })');
+  await tick();
+  g.run('saveMe({ door: 3 }); saveMe({ door: 5 }); var last = queuedProfile.done;');
+  assert.equal(g.run('JSON.stringify(sent)'), '[{"door":2}]');
+  g.run('serverSaw(2)');
+  assert.equal(g.run('S.players.me.door'), 5);
+  g.run('answers[0].resolve({ profile: { door: 2 } })');
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(g.run('JSON.stringify(sent)'), '[{"door":2},{"door":5}]');
+  g.run('serverSaw(2)');
+  assert.equal(g.run('S.players.me.door'), 5);
+  g.run('answers[1].resolve({ profile: { door: 5 } })');
+  await g.run('last');
+  g.run('serverSaw(5)');
+  assert.equal(g.run('S.players.me.door'), 5);
+  assert.equal(g.run('Object.keys(unsavedProfile.fields).length'), 0);
+});
+
+test('a failed roof save goes back to the color the server has', async () => {
+  const g = game(); roofSaves(g);
+  g.run(`saveMe({ door: 4 }); var failed = queuedProfile.done.catch(() => {});`);
+  await tick();
+  assert.equal(g.run('S.players.me.door'), 4);
+  g.run(`answers[0].reject(new Error('offline'))`);
+  await g.run('failed');
+  await tick();
+  assert.equal(g.run('S.players.me.door'), 1);
+});
+
 function village(g) {
   g.run(`S.mode = 'firebase'; S.me = 'me'; S.village = 1;
     S.villages = { 1: { n: 1, name: '태초마을' }, 2: { n: 2, name: '구리마을' }, 3: { n: 3, name: '안드로이드 제국' } };
