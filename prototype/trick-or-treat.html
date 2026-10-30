@@ -1506,7 +1506,7 @@ function saveMe(patch) {
 }
 
 let typing = null, advanceFn = null;
-function typeText(el, text, signal) {
+function typeText(el, text, signal, charMs = 32) {
   return new Promise((done) => {
     if (signal?.aborted) { done(); return; }
     if (reduceMotion()) { el.textContent = text; done(); return; }
@@ -1515,7 +1515,7 @@ function typeText(el, text, signal) {
       i += 1;
       el.textContent = text.slice(0, i);
       if (i >= text.length) finish();
-    }, 32);
+    }, charMs);
     function finish() {
       clearInterval(timer);
       signal?.removeEventListener('abort', finish);
@@ -1719,6 +1719,7 @@ function openModal(id) {
 }
 function closeModal(id) { $(`#${id}`).hidden = true; canvas.focus({ preventScroll: true }); }
 
+const INTRO_SPEED = 0.8;
 const INTRO_LINES = ['10월 31일, 할로윈 밤.', '마을 호박밭 한가운데서 호박 하나가 들썩거려요.', '쩍! 호박이 갈라지더니 새 주민이 태어났어요.'];
 let introController = null;
 function showNameForm() {
@@ -1755,12 +1756,12 @@ async function startIntro() {
       void pic.offsetWidth;
       pic.classList.add('hatch');
     }
-    await typeText(text, line, signal);
+    await typeText(text, line, signal, 32 / INTRO_SPEED);
     if (signal.aborted) return;
-    await wait(reduceMotion() ? 200 : 650, signal);
+    await wait((reduceMotion() ? 200 : 650) / INTRO_SPEED, signal);
     if (signal.aborted) return;
   }
-  await typeText(text, '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?', signal);
+  await typeText(text, '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?', signal, 32 / INTRO_SPEED);
   if (signal.aborted) return;
   introController = null;
   showNameForm();

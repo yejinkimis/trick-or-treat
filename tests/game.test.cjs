@@ -352,7 +352,7 @@ test('intro skip cancels active typewriter and goes straight to name entry', asy
   const g = game({ reducedMotion: false });
   g.run('S.me = "me"; S.names.me = "테스터"');
   const intro = g.run('startIntro()');
-  g.fire(32);
+  g.fire(40);
   assert.equal(g.elements.get('in-form').hidden, true);
   assert.ok([...g.timers.values()].some((t) => t.interval));
   // 실제 버튼의 위임 핸들러를 통해 건너뛴다.
@@ -370,7 +370,7 @@ test('intro skip cancels active typewriter and goes straight to name entry', asy
 test('intro skip cancels between-line wait and remains safe on repeat clicks', async () => {
   const g = game(); g.run('S.me = "me"');
   const intro = g.run('startIntro()'); await tick();
-  assert.ok([...g.timers.values()].some((t) => t.delay === 200));
+  assert.ok([...g.timers.values()].some((t) => t.delay === 250));
   g.run('skipIntro(); skipIntro()'); await intro;
   assert.equal(g.timers.size, 0);
   assert.equal(g.elements.get('in-form').hidden, false);
