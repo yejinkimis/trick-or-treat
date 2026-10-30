@@ -1543,20 +1543,24 @@ async function waitForToasts() {
 let writes = Promise.resolve();
 let accountWrites = Promise.resolve();
 function saveAccountProfile(patch) {
+  const user = S.account?.auth?.currentUser;
+  const uid = S.me;
+  if (!user || user.uid !== uid) return Promise.resolve();
   const allowed = {};
   for (const key of ['costume', 'door', 'guideSeen', 'introSeen']) {
     if (Object.hasOwn(patch, key)) allowed[key] = patch[key];
   }
-  if (!Object.keys(allowed).length) return;
-  accountWrites = accountWrites.then(async () => {
-    const user = S.account?.auth?.currentUser;
-    if (!user) throw new Error('Signed out');
+  if (!Object.keys(allowed).length) return Promise.resolve();
+  accountWrites = accountWrites.catch(() => {}).then(async () => {
+    if (S.account?.auth?.currentUser?.uid !== uid) throw new Error('Account changed');
     const token = await user.getIdToken();
     const { profile } = await accountRequest('/api/auth/profile', {
       method: 'PATCH', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(allowed),
     });
-    S.accountProfile = { ...S.accountProfile, ...profile };
-  }).catch(() => toast('캐릭터 정보를 저장하지 못했어요. 다시 로그인해 주세요.'));
+    if (S.me === uid) S.accountProfile = { ...S.accountProfile, ...profile };
+  });
+  void accountWrites.catch(() => toast('캐릭터 정보를 저장하지 못했어요. 다시 시도해 주세요.'));
+  return accountWrites;
 }
 function saveMe(patch) {
   if (S.readOnly) return;
@@ -2162,9 +2166,14 @@ async function loadAccountClient() {
 
 async function enterAccount(uid, profile) {
   if (!profile || profile.uid !== uid) throw new Error('계정 정보를 확인할 수 없어요. 다시 로그인해 주세요.');
+  keys.clear();
+  ghosts.clear();
   Object.assign(S, {
     mode: 'account', me: uid, isOwner: false, readOnly: false,
     accountProfile: profile, event: null, bonus: {}, ledger: null, hintHidden: false,
+    pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false },
+    target: null, near: null, nearPumpkin: null, nearPeer: null, floats: [],
+    stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [], stuck: 0,
   });
   S.names = { [uid]: profile.nick, p1: '연습용 집 1', p2: '연습용 집 2' };
   S.players = {
@@ -2184,7 +2193,9 @@ async function enterAccount(uid, profile) {
 async function logoutAccount() {
   if (S.mode !== 'account') return;
   if (S.busy) { toast('진행 중인 안내를 마친 뒤 로그아웃할 수 있어요.'); return; }
+  S.busy = true;
   try {
+    await saveAccountProfile(S.players[S.me]);
     await S.account.authSdk.signOut(S.account.auth);
     for (const id of MODALS) if (id !== 'auth') $(`#${id}`).hidden = true;
     S.me = null;
@@ -2196,7 +2207,9 @@ async function logoutAccount() {
     render();
     showAuthGate();
   } catch {
-    toast('로그아웃하지 못했어요. 잠시 뒤 다시 해 주세요.');
+    toast('저장과 로그아웃을 마치지 못했어요. 잠시 뒤 다시 해 주세요.');
+  } finally {
+    S.busy = false;
   }
 }
 
@@ -2259,8 +2272,12 @@ async function boot() {
       await enterAccount(user.uid, profile);
     } else showAuthGate();
   } catch {
-    showAuthGate('계정 연결을 불러오지 못했어요. 잠시 뒤 새로고침해 주세요.');
-    $('#auth-submit').disabled = true;
+    if (S.account) {
+      await S.account.authSdk.signOut(S.account.auth).catch(() => {});
+      showAuthGate('자동 로그인을 마치지 못했어요. 다시 로그인해 주세요.');
+    } else {
+      showAuthGate('계정 연결을 불러오지 못했어요. 잠시 뒤 새로고침해 주세요.');
+    }
   }
 }
 

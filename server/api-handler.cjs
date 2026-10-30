@@ -2,6 +2,13 @@ const { AuthError } = require('./errors.cjs');
 
 const MAX_BODY_BYTES = 8 * 1024;
 
+function objectBody(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AuthError(400, 'invalid-json', '요청 내용을 확인해 주세요.');
+  }
+  return value;
+}
+
 async function requestBody(req) {
   const contentType = req.headers?.['content-type'] || '';
   if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
@@ -10,11 +17,11 @@ async function requestBody(req) {
   if (req.body !== undefined) {
     if (typeof req.body === 'string' || Buffer.isBuffer(req.body)) {
       if (Buffer.byteLength(req.body) > MAX_BODY_BYTES) throw new AuthError(413, 'body-too-large', '요청이 너무 커요.');
-      try { return JSON.parse(req.body.toString()); }
+      try { return objectBody(JSON.parse(req.body.toString())); }
       catch { throw new AuthError(400, 'invalid-json', '요청을 확인해 주세요.'); }
     }
     if (Buffer.byteLength(JSON.stringify(req.body)) > MAX_BODY_BYTES) throw new AuthError(413, 'body-too-large', '요청이 너무 커요.');
-    return req.body;
+    return objectBody(req.body);
   }
 
   const chunks = [];
@@ -24,7 +31,7 @@ async function requestBody(req) {
     if (size > MAX_BODY_BYTES) throw new AuthError(413, 'body-too-large', '요청이 너무 커요.');
     chunks.push(chunk);
   }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  try { return objectBody(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
   catch { throw new AuthError(400, 'invalid-json', '요청을 확인해 주세요.'); }
 }
 

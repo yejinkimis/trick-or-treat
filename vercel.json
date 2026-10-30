@@ -1,5 +1,8 @@
 {
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
-  "framework": null
+  "framework": null,
+  "redirects": [
+    { "source": "/prototype/trick-or-treat.html", "destination": "/", "permanent": false }
+  ]
 }

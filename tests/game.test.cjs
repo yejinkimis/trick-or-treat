@@ -87,6 +87,54 @@ test('HTML contains every static script target and JavaScript loads', () => {
   for (const [, id] of source.matchAll(/\$\(['"]#([\w-]+)['"]\)/g)) assert.ok(g.elements.has(id), id);
 });
 
+test('queued profile saves cannot change their destination after an account switch', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'account'; S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'me-token' } } };
+    accountRequest = async () => { throw new Error('A stale save must not reach the API'); };
+    const pending = saveAccountProfile({ costume: 'witch' });
+    S.me = 'other'; S.account.auth.currentUser = { uid: 'other' };`);
+  await assert.rejects(g.run('pending'), /Account changed/);
+});
+
+test('logout saves the latest profile before ending the Firebase session', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'account'; const calls = [];
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'me-token' } },
+      authSdk: { signOut: async () => { calls.push('signout'); } } };
+    accountRequest = async (url, options) => {
+      calls.push(JSON.parse(options.body).costume);
+      return { profile: { uid: 'me' } };
+    };`);
+  await g.run('logoutAccount()');
+  assert.equal(g.run('JSON.stringify(calls)'), '["ghost","signout"]');
+  assert.equal(g.run('S.me'), null);
+  assert.equal(g.elements.get('auth').hidden, false);
+});
+
+test('failed automatic login leaves a usable login form', async () => {
+  const g = game();
+  g.window.location = { protocol: 'https:' };
+  g.run(`loadAccountClient = async () => {
+    S.account = { auth: {}, authSdk: { signOut: async () => {} } };
+    return { getIdToken: async () => 'expired-token' };
+  }; accountRequest = async () => { throw new Error('Invalid session'); };`);
+  await g.run('boot()');
+  assert.equal(g.elements.get('auth').hidden, false);
+  assert.equal(g.elements.get('auth-submit').disabled, false);
+  assert.match(g.elements.get('auth-error').textContent, /다시 로그인/);
+});
+
+test('entering another account resets movement and stun state', async () => {
+  const g = game(); g.players();
+  g.run(`S.pos.x = 9999; S.stunUntil = Date.now() + 30000; S.hits = 4;
+    keys.add('r'); ghosts.set('old-peer', {});`);
+  await g.run(`enterAccount('new-uid', { uid: 'new-uid', nick: '새주민', costume: 'witch', introSeen: true, guideSeen: true })`);
+  assert.equal(g.run('S.pos.x'), g.run('SPAWN.x'));
+  assert.equal(g.run('S.stunUntil'), 0);
+  assert.equal(g.run('S.hits'), 0);
+  assert.equal(g.run('keys.size + ghosts.size'), 0);
+});
+
 test('outside Claude, boot still opens practice and the name intro', async () => {
   const g = game(); await g.run('boot()');
   assert.equal(g.run('S.mode'), 'practice');

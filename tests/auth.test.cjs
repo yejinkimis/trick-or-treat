@@ -64,4 +64,8 @@ test('account API accepts JSON requests only', async () => {
     headers: { 'content-type': 'text/plain' },
     body: '{"nickname":"호박"}',
   }), (error) => error.status === 415);
+  for (const body of ['null', '[]', '42', '"text"', null, []]) {
+    await assert.rejects(requestBody({ headers: { 'content-type': 'application/json' }, body }),
+      (error) => error.status === 400);
+  }
 });
