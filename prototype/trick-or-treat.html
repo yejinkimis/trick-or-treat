@@ -144,6 +144,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .rank .no{font-family:var(--f-px);font-weight:700;color:var(--gold);width:1.8em;text-align:center;flex:none}
 .rank .cnt{font-family:var(--f-px);color:var(--gold);white-space:nowrap}
 .auth .sheet{width:min(480px,100%)}
+.modal.small .sheet{width:min(420px,100%)}
 .auth form{display:grid;gap:12px}
 .auth-error{margin:0;padding:8px 10px;border:2px solid var(--candy);color:var(--text)}
 .auth-note{padding:10px 12px;border:2px solid var(--panel-2);color:var(--muted)}
@@ -207,6 +208,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-rank" type="button">순위</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
   <button class="pbtn" id="open-online" type="button" hidden>마을 지도</button>
+  <button class="pbtn" id="open-sound" type="button">소리</button>
   <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
 </div>
 
@@ -284,6 +286,23 @@ textarea:focus{outline:none;border-color:var(--gold)}
   </div>
 </div>
 
+
+<div class="modal small" id="sound" hidden>
+  <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="sd-title">
+    <div class="sheet-head">
+      <h2 id="sd-title">소리</h2>
+      <button class="pbtn" type="button" data-close="sound">닫기</button>
+    </div>
+    <div class="field">
+      <span class="lab">배경 음악</span>
+      <div class="row"><span class="note" style="flex:1">으스스한 할로윈 음악</span><button class="pbtn" id="sd-bgm" type="button" aria-pressed="false">꺼짐</button></div>
+    </div>
+    <div class="field">
+      <span class="lab">효과음·알림</span>
+      <div class="row"><span class="note" style="flex:1">똑똑, 뿅망치, 기절, 호박 따기, 사탕 잡기, 장난, 마녀 솥</span><button class="pbtn" id="sd-sfx" type="button" aria-pressed="true">켜짐</button></div>
+    </div>
+  </div>
+</div>
 
 <div class="modal" id="rank" hidden>
   <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="rk-title">
@@ -495,7 +514,7 @@ const BREW_LINES = {
   5: '부글부글! 사탕 5개가 솟아올랐어요!',
 };
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'admin', 'online', 'note', 'auth', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'admin', 'online', 'note', 'sound', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -1323,6 +1342,7 @@ function onBonk(msg) {
   tally.lastHit = now;
   const knockedOut = tally.hits >= BONK_TO_STUN;
   S.swings.push({ x: victim.x, y: victim.y, t: 0 });
+  if (isMe || msg.by === S.me) playSfx(knockedOut && isMe ? 'stun' : 'hit');
   S.floats.push({ text: knockedOut ? '기절!' : `뿅! ${tally.hits}/${BONK_TO_STUN}`, x: victim.x + 8, y: victim.y - 20, t: 0, life: knockedOut ? 1.2 : 0.7 });
   if (!knockedOut) return;
   tally.hits = 0;
@@ -1393,6 +1413,7 @@ async function harvest(p) {
   // 서버가 멀어 응답이 늦어도 바로 딴 것처럼 보여 주고, 서버가 거절하면 호박과 개수를 되돌린다.
   S.pumpkins = S.pumpkins.filter((q) => q !== p);
   S.floats.push({ text: '호박 +1', x: p.x, y: p.y - 12, t: 0, life: 0.9 });
+  playSfx('pumpkin');
   if (S.mode === 'firebase') {
     S.harvesting = true;
     const prior = { pumpkins: before, basket: S.players[S.me]?.basket };
@@ -1446,6 +1467,7 @@ async function brew() {
   renderAction();
   for (const text of ['풍덩!', '보글', '보글보글']) {
     S.floats.push({ text, x: CAUL.x + (Math.random() * 12 - 6), y: CAUL.y - 16, t: 0, life: 0.8 });
+    playSfx('bubble');
     await wait(reduceMotion() ? 80 : 420);
   }
   let gain;
@@ -1593,6 +1615,7 @@ function renderHud() {
   }[S.mode] || (S.readOnly ? '구경만 가능 · 참여자(Contributor) 권한이 있어야 놀 수 있어요'
     : online.size ? `지금 마을에 ${online.size + 1}명` : '지금 마을엔 나 혼자');
   const fx = S.me ? activeFx(S.me) : null;
+  noticeTrick(fx);
   const shown = fx ? `장난 당하는 중 · ${TRICKS[fx.kind].status} ${Math.ceil(fx.left / 1000)}초` : status;
   $('#me').innerHTML = `<img class="px-img" src="${spriteUrl(fx?.kind === 'poop' ? 'poop' : c || 'plain', 3)}" alt="">
     <b>${esc(nameOf(S.me))} · ${c ? COSTUMES[c].name : '분장 전'}</b>
@@ -2046,6 +2069,226 @@ function shake() {
   setTimeout(() => stage.classList.remove('fx-shake'), 1000);
 }
 
+// 소리는 음원 파일 없이 Web Audio로 합성한다. 설정은 이 기기에만 저장한다.
+const SOUND_KEY = 'trick-or-treat:sound';
+const SILENCE = 0.0001;
+const sound = { bgm: false, sfx: true, audio: null, noiseBuf: null, stopBgm: null, trickHeard: '' };
+try {
+  const saved = JSON.parse(localStorage.getItem(SOUND_KEY) || 'null');
+  for (const key of ['bgm', 'sfx']) if (typeof saved?.[key] === 'boolean') sound[key] = saved[key];
+} catch { /* 저장소를 못 쓰면 기본값으로 둔다 */ }
+
+function soundOut() {
+  if (sound.audio) return sound.audio;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  const ctx = new Ctx();
+  const master = ctx.createGain();
+  master.gain.value = 0.5;
+  master.connect(ctx.destination);
+  const music = ctx.createGain();
+  music.gain.value = 0.35;
+  music.connect(master);
+  sound.audio = { ctx, master, music };
+  return sound.audio;
+}
+function envelope(ctx, at, duration, peak, attack = 0.005) {
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(SILENCE, at);
+  gain.gain.exponentialRampToValueAtTime(peak, at + attack);
+  gain.gain.exponentialRampToValueAtTime(SILENCE, at + duration);
+  return gain;
+}
+function glide(param, path, at, duration) {
+  param.setValueAtTime(path[0], at);
+  path.slice(1).forEach((f, i) => param.exponentialRampToValueAtTime(f, at + duration * (i + 1) / (path.length - 1)));
+}
+function tone(ctx, out, { type = 'sine', freq, at, duration, peak, vibrato = 0, attack, detune = 0, lowpass }) {
+  const osc = ctx.createOscillator();
+  osc.type = type;
+  osc.detune.value = detune;
+  glide(osc.frequency, [].concat(freq), at, duration);
+  if (vibrato) {
+    const lfo = ctx.createOscillator(), depth = ctx.createGain();
+    lfo.frequency.value = 7;
+    depth.gain.value = vibrato;
+    lfo.connect(depth).connect(osc.frequency);
+    lfo.start(at);
+    lfo.stop(at + duration + 0.02);
+  }
+  let src = osc;
+  if (lowpass) {
+    src = ctx.createBiquadFilter();
+    src.type = 'lowpass';
+    src.frequency.value = lowpass;
+    osc.connect(src);
+  }
+  src.connect(envelope(ctx, at, duration, peak, attack)).connect(out);
+  osc.start(at);
+  osc.stop(at + duration + 0.02);
+}
+function noise(ctx, out, { filter, freq, at, duration, peak }) {
+  if (!sound.noiseBuf) {
+    sound.noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+    const data = sound.noiseBuf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  }
+  const src = ctx.createBufferSource(), biquad = ctx.createBiquadFilter();
+  src.buffer = sound.noiseBuf;
+  biquad.type = filter;
+  glide(biquad.frequency, [].concat(freq), at, duration);
+  src.connect(biquad).connect(envelope(ctx, at, duration, peak)).connect(out);
+  src.start(at);
+  src.stop(at + duration + 0.02);
+}
+const SFX = {
+  knock(ctx, out, at) {
+    tone(ctx, out, { freq: [190, 80], at, duration: 0.09, peak: 0.9 });
+    noise(ctx, out, { filter: 'bandpass', freq: [1200, 600], at, duration: 0.03, peak: 0.5 });
+  },
+  knocks(ctx, out, at) { SFX.knock(ctx, out, at); SFX.knock(ctx, out, at + 0.16); },
+  // 뿅망치: 장난감 망치가 찌그러지며 나는 "뿅"
+  hit(ctx, out, at) {
+    tone(ctx, out, { type: 'triangle', freq: [900, 1700, 700], at, duration: 0.14, peak: 0.6 });
+    tone(ctx, out, { freq: [160, 60], at, duration: 0.08, peak: 0.7 });
+  },
+  stun(ctx, out, at) {
+    tone(ctx, out, { freq: [1200, 220], at, duration: 0.6, peak: 0.4, vibrato: 30 });
+    [0, 1, 2].forEach((i) => tone(ctx, out, { freq: [2400, 3000], at: at + 0.65 + i * 0.12, duration: 0.07, peak: 0.15 }));
+  },
+  pumpkin(ctx, out, at) {
+    noise(ctx, out, { filter: 'highpass', freq: 2500, at, duration: 0.04, peak: 0.7 });
+    tone(ctx, out, { freq: [300, 900], at: at + 0.06, duration: 0.08, peak: 0.6 });
+    [659, 784, 988, 1319].forEach((freq, i) => tone(ctx, out, { type: 'triangle', freq, at: at + 0.16 + i * 0.07, duration: 0.18, peak: 0.3 }));
+  },
+  catch(ctx, out, at) {
+    [523, 659, 784, 1047].forEach((freq, i) => tone(ctx, out, { type: 'square', freq, at: at + i * 0.06, duration: 0.14, peak: 0.12 }));
+    tone(ctx, out, { type: 'triangle', freq: 2093, at: at + 0.26, duration: 0.3, peak: 0.2 });
+  },
+  miss(ctx, out, at) {
+    [[392, 370], [349, 262]].forEach((freq, i) => tone(ctx, out, { type: 'sawtooth', freq, at: at + i * 0.28, duration: i ? 0.5 : 0.25, peak: 0.12, vibrato: i ? 6 : 0 }));
+  },
+  // 장난에 걸리면 낮게 깔깔대는 웃음
+  trick(ctx, out, at) {
+    [520, 470, 430, 390, 350].forEach((freq, i) => tone(ctx, out, { type: 'square', freq, at: at + i * 0.13, duration: 0.1, peak: 0.1, vibrato: 12 }));
+  },
+  bubble(ctx, out, at) {
+    for (let i = 0; i < 4; i++) {
+      const from = 250 + Math.random() * 300;
+      tone(ctx, out, { freq: [from, from * 2.5], at: at + i * 0.07 + Math.random() * 0.03, duration: 0.06, peak: 0.35 });
+    }
+  },
+};
+
+function playSfx(name) {
+  if (!sound.sfx) return;
+  const out = soundOut();
+  if (!out) return;
+  const play = () => SFX[name](out.ctx, out.master, out.ctx.currentTime + 0.01);
+  if (out.ctx.state === 'running') { play(); return; }
+  // 브라우저가 아직 소리를 막고 있으면, 바로 풀릴 때만 내고 늦게 풀리면 엉뚱한 때 나지 않게 버린다.
+  const askedAt = performance.now();
+  out.ctx.resume().then(() => { if (out.ctx.state === 'running' && performance.now() - askedAt < 300) play(); }).catch(() => {});
+}
+
+// 가단조와 반음 위 B♭, 감7화음을 오가는 느린 오르골. 낮은 지속음과 메아리를 깔고, 두 마디마다 유령 울음, 네 마디마다 종이 울린다.
+const BGM_STEP = 0.34;
+const BGM_CHORDS = [[33, 57, 60, 64, 69], [34, 58, 62, 65, 70], [33, 57, 60, 64, 69], [32, 56, 59, 62, 65]];
+// 0은 쉼표. 비어 있는 박이 다음 음을 기다리게 만든다.
+const BGM_ARP = [4, 0, 3, 2, 0, 3, 1, 0];
+const midiHz = (n) => 440 * 2 ** ((n - 69) / 12);
+function bell(ctx, out, at, base) {
+  [[1, 0.3], [2.76, 0.1], [5.4, 0.04]].forEach(([ratio, peak]) => tone(ctx, out, { freq: base * ratio, at, duration: 3, peak }));
+}
+function bgmStep(ctx, out, step, at) {
+  const bar = Math.floor(step / 8), beat = step % 8, chord = BGM_CHORDS[bar % BGM_CHORDS.length], barLength = BGM_STEP * 8;
+  if (beat === 0) {
+    tone(ctx, out, { type: 'sawtooth', freq: midiHz(chord[0]), at, duration: barLength, peak: 0.25, attack: 0.8, lowpass: 240 });
+    if (bar % 4 === 0) bell(ctx, out, at, midiHz(45));
+    if (bar % 2 === 1) tone(ctx, out, { freq: bar % 4 === 1 ? [740, 988, 698] : [880, 660, 622], at: at + BGM_STEP * 2, duration: barLength * 0.75, peak: 0.07, attack: 0.6, vibrato: 12 });
+  }
+  const note = BGM_ARP[beat];
+  // 두 음을 살짝 어긋나게 겹쳐 낡은 오르골처럼 흔들리게 한다.
+  if (note) [-8, 8].forEach((detune) => tone(ctx, out, { freq: midiHz(chord[note] + 12), at, duration: BGM_STEP * 2.2, peak: 0.1, detune }));
+}
+function startBgm({ ctx, music }) {
+  const bus = ctx.createGain(), echo = ctx.createDelay(1), feedback = ctx.createGain(), damp = ctx.createBiquadFilter();
+  bus.gain.setValueAtTime(SILENCE, ctx.currentTime);
+  bus.gain.exponentialRampToValueAtTime(1, ctx.currentTime + 1);
+  echo.delayTime.value = BGM_STEP * 1.5;
+  feedback.gain.value = 0.4;
+  damp.type = 'lowpass';
+  damp.frequency.value = 1500;
+  bus.connect(music);
+  bus.connect(echo).connect(damp).connect(feedback).connect(echo);
+  damp.connect(music);
+  let step = 0, nextAt = ctx.currentTime + 0.05;
+  // 탭이 숨어 오디오가 멈추면 currentTime도 멈춰 예약이 더 쌓이지 않는다.
+  const timer = setInterval(() => {
+    while (nextAt < ctx.currentTime + 0.3) {
+      bgmStep(ctx, bus, step, nextAt);
+      step = (step + 1) % (BGM_CHORDS.length * 8);
+      nextAt += BGM_STEP;
+    }
+  }, 50);
+  return () => {
+    clearInterval(timer);
+    bus.gain.cancelScheduledValues(ctx.currentTime);
+    bus.gain.setTargetAtTime(0, ctx.currentTime, 0.15);
+    // 메아리 꼬리가 사라진 뒤 연결을 끊는다.
+    setTimeout(() => { bus.disconnect(); damp.disconnect(); }, 3000);
+  };
+}
+function syncBgm() {
+  if (sound.bgm && !sound.stopBgm) {
+    const out = soundOut();
+    if (!out) return;
+    out.ctx.resume().catch(() => {});
+    sound.stopBgm = startBgm(out);
+  } else if (!sound.bgm && sound.stopBgm) {
+    sound.stopBgm();
+    sound.stopBgm = null;
+  }
+}
+function setSound(key, on) {
+  sound[key] = on;
+  try { localStorage.setItem(SOUND_KEY, JSON.stringify({ bgm: sound.bgm, sfx: sound.sfx })); } catch { /* 이번 접속 동안만 유지 */ }
+  syncBgm();
+  renderSound();
+}
+function renderSound() {
+  for (const key of ['bgm', 'sfx']) {
+    const btn = $(`#sd-${key}`);
+    btn.textContent = sound[key] ? '켜짐' : '꺼짐';
+    btn.classList.toggle('hot', sound[key]);
+    btn.setAttribute('aria-pressed', String(sound[key]));
+  }
+}
+// 장난 효과가 새로 걸린 순간에 한 번만 웃음소리를 낸다.
+function noticeTrick(fx) {
+  const key = fx ? `${fx.kind}:${Math.round((Date.now() + fx.left) / 1000)}` : '';
+  if (key && key !== sound.trickHeard) playSfx('trick');
+  sound.trickHeard = key;
+}
+// 브라우저는 화면을 한 번 누르기 전에는 소리를 막으므로 첫 입력에서 오디오를 깨우고 BGM을 튼다.
+function unlockSound() {
+  const out = soundOut();
+  if (!out) return;
+  out.ctx.resume().then(() => {
+    if (out.ctx.state !== 'running') return;
+    window.removeEventListener('pointerdown', unlockSound, true);
+    window.removeEventListener('keydown', unlockSound, true);
+    syncBgm();
+  }).catch(() => {});
+}
+window.addEventListener('pointerdown', unlockSound, true);
+window.addEventListener('keydown', unlockSound, true);
+document.addEventListener('visibilitychange', () => {
+  if (!sound.audio) return;
+  if (document.visibilityState === 'hidden') sound.audio.ctx.suspend().catch(() => {});
+  else sound.audio.ctx.resume().catch(() => {});
+});
+
 function createCandyPathLookup(level, seed) {
   const stage = clamp(level, 1, CANDY_MAX_LEVEL);
   const minSegment = 880 - (stage - 1) * 120, maxSegment = 1320 - (stage - 1) * 130;
@@ -2156,6 +2399,7 @@ function candyGame(challenge) {
       box.classList.add(won ? 'hit' : 'miss');
       result.className = `timing-result ${won ? 'hit' : 'miss'}`;
       result.textContent = won ? '잡았다!' : '놓쳤어!';
+      playSfx(won ? 'catch' : 'miss');
       setTimeout(() => {
         box.hidden = true;
         done({ won, inputs: trace, elapsedMs: simAt });
@@ -2202,6 +2446,7 @@ async function knock(slot) {
   for (let i = 0; i < 3; i++) {
     S.shakeDoor = slot.i;
     S.floats.push({ text: '똑!', x: door.x + (Math.random() * 16 - 8), y: slot.hy * T + 30, t: 0, life: 0.7 });
+    playSfx('knock');
     await wait(reduceMotion() ? 150 : 330);
     S.shakeDoor = null;
     await wait(reduceMotion() ? 50 : 110);
@@ -2316,6 +2561,7 @@ function openModal(id) {
   if (id === 'online') renderOnline();
   if (id === 'admin') { S.adminUsers = []; S.adminSelected = null; renderAdmin(); }
   if (id === 'note') renderNote();
+  if (id === 'sound') renderSound();
   $(`#${id}`).hidden = false;
   keys.clear();
   if (id !== 'intro') $(`#${id} .pbtn`).focus();
@@ -2503,6 +2749,9 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'open-rank') openModal('rank');
   else if (t.id === 'open-admin' && S.isOwner) openModal('admin');
   else if (t.id === 'open-online') openModal('online');
+  else if (t.id === 'open-sound') openModal('sound');
+  else if (t.id === 'sd-bgm') setSound('bgm', !sound.bgm);
+  else if (t.id === 'sd-sfx') setSound('sfx', !sound.sfx);
   else if (t.id === 'ad-search') loadAdminUsers().catch((error) => toast(error.message));
   else if (t.dataset.adminTarget) { S.adminSelected = t.dataset.adminTarget; renderAdmin(); }
   else if (t.dataset.adminAction) {
@@ -2574,14 +2823,16 @@ $('#t-track').addEventListener('pointercancel', () => S.candyControl?.(false));
 $('#t-track').addEventListener('lostpointercapture', () => S.candyControl?.(false));
 
 function notifyKnocks() {
-  let latest = S.seenAt;
+  let latest = S.seenAt, knocked = false;
   for (const { v, at, knock, note } of visitsTo(S.me)) {
     if (v === S.me || at <= S.seenAt) continue;
     latest = Math.max(latest, at);
+    knocked ||= Boolean(knock);
     if (knock) toast(`똑똑! ${nameOf(v)}(${COSTUMES[knock.c]?.name || '?'})이 우리 집 문을 두드렸어요 · ${knockNews(knock)}`);
     else toast(`${nameOf(v)}이 방명록에 글을 남겼어요: ${String(note.text).slice(0, NOTE_MAX)}`);
   }
   S.seenAt = latest;
+  if (knocked) playSfx('knocks');
 }
 
 let nameJob = 0;
