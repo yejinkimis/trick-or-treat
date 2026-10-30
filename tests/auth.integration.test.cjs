@@ -78,6 +78,19 @@ test('wrong passwords fail generically and separate devices receive the same UID
   assert.equal((await getProfile(`Bearer ${secondDevice.idToken}`)).nick, nickname);
 });
 
+test('case, fullwidth letters and decomposed Hangul cannot create a second login identity', async () => {
+  const nickname = `가Ab${Date.now().toString(36).slice(-7)}`;
+  const created = await signup({ nickname, password: 'normalized-password-1' });
+  const variants = [nickname.toLowerCase(), `  ${nickname.toUpperCase()}  `,
+    nickname.normalize('NFD'), nickname.replace('Ab', 'Ａｂ')];
+  for (const variant of variants) {
+    await assert.rejects(signup({ nickname: variant, password: 'impostor-password-2' }), (error) => error.status === 409);
+    const returning = await login({ nickname: variant, password: 'normalized-password-1' });
+    assert.equal(returning.uid, created.uid);
+    await assert.rejects(login({ nickname: variant, password: 'impostor-password-2' }), (error) => error.status === 401);
+  }
+});
+
 test('Firestore rules keep hashes and nickname claims private and block client profile writes', async () => {
   const created = await signup({ nickname: `규${Date.now().toString(36).slice(-8)}`, password: 'pumpkin-password-4' });
   const other = await signup({ nickname: `다${Date.now().toString(36).slice(-8)}`, password: 'pumpkin-password-5' });

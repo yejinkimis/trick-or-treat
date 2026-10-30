@@ -193,6 +193,48 @@ test('event stop and a winning candy transfer are serialized at the round bounda
   await assert.rejects(act(visitor, { type: 'knock-finish', ...attempt }), /이벤트가 끝났|도전이 끝났/);
 });
 
+test('two tabs cannot start separate challenges or double-settle while the host spends their remaining candy', async () => {
+  const [owner, visitor, firstHost, secondHost] = await Promise.all(['검관', '검도', '검집', '검옆'].map(player));
+  process.env.GAME_ADMIN_UIDS = owner.uid;
+  const { event } = await act(owner, { type: 'event-start' });
+  const db = services().db;
+  await db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  const hosts = [firstHost, secondHost];
+  const starts = await Promise.allSettled(hosts.map((host) => act(visitor, { type: 'knock-start', host: host.uid })));
+  assert.equal(starts.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(starts.filter((r) => r.status === 'rejected' && r.reason.status === 429).length, 1);
+  const selected = starts.findIndex((r) => r.status === 'fulfilled');
+  const host = hosts[selected], unusedHost = hosts[1 - selected];
+  const challenge = starts[selected].value.challenge;
+  assert.equal((await db.collection('gameHouseLocks').doc(unusedHost.uid).get()).exists, false);
+  await db.collection('gameChallenges').doc(visitor.uid).update({ createdAt: Date.now() - 6000,
+    path: [{ t: 0, y: .05 }, { t: 6000, y: .05 }] });
+  await db.collection('gamePlayers').doc(host.uid).update({ round: event.id, candies: 2 });
+  const finish = { type: 'knock-finish', challengeId: challenge.id, inputs: [1, 1], elapsedMs: 6000 };
+  const results = await Promise.allSettled([
+    act(visitor, finish), act(visitor, finish), act(host, { type: 'decor', item: 'lantern' }),
+  ]);
+  const settlements = results.slice(0, 2);
+  assert.equal(settlements.filter((r) => r.status === 'fulfilled').length, 1, 'distinct request IDs cannot settle one challenge twice');
+  assert.equal(settlements.filter((r) => r.status === 'rejected').length, 1);
+  const settled = settlements.find((r) => r.status === 'fulfilled').value;
+  const visitorCandy = balance(await saved(visitor), event), hostCandy = balance(await saved(host), event);
+  assert.ok(hostCandy >= 0);
+  if (results[2].status === 'fulfilled') {
+    assert.equal(settled.entry.moved, false);
+    assert.equal(visitorCandy, 10);
+    assert.equal(hostCandy, 0);
+  } else {
+    assert.match(results[2].reason.message, /사탕이 부족/);
+    assert.equal(settled.entry.moved, true);
+    assert.equal(visitorCandy, 11);
+    assert.equal(hostCandy, 1);
+  }
+  assert.equal((await db.collection('gameHouseLocks').doc(host.uid).get()).exists, false);
+  assert.equal((await db.collection('gameChallenges').doc(visitor.uid).get()).data().used, true);
+  await act(owner, { type: 'event-stop' });
+});
+
 test('a replaced or previous-round challenge cannot release another challenger house lock', async () => {
   const [owner, first, second, host] = await Promise.all(['관리', '이전', '다음', '대상'].map(player));
   process.env.GAME_ADMIN_UIDS = owner.uid;

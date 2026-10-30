@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   SCRYPT, cleanNickname, validatePassword, derivePassword, verifyPassword,
+  signup,
   validateProfilePatch, createEmulatorCustomToken,
 } = require('../server/auth-service.cjs');
 const { requestBody } = require('../server/api-handler.cjs');
@@ -22,6 +23,13 @@ test('password limits count Unicode characters and UTF-8 bytes', () => {
   assert.equal(validatePassword('가'.repeat(42), { signup: true }), '가'.repeat(42));
   assert.throws(() => validatePassword('pumpkin', { signup: true }), /8자/);
   assert.throws(() => validatePassword('가'.repeat(43), { signup: true }), /128바이트/);
+});
+
+test('signup rejects invisible Hangul fillers before reserving a nickname', async () => {
+  for (const nickname of ['ㅤ', 'ᅟ', '파도ㅤ', '파ᅠ도']) {
+    await assert.rejects(signup({ nickname, password: 'pumpkin-password' }),
+      (error) => error.status === 400 && error.code === 'invalid-nickname');
+  }
 });
 
 test('password verifier uses salted scrypt and rejects a different password', async () => {
