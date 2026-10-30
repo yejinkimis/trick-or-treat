@@ -4,6 +4,10 @@ const STEP_MS = 20;
 const DURATION_MS = 18000;
 const MAX_LEVEL = 5;
 const MAX_INPUTS = 240;
+const BAR_UP_SPEED = .72;
+const BAR_DOWN_SPEED = .82;
+const BAR_ACCELERATION = 2.6;
+const BAR_BRAKING = 8;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
 function createCandyPath(level) {
@@ -69,7 +73,11 @@ function evaluateCandyChallenge(challenge, inputs, elapsedMs, now = Date.now()) 
       inputIndex++;
     }
 
-    velocity = clamp(velocity + (held ? -3.8 : 4.6) * seconds, -1.7, 1.7);
+    const targetVelocity = held ? -BAR_UP_SPEED : BAR_DOWN_SPEED;
+    const reversing = velocity !== 0 && Math.sign(velocity) !== Math.sign(targetVelocity);
+    const acceleration = reversing ? BAR_BRAKING : BAR_ACCELERATION;
+    const velocityChange = acceleration * seconds;
+    velocity += clamp(targetVelocity - velocity, -velocityChange, velocityChange);
     barY += velocity * seconds;
     if (barY < 0) { barY = 0; velocity = Math.max(0, velocity); }
     if (barY > 1 - barHeight) { barY = 1 - barHeight; velocity = Math.min(0, velocity); }
