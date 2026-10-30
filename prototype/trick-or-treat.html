@@ -92,9 +92,11 @@ input[type=text]{flex:1 1 180px}
 .book li:first-child{border-top:0}
 .book img{width:32px;height:32px;flex:none}
 .book li div{flex:1;min-width:0;overflow-wrap:anywhere;font-size:.92rem}
+.book .guest-name{color:var(--pumpkin)}
+.book .guest-message{color:var(--text)}
 .book time{font-size:.78rem;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
 .tag{font-family:var(--f-px);font-weight:700;font-size:.8rem}
-.tag.treat{color:var(--slime)} .tag.trick{color:var(--candy)} .tag.note{color:var(--gold)}
+.tag.treat{color:var(--slime)} .tag.trick{color:var(--candy)}
 textarea{width:100%;box-sizing:border-box;resize:vertical;line-height:1.4;font-family:var(--f-ko)}
 textarea:focus{outline:none;border-color:var(--gold)}
 .me .status.ev{color:var(--gold)}
@@ -1347,12 +1349,12 @@ function guestbookHtml(host) {
   const items = [];
   for (const [vid, v] of Object.entries(S.players)) {
     for (const k of v.knocks || []) if (k.h === host) items.push({ at: k.at, v: vid, c: k.c, line: bookLine(k) });
-    for (const n of v.notes || []) if (n.h === host) items.push({ at: n.at, v: vid, c: v.costume, line: `<span class="tag note">글</span> ${esc(String(n.text).slice(0, NOTE_MAX))}` });
+    for (const n of v.notes || []) if (n.h === host) items.push({ at: n.at, v: vid, c: v.costume, line: esc(String(n.text).slice(0, NOTE_MAX)) });
   }
   items.sort((a, b) => b.at - a.at);
   return items.length
     ? items.slice(0, 40).map((it) => `<li><img class="px-img" src="${spriteUrl(COSTUMES[it.c] ? it.c : 'plain', 2)}" alt="">
-        <div><b>${esc(nameOf(it.v))}</b> ${COSTUMES[it.c]?.name || ''}<br>${it.line}</div>
+        <div><b class="guest-name">${esc(nameOf(it.v))}</b><br><span class="guest-message">${it.line}</span></div>
         <time>${ago(it.at)}</time></li>`).join('')
     : '<li class="note">아직 아무도 안 왔어요. 문 앞이 조용해요.</li>';
 }
