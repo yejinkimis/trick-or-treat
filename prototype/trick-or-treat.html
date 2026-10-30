@@ -342,7 +342,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
     <ol class="book rank" id="rk-list"></ol>
     <div class="field" id="rk-admin" hidden>
       <span class="lab">운영자</span>
-      <span class="note">시작하면 모두 사탕 10개로 다시 시작하고 24시간 카운트다운이 돌아요. 끝나면 문이 잠기고 그때 1등이 우승이에요.</span>
+      <span class="note">시작하면 모두 사탕 10개로 다시 시작해요. 시각을 비워 두면 지금부터 24시간, 정하면 그 시각에 저절로 시작하고 끝나요. 끝나면 문이 잠기고 그때 1등이 우승이에요.</span>
+      <div class="row"><label class="note">시작 <input type="datetime-local" id="ev-from"></label><label class="note">끝 <input type="datetime-local" id="ev-to"></label></div>
       <div class="row">
         <button class="pbtn hot" id="ev-start" type="button">이벤트 시작</button>
         <button class="pbtn" id="ev-stop" type="button">지금 끝내기</button>
@@ -672,11 +673,15 @@ const cleanNick = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, NI
 const nameOf = (id) => cleanNick(S.players[id]?.nick) || S.names[id] || (isBot(id) && String(S.players[id]?.name || '').slice(0, 20)) || (id === S.me ? '나' : '이웃');
 const myCostume = () => S.players[S.me]?.costume || null;
 
+// 예약된 이벤트는 시작 시각 전까지 연습으로 돌고, 시작 시각이 되면 서버와 같은 때 새 라운드가 된다.
 function eventState() {
   const ev = S.event;
-  if (!ev?.startedAt) return 'before';
+  if (!ev?.startedAt || Date.now() < ev.startedAt) return 'before';
   return Date.now() < ev.endsAt ? 'running' : 'ended';
 }
+const currentRound = () => (eventState() === 'before' ? 'practice' : S.event.id || 'practice');
+const scheduledAt = () => (S.event?.startedAt > Date.now() ? S.event.startedAt : null);
+const clockText = (at) => new Date(at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 const eventFrom = () => S.event?.startedAt || 0;
 
 function computeLedger() {
@@ -703,7 +708,7 @@ function computeLedger() {
 const ledger = () => (S.ledger ??= computeLedger());
 const sharedGame = () => S.mode === 'live' || S.mode === 'firebase';
 const candiesOf = (id) => S.mode === 'firebase'
-  ? (S.players[id]?.round === (S.event?.id || 'practice') ? S.players[id].candies : START_CANDIES)
+  ? (S.players[id]?.round === (currentRound()) ? S.players[id].candies : START_CANDIES)
   : ledger().bal[id] ?? START_CANDIES;
 const wasMoved = (k) => S.mode === 'firebase' ? k.moved === true : ledger().moved.has(k);
 function ranking() {
@@ -714,7 +719,7 @@ function ranking() {
   return rankingOf(S.players);
 }
 function rankingOf(players) {
-  const round = S.event?.id || 'practice';
+  const round = currentRound();
   const count = (id, p) => S.mode === 'firebase' ? (p.round === round ? p.candies : START_CANDIES) : candiesOf(id);
   return Object.entries(players)
     .filter(([, p]) => p.costume && (S.mode !== 'firebase' || eventState() !== 'ended' || (p.readyAt || p.joinedAt || 0) <= S.event.endsAt))
@@ -741,7 +746,7 @@ function activeFx(id) {
   const now = Date.now();
   for (let i = ks.length - 1; i >= 0; i--) {
     const k = ks[i], t = TRICKS[k.k];
-    if (S.mode === 'firebase' && k.round !== (S.event?.id || 'practice')) continue;
+    if (S.mode === 'firebase' && k.round !== (currentRound())) continue;
     if ((k.r === 'trick' || k.r === 'lose') && t?.dur && now < k.at + t.dur) return { kind: k.k, left: k.at + t.dur - now };
   }
   return null;
@@ -1368,6 +1373,7 @@ function frame(now) {
   const sec = Math.floor(Date.now() / 1000);
   if (sec !== hudSecond) {
     hudSecond = sec;
+    noticeEventTurn();
     renderHud();
     renderAction();
     if (!$('#rank').hidden) renderRanking();
@@ -1571,7 +1577,7 @@ async function brew() {
     if (S.mode === 'firebase') {
       const result = await gameRequest({ type: 'brew' });
       gain = result.gain;
-      S.players[S.me] = { ...S.players[S.me], pumpkins: result.pumpkins, basket: true, brewAt: result.brewAt, candies: result.candies, round: S.event?.id || 'practice' };
+      S.players[S.me] = { ...S.players[S.me], pumpkins: result.pumpkins, basket: true, brewAt: result.brewAt, candies: result.candies, round: currentRound() };
       render();
     } else {
       gain = rollBrew();
@@ -1657,6 +1663,20 @@ function hideHint() {
   $('#hint').hidden = true;
 }
 
+let seenEventState = null;
+// 예약 시각이나 종료 시각은 서버 문서가 바뀌지 않고 시간만 지나 넘어가므로, 넘어가는 순간 순위·사탕을 다시 계산한다.
+function noticeEventTurn() {
+  const st = eventState(), key = `${S.event?.id || ''}:${st}`;
+  if (key === seenEventState) return;
+  const first = seenEventState === null;
+  seenEventState = key;
+  if (first) return;
+  S.ledger = null; S.rankList = null; S.rankAt = 0;
+  if (st === 'running') toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.');
+  if (st === 'ended') toast('이벤트가 끝났어요. 지금 순위가 최종 결과예요.');
+  render();
+  if (S.mode === 'firebase') void loadRanking({ quiet: true });
+}
 function fmtLeft(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
@@ -1666,7 +1686,9 @@ function eventLine() {
   const list = ranking();
   const rank = list.findIndex((r) => r.id === S.me) + 1;
   const mine = rank ? ` · 내 순위 ${list.length}명 중 ${rank}등` : '';
-  if (st === 'before') return `이벤트 시작 전 · 연습 중${mine}`;
+  if (st === 'before') return scheduledAt()
+    ? `이벤트 ${clockText(scheduledAt())} 시작 (${fmtLeft(scheduledAt() - Date.now())} 남음) · 연습 중${mine}`
+    : `이벤트 시작 전 · 연습 중${mine}`;
   if (st === 'ended') {
     const top = list[0];
     return top ? `이벤트 끝 · 우승 ${nameOf(top.id)} (사탕 ${top.n}개)${mine}` : '이벤트 끝';
@@ -1940,8 +1962,8 @@ function renderRanking() {
   $('#rk-admin').hidden = !S.isOwner;
   $('#open-admin').hidden = S.mode !== 'firebase';
   const canFinalize = S.mode === 'firebase' && S.event && !S.event.results && eventState() === 'ended';
-  $('#ev-stop').disabled = eventState() !== 'running' && !canFinalize;
-  if (!$('#ev-stop').dataset.armed) $('#ev-stop').textContent = canFinalize ? '결과 확정' : '이벤트 종료';
+  $('#ev-stop').disabled = eventState() !== 'running' && !canFinalize && !scheduledAt();
+  if (!$('#ev-stop').dataset.armed) $('#ev-stop').textContent = canFinalize ? '결과 확정' : scheduledAt() ? '예약 취소' : '이벤트 종료';
 }
 
 // 크루 명단은 순위와 같은 서버 목록(혼자 노는 마을에서는 지도 위 집)에서 닉네임으로 찾는다.
@@ -2638,7 +2660,7 @@ async function knock(slot) {
   }
   let hit, entry;
   try {
-    const round = S.event?.id || 'practice';
+    const round = currentRound();
     if (S.localKnockStreaks.challenger !== S.me || S.localKnockStreaks.round !== round) {
       S.localKnockStreaks = { challenger: S.me, round, byHost: {} };
     }
@@ -2702,10 +2724,10 @@ async function knock(slot) {
   S.npc = null;
   canvas.focus({ preventScroll: true });
   if (next === 'again') {
-    const retryUid = S.me, retryRound = S.event?.id || 'practice';
+    const retryUid = S.me, retryRound = currentRound();
     await wait(1000);
     S.busy = false;
-    if (S.me === retryUid && (S.event?.id || 'practice') === retryRound) return knock(slot);
+    if (S.me === retryUid && (currentRound()) === retryRound) return knock(slot);
     renderAction();
     return;
   }
@@ -2717,7 +2739,8 @@ async function knock(slot) {
 
 async function saveEvent(ev) {
   if (S.mode === 'firebase') {
-    try { await gameRequest({ type: ev.startedAt !== S.event?.startedAt ? 'event-start' : 'event-stop' }); return true; }
+    const starting = ev && ev.startedAt !== S.event?.startedAt;
+    try { await gameRequest(starting ? { type: 'event-start', startAt: ev.startedAt, endAt: ev.endsAt } : { type: 'event-stop' }); return true; }
     catch (error) { toast(error.message); return false; }
   }
   S.event = ev;
@@ -2986,16 +3009,20 @@ document.addEventListener('click', (e) => {
   } else if (t.dataset.door) {
     saveMe({ door: Number(t.dataset.door) });
   } else if (t.id === 'ev-start') {
-    armOrRun(t, '정말 시작? 모두 사탕 10개로 리셋돼요', async () => {
-      if ((await saveEvent({ startedAt: Date.now(), endsAt: Date.now() + EVENT_MS })) === false) return;
+    const from = $('#ev-from').value ? new Date($('#ev-from').value).getTime() : Date.now();
+    const to = $('#ev-to').value ? new Date($('#ev-to').value).getTime() : from + EVENT_MS;
+    const scheduled = from > Date.now() + 60000;
+    armOrRun(t, scheduled ? `${clockText(from)}~${clockText(to)} 예약할까요?` : '정말 시작? 모두 사탕 10개로 리셋돼요', async () => {
+      if ((await saveEvent({ id: crypto.randomUUID?.() || String(Date.now()), startedAt: scheduled ? from : Date.now(), endsAt: to })) === false) return;
       S.bonus = {};
       if (S.mode === 'live') S.db.doc('game/bonus').set({}).catch(() => {});
-      toast('이벤트 시작! 24시간 동안 사탕을 모아요.');
+      toast(scheduled ? `이벤트를 ${clockText(from)}에 시작하도록 예약했어요.` : '이벤트 시작! 사탕을 모아요.');
     });
   } else if (t.id === 'ev-stop') {
-    armOrRun(t, '정말 지금 끝낼까요?', async () => {
-      if ((await saveEvent({ ...S.event, endsAt: Date.now() })) === false) return;
-      toast('이벤트를 끝냈어요.');
+    const cancel = Boolean(scheduledAt());
+    armOrRun(t, cancel ? '예약을 취소할까요?' : '정말 지금 끝낼까요?', async () => {
+      if ((await saveEvent(cancel ? null : { ...S.event, endsAt: Date.now() })) === false) return;
+      toast(cancel ? '이벤트 예약을 취소했어요.' : '이벤트를 끝냈어요.');
     });
   }
 });
@@ -3123,7 +3150,7 @@ async function saveMural() {
 }
 
 function applyFirebasePlayers() {
-  const round = S.event?.id || 'practice';
+  const round = currentRound();
   // 내 호박 수와 밭은 나만 읽는 비공개 문서에서 온다. 공개 문서의 호박 수는 예전 값일 수 있다.
   const own = S.ownPlayer && { ...S.ownPlayer, ...(S.ownPrivate ? { pumpkins: S.ownPrivate.pumpkins, field: S.ownPrivate.field } : {}), ...unsavedOwnFields() };
   const source = { ...S.strangers, ...S.firebasePlayers, ...(own ? { [S.me]: own } : {}) };
@@ -3311,7 +3338,8 @@ async function connectFirebaseGame(uid) {
         if (snapshot.metadata.fromCache) return;
         const previous = S.event?.id;
         S.event = snapshot.exists() ? snapshot.data() : null;
-        if (previous && previous !== S.event?.id) { S.rankList = null; S.rankAt = 0; toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.'); }
+        if (previous !== S.event?.id) { S.rankList = null; S.rankAt = 0; }
+        if (previous && previous !== S.event?.id && scheduledAt()) toast(`이벤트가 ${clockText(scheduledAt())}에 시작돼요.`);
         applyFirebasePlayers(); resolve();
       }, (error) => { S.readOnly = true; toast('이벤트 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
     ]));
@@ -3480,7 +3508,7 @@ async function boot() {
     let eventSeen = false;
     db.doc('game/event').onSnapshot((d) => {
       const ev = d.exists ? d.data() : null;
-      if (eventSeen && ev?.startedAt && ev.startedAt !== S.event?.startedAt) toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.');
+      if (eventSeen && ev?.startedAt > Date.now() && ev.startedAt !== S.event?.startedAt) toast(`이벤트가 ${clockText(ev.startedAt)}에 시작돼요.`);
       eventSeen = true;
       S.event = ev;
       render();

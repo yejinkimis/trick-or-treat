@@ -322,7 +322,7 @@ for (const changeRound of [false, true]) {
     assert.equal(g.run('S.busy'), true);
     await g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`);
     assert.equal(g.run('attempts'), 1);
-    if (changeRound) g.run(`S.event = { id: 'another-round' }`);
+    if (changeRound) g.run(`S.event = { id: 'another-round', startedAt: 1, endsAt: Date.now() + 60000 }`);
     g.fire(1000);
     await g.finish(flow);
     assert.equal(g.run('attempts'), changeRound ? 1 : 2);
@@ -1234,4 +1234,21 @@ test('my pumpkins and field come from my private document, not the stale public 
   assert.equal(run('S.players.u1.field[0].id'), 'p1');
   run(`S.ownPrivate = null; applyFirebasePlayers();`);
   assert.equal(run('S.players.u1.pumpkins'), 2, 'before the private document arrives the public value is used');
+});
+
+test('a scheduled event shows its start time, stays practice until then, and turns into the event by itself', () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.players.me.round = 'practice'; S.players.me.candies = 14;
+    S.event = { id: 'halloween', startedAt: Date.now() + 2 * 3600000, endsAt: Date.now() + 16 * 3600000 }; noticeEventTurn();`);
+  assert.equal(g.run('eventState()'), 'before');
+  assert.equal(g.run('currentRound()'), 'practice');
+  assert.equal(g.run('candiesOf("me")'), 14, 'practice candy still counts before the start');
+  assert.match(g.run('eventLine()'), /시작 \(1:59:\d\d 남음\) · 연습 중|시작 \(2:00:00 남음\) · 연습 중/);
+  g.run(`S.event = { ...S.event, startedAt: Date.now() - 1 }; noticeEventTurn();`);
+  assert.equal(g.run('eventState()'), 'running');
+  assert.equal(g.run('candiesOf("me")'), 10, 'everyone starts the event with ten');
+  assert.match(g.elements.get('toast').textContent, /이벤트 시작/);
+  g.run(`S.event = { ...S.event, endsAt: Date.now() - 1 }; noticeEventTurn();`);
+  assert.equal(g.run('eventState()'), 'ended');
+  assert.match(g.elements.get('toast').textContent, /이벤트가 끝났어요/);
 });
