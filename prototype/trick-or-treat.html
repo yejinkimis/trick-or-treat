@@ -45,6 +45,21 @@ img.px-img{image-rendering:pixelated;display:block}
 .quest b{font-size:.95rem;font-weight:400}
 .quest>span:last-child{color:var(--muted)}
 .quest progress{width:100%;height:10px;accent-color:var(--pumpkin)}
+.panel-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.fold{all:unset;cursor:pointer;flex:none;font-size:.75rem;color:var(--muted);padding:2px 4px;border-bottom:2px dashed var(--muted)}
+.fold:focus-visible{outline:3px dashed var(--gold);outline-offset:3px}
+.folded > :not(.panel-head){display:none !important}
+.board{display:grid;gap:3px;margin-top:14px;padding:8px 12px;font-size:.8rem;background:rgba(42,31,61,.55);border-color:rgba(255,244,226,.55);box-shadow:none}
+.board-body{all:unset;display:grid;gap:3px;cursor:pointer}
+.board-body:focus-visible{outline:3px dashed var(--gold);outline-offset:4px}
+.board-label{font-size:.75rem;color:var(--gold)}
+.board ol{margin:0;padding:0;list-style:none;display:grid;gap:2px}
+.board li{display:flex;justify-content:space-between;gap:8px}
+.board li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.board li b{font-family:var(--f-px);font-weight:400;color:var(--gold);white-space:nowrap}
+.board li.mine span{color:var(--gold)}
+.board-me{color:var(--muted)}
+
 .quest[data-step="knock"]{border-color:var(--gold)}
 .me .status{grid-column:1/-1;font-size:.8rem;color:var(--muted)}
 
@@ -96,7 +111,7 @@ img.px-img{image-rendering:pixelated;display:block}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .swatch{all:unset;cursor:pointer;width:34px;height:34px;border:3px solid var(--edge);box-shadow:0 0 0 2px var(--muted)}
 .swatch[aria-pressed="true"]{box-shadow:0 0 0 3px var(--gold)}
-textarea,input[type=text],input[type=password],input[type=number]{font:inherit;color:var(--text);background:var(--night);border:3px solid var(--muted);padding:6px 10px;min-width:0;border-radius:0}
+textarea,input[type=text],input[type=search],input[type=password],input[type=number]{font:inherit;color:var(--text);background:var(--night);border:3px solid var(--muted);padding:6px 10px;min-width:0;border-radius:0}
 input:focus{outline:none;border-color:var(--gold)}
 input[type=number]{width:5em;font-variant-numeric:tabular-nums}
 input[type=text]{flex:1 1 180px}
@@ -143,6 +158,9 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .rank li.mine{background:var(--panel-2)}
 .rank .no{font-family:var(--f-px);font-weight:700;color:var(--gold);width:1.8em;text-align:center;flex:none}
 .rank .cnt{font-family:var(--f-px);color:var(--gold);white-space:nowrap}
+.rank .pbtn{font-size:.85rem;padding:7px 9px 6px}
+#cr-search{display:block;box-sizing:border-box;width:100%;margin:4px 0}
+.crew small{color:var(--muted);margin-left:6px}
 .auth .sheet{width:min(480px,100%)}
 .auth form{display:grid;gap:12px}
 .auth-error{margin:0;padding:8px 10px;border:2px solid var(--candy);color:var(--text)}
@@ -193,16 +211,24 @@ textarea:focus{outline:none;border-color:var(--gold)}
 <div class="hud tl">
   <div class="px me" id="me"></div>
   <section class="px quest" id="quest" aria-label="현재 퀘스트" aria-live="polite" hidden>
-    <span class="quest-label" id="quest-label"></span>
+    <div class="panel-head"><span class="quest-label" id="quest-label"></span><button class="fold" type="button" data-fold="quest" aria-expanded="true">접기</button></div>
     <b id="quest-title"></b>
     <progress id="quest-progress" max="3" value="0" aria-label="수집한 호박"></progress>
     <span id="quest-detail"></span>
+  </section>
+  <section class="px board" id="board" aria-label="사탕 순위" hidden>
+    <div class="panel-head"><span class="board-label" id="board-label">사탕 순위 TOP 3</span><button class="fold" type="button" data-fold="board" aria-expanded="true">접기</button></div>
+    <button class="board-body" id="board-open" type="button" aria-label="사탕 순위 열기">
+      <ol id="board-list"></ol>
+      <span class="board-me" id="board-me"></span>
+    </button>
   </section>
 </div>
 <div class="hud tr">
   <button class="pbtn" id="open-wardrobe" type="button">옷장</button>
   <button class="pbtn" id="open-home" type="button">우리 집</button>
   <button class="pbtn" id="open-rank" type="button">순위</button>
+  <button class="pbtn" id="open-crew" type="button">크루 찾기</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
   <button class="pbtn" id="open-online" type="button" hidden>마을 지도</button>
   <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
@@ -303,6 +329,16 @@ textarea:focus{outline:none;border-color:var(--gold)}
   </div>
 </div>
 
+<div class="modal" id="crew" hidden>
+  <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="cr-title">
+    <div class="sheet-head">
+      <h2 id="cr-title">크루 찾기<small id="cr-sub"></small></h2>
+      <button class="pbtn" type="button" data-close="crew">닫기</button>
+    </div>
+    <input type="search" id="cr-search" placeholder="크루 닉네임으로 찾기" aria-label="크루 닉네임으로 찾기" autocomplete="off">
+    <ol class="book rank crew" id="cr-list"></ol>
+  </div>
+</div>
 <div class="modal" id="online" hidden>
   <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="on-title">
     <div class="sheet-head">
@@ -481,7 +517,7 @@ const BREW_LINES = {
   10: '솥이 번쩍! 사탕 10개가 쏟아졌어요!',
 };
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'online', 'note', 'auth', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'online', 'note', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -648,7 +684,7 @@ function rankingOf(players) {
     .sort((a, b) => b.n - a.n || nameOf(a.id).localeCompare(nameOf(b.id), 'ko'));
 }
 const RANK_REFRESH_MS = 3 * 60 * 1000;
-async function loadRanking() {
+async function loadRanking({ quiet = false } = {}) {
   if (S.mode !== 'firebase' || S.rankLoading || Date.now() - (S.rankAt || 0) < 30000) return;
   S.rankLoading = true;
   try {
@@ -658,7 +694,8 @@ async function loadRanking() {
     S.rankAt = Date.now();
     renderHud();
     if (!$('#rank').hidden) renderRanking();
-  } catch { toast('순위를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.'); }
+    if (!$('#crew').hidden) renderCrew();
+  } catch { if (!quiet) toast('순위를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.'); }
   finally { S.rankLoading = false; }
 }
 function activeFx(id) {
@@ -783,6 +820,7 @@ function buildMap() {
     if (tiles[ty * COLS + tx] === 0 && !taken.has(`${tx},${ty}`)) grass.push({ tx, ty });
   }
   Object.assign(MAP, { tiles, rows, slots, grass, gates });
+  fitZoom();
   S.pumpkins = S.pumpkins.filter((p) => tiles[p.ty * COLS + p.tx] === 0);
   if (blocked(S.pos.x, S.pos.y)) Object.assign(S.pos, { x: SPAWN.x, y: SPAWN.y });
 }
@@ -804,9 +842,13 @@ function resize() {
   dpr = window.devicePixelRatio || 1;
   canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr));
   canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr));
-  Z = Math.max(2, Math.floor(Math.min(canvas.width / (T * 14), canvas.height / (T * 9))));
-  LABEL = Math.max(12 * dpr, Z * 4.2);
+  fitZoom();
   ctx.imageSmoothingEnabled = false;
+}
+// 화면 크기와 상관없이 마을 지도 전체가 같은 비율로 한 화면에 들어오게 맞춘다.
+function fitZoom() {
+  Z = Math.min(canvas.width / (COLS * T), canvas.height / (Math.max(1, MAP.rows) * T));
+  LABEL = Math.max(12 * dpr, Z * 4.2);
 }
 new ResizeObserver(resize).observe(canvas);
 
@@ -833,9 +875,11 @@ function livePresence(tree, serverNow) {
 }
 // 위쪽 표지판은 이전 마을, 아래쪽 표지판은 다음 마을로 이어지고, 도착하면 반대쪽 표지판 앞에 선다.
 function travel(step) {
-  return travelTo(nextVillage(step), step > 0 ? 1 * T + 10 : (MAP.rows - 2) * T + 10);
+  const y = step > 0 ? 1 * T + 10 : (MAP.rows - 2) * T + 10;
+  return travelTo(nextVillage(step), () => ({ x: 13 * T, y }));
 }
-async function travelTo(village, arriveY = SPAWN.y) {
+const atSpawn = () => ({ x: SPAWN.x, y: SPAWN.y });
+async function travelTo(village, arrive = atSpawn) {
   if (S.busy || !S.room?.enterVillage) return;
   S.busy = true; S.target = null; keys.clear();
   const from = { ...S.pos }, veil = $('#veil');
@@ -845,7 +889,7 @@ async function travelTo(village, arriveY = SPAWN.y) {
     await wait(300);
     await S.room.enterVillage(village);
     render();
-    Object.assign(S.pos, { x: arriveY === SPAWN.y ? SPAWN.x : 13 * T, y: arriveY, moving: false });
+    Object.assign(S.pos, arrive(), { moving: false });
     presenceDirty = true;
   } catch {
     Object.assign(S.pos, { x: from.x, y: clamp(from.y, 1 * T + 10, (MAP.rows - 2) * T + 10) });
@@ -855,6 +899,30 @@ async function travelTo(village, arriveY = SPAWN.y) {
     veil.classList.remove('on');
     S.busy = false;
   }
+}
+const doorOf = (id) => { const slot = MAP.slots.find((s) => s.owner === id); return slot ? doorFront(slot) : null; };
+// 온라인에서는 서버 순위 목록의 마을 번호로, 혼자 노는 마을에서는 지도에 집이 있는지로 찾아간다.
+const houseVillage = (id) => S.mode === 'firebase' ? S.players[id]?.village || S.rankList?.find((r) => r.id === id)?.village || null : null;
+const canVisit = (id) => Boolean(houseVillage(id) || doorOf(id));
+// 다른 마을 집이면 마을을 넘어가고, 같은 마을이면 바로 그 집 문 앞에 선다.
+async function goToHouse(id) {
+  const village = houseVillage(id);
+  if (village && village !== S.village) { await travelTo(village, () => doorOf(id) || atSpawn()); return Boolean(doorOf(id)); }
+  const door = doorOf(id);
+  if (!door) return false;
+  Object.assign(S.pos, door, { moving: false });
+  S.target = null;
+  presenceDirty = true;
+  return true;
+}
+async function visitHouse(id) {
+  closeModal('crew');
+  if (!(await goToHouse(id))) toast('그 크루의 집을 찾지 못했어요.');
+}
+// '우리 집'은 어디에 있든 먼저 내 집 문 앞으로 데려다 주고 집 창을 연다.
+async function goHome() {
+  if (!S.busy && myCostume()) await goToHouse(S.me);
+  openModal('house');
 }
 function update(dt) {
   const p = S.pos;
@@ -1523,7 +1591,7 @@ function eventLine() {
   const st = eventState();
   const list = ranking();
   const rank = list.findIndex((r) => r.id === S.me) + 1;
-  const mine = rank ? ` · 내 순위 ${rank}등` : '';
+  const mine = rank ? ` · 내 순위 ${list.length}명 중 ${rank}등` : '';
   if (st === 'before') return `이벤트 시작 전 · 연습 중${mine}`;
   if (st === 'ended') {
     const top = list[0];
@@ -1547,7 +1615,10 @@ function renderQuest() {
     compete: ['다음 목표', '사탕을 모아 순위를 올리세요', `사탕 잡기에 성공하면 상대에게서 1개 가져와요. 호박 ${BREW_COST}개를 모으면 광장 솥에서 연금술도 할 수 있어요 (지금 ${p.pumpkins || 0}개).`],
     ended: ['이벤트 종료', '최종 사탕 순위를 확인하세요', '순위 버튼에서 결과를 볼 수 있어요. 최종 순위에 따라 선물을 드려요.'],
   }[step];
-  for (const [id, value] of [['quest-label', content[0]], ['quest-title', content[1]], ['quest-detail', content[2]]]) {
+  applyFold(el, 'quest');
+  // 접어 두어도 지금 목표는 보이도록 머리말에 목표를 함께 적는다.
+  const head = folds.quest ? `${content[0]} · ${content[1]}` : content[0];
+  for (const [id, value] of [['quest-label', head], ['quest-title', content[1]], ['quest-detail', content[2]]]) {
     if ($(`#${id}`).textContent !== value) $(`#${id}`).textContent = value;
   }
   $('#quest-progress').hidden = step !== 'pumpkins';
@@ -1578,6 +1649,36 @@ function renderHud() {
     <span class="status reward">${sharedGame() ? '최종 사탕 순위에 따라 실제 선물 지급' : '연습 중 · 선물 순위에 포함되지 않아요'}</span>`;
   $('#account-session').hidden = !['account', 'firebase'].includes(S.mode);
   $('#open-online').hidden = S.mode !== 'firebase';
+  renderBoard();
+}
+
+// 퀘스트와 순위판을 접었는지는 이 기기에만 기억해 둔다.
+const FOLD_KEY = 'trick-or-treat.folds';
+const folds = (() => { try { return JSON.parse(localStorage.getItem(FOLD_KEY)) || {}; } catch { return {}; } })();
+function toggleFold(id) {
+  folds[id] = !folds[id];
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify(folds)); } catch { /* 저장이 막혀도 이번 화면에서는 접힌다 */ }
+  renderHud();
+}
+function applyFold(el, id) {
+  el.classList.toggle('folded', Boolean(folds[id]));
+  const button = el.querySelector('.fold');
+  button.textContent = folds[id] ? '펴기' : '접기';
+  button.setAttribute('aria-expanded', String(!folds[id]));
+}
+
+// 순위 창을 열지 않아도 1~3등과 내 순위가 보이게 한다. 온라인 순위는 서버가 3분마다 모은 목록이다.
+function renderBoard() {
+  const list = ranking(), board = $('#board');
+  board.hidden = !list.length || S.readOnly;
+  if (board.hidden) return;
+  const rank = list.findIndex((r) => r.id === S.me) + 1;
+  applyFold(board, 'board');
+  const label = folds.board ? `사탕 순위 · ${rank ? `${list.length}명 중 ${rank}등` : `참가 ${list.length}명`}` : '사탕 순위 TOP 3';
+  if ($('#board-label').textContent !== label) $('#board-label').textContent = label;
+  const html = list.slice(0, 3).map((r, i) => `<li${r.id === S.me ? ' class="mine"' : ''}><span>${i + 1}. ${esc(nameOf(r.id))}</span><b>${r.n}개</b></li>`).join('');
+  if (html !== renderBoard.last) $('#board-list').innerHTML = renderBoard.last = html;
+  $('#board-me').textContent = rank ? `나 ${list.length}명 중 ${rank}등 · 사탕 ${list[rank - 1].n}개` : `참가 ${list.length}명`;
 }
 
 // 마을 지도는 이미 받고 있는 마을 이름과 접속자 기록(마을 번호만)으로 그려서 추가 읽기가 없다.
@@ -1761,6 +1862,22 @@ function renderRanking() {
         <img class="px-img" src="${spriteUrl(r.costume || S.players[r.id]?.costume || 'plain', 2)}" alt="">
         <div><b>${esc(nameOf(r.id))}</b>${r.id === S.me && nameOf(r.id) !== '나' ? ' (나)' : ''}${S.names[r.id] && S.names[r.id] !== nameOf(r.id) ? `<small class="real">${esc(S.names[r.id])}</small>` : ''}</div><span class="cnt">${r.n}개</span></li>`).join('')
     : `<li class="note">${S.rankLoading ? '순위를 불러오는 중…' : '아직 마을에 아무도 없어요.'}</li>`;
+}
+
+// 크루 명단은 순위와 같은 서버 목록(혼자 노는 마을에서는 지도 위 집)에서 닉네임으로 찾는다.
+function renderCrew() {
+  const query = $('#cr-search').value.trim().toLowerCase();
+  const crew = ranking().filter((r) => canVisit(r.id)).sort((a, b) => nameOf(a.id).localeCompare(nameOf(b.id), 'ko'));
+  const shown = crew.filter((r) => !query || nameOf(r.id).toLowerCase().includes(query));
+  $('#cr-sub').textContent = `크루 ${crew.length}명`;
+  const html = shown.length
+    ? shown.map((r) => `<li class="${r.id === S.me ? 'mine' : ''}">
+        <img class="px-img" src="${spriteUrl(r.costume || S.players[r.id]?.costume || 'plain', 2)}" alt="">
+        <div><b>${esc(nameOf(r.id))}</b>${houseVillage(r.id) ? `<small>${esc(villageLabel(houseVillage(r.id)))}</small>` : ''}</div>
+        <button class="pbtn" type="button" data-visit="${esc(r.id)}">${r.id === S.me ? '우리 집' : '집 가기'}</button></li>`).join('')
+    : `<li class="note">${query ? '그런 닉네임의 크루가 없어요.' : S.rankLoading ? '크루 명단을 불러오는 중…' : '아직 집이 있는 크루가 없어요.'}</li>`;
+  // 명단이 갱신돼도 내용이 같으면 그대로 두어 누르려던 '집 가기' 버튼이 바뀌지 않게 한다.
+  if (html !== renderCrew.last) $('#cr-list').innerHTML = renderCrew.last = html;
   $('#rk-admin').hidden = !S.isOwner;
   const canFinalize = S.mode === 'firebase' && S.event && !S.event.results && eventState() === 'ended';
   $('#ev-stop').disabled = eventState() !== 'running' && !canFinalize;
@@ -1774,6 +1891,7 @@ function render() {
   if (!$('#wardrobe').hidden) renderWardrobe();
   if (!$('#house').hidden) renderHouse();
   if (!$('#rank').hidden) renderRanking();
+  if (!$('#crew').hidden) renderCrew();
   if (!$('#online').hidden) renderOnline();
   if (!$('#note').hidden) renderNote();
   if (S.near) { S.near = { ...S.near, key: null }; updateNear(); }
@@ -2190,6 +2308,7 @@ function openModal(id) {
   if (id === 'wardrobe') renderWardrobe();
   if (id === 'house') { S.muralDraft = null; renderHouse(); }
   if (id === 'rank') { void loadRanking(); renderRanking(); }
+  if (id === 'crew') { void loadRanking(); renderCrew(); }
   if (id === 'online') renderOnline();
   if (id === 'note') renderNote();
   $(`#${id}`).hidden = false;
@@ -2370,9 +2489,12 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'account-session') logoutAccount();
   else if (t.id === 'auth-switch') toggleAuthMode();
   else if (t.id === 'open-wardrobe') openModal('wardrobe');
-  else if (t.id === 'open-home') openModal('house');
-  else if (t.id === 'open-rank') openModal('rank');
+  else if (t.id === 'open-home') void goHome();
+  else if (t.id === 'open-rank' || t.id === 'board-open') openModal('rank');
+  else if (t.id === 'open-crew') openModal('crew');
+  else if (t.dataset.fold) toggleFold(t.dataset.fold);
   else if (t.id === 'open-online') openModal('online');
+  else if (t.dataset.visit) void visitHouse(t.dataset.visit);
   else if (t.dataset.go) { closeModal('online'); void travelTo(Number(t.dataset.go)); }
   else if (t.id === 'open-chat') openChat();
   else if (t.id === 'act-btn') act();
@@ -2413,6 +2535,7 @@ document.addEventListener('click', (e) => {
 });
 $('#chatbar').addEventListener('submit', (e) => { e.preventDefault(); sendChat(); });
 $('#auth-form').addEventListener('submit', submitAccountForm);
+$('#cr-search').addEventListener('input', renderCrew);
 $('#chat-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeChat(); } });
 $('#in-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !isImeComposing(e)) {
@@ -2648,7 +2771,9 @@ async function connectFirebaseGame(uid) {
   }));
   const sweep = setInterval(() => { refreshPeers(); refreshOnline(); }, 10000);
   const beat = setInterval(() => { if (S.networkConnected && !disposed) void writeOnline().catch(() => {}); }, PRESENCE_HEARTBEAT_MS);
-  stops.push(() => clearInterval(sweep), () => clearInterval(beat));
+  const rankTimer = setInterval(() => void loadRanking({ quiet: true }), RANK_REFRESH_MS);
+  stops.push(() => clearInterval(sweep), () => clearInterval(beat), () => clearInterval(rankTimer));
+  void loadRanking({ quiet: true });
   stops.push(rt.onValue(rt.ref(a.database, 'online'), (snapshot) => {
     onlineTree = snapshot.val() || {};
     for (const [id, entry] of Object.entries(onlineTree[uid] || {})) {
