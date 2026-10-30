@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
-const { DURATION_MS, MAX_LEVEL, createCandyPath, evaluateCandyChallenge } = require('./candy-challenge.cjs');
+const { MAX_LEVEL, STALE_CHALLENGE_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 const roundOf = (event) => event?.id || 'practice';
@@ -98,21 +98,20 @@ async function action(authorization, input) {
         if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
-        if (prior.round === round && !prior.used && prior.expiresAt > now) fail('진행 중인 노크를 먼저 마쳐 주세요.');
+        if (prior.round === round && !prior.used && now - (prior.createdAt || 0) < STALE_CHALLENGE_MS) fail('진행 중인 노크를 먼저 마쳐 주세요.');
         const sameTarget = prior.streakHost === input.host && prior.streakRound === round;
         const level = sameTarget ? Math.min(MAX_LEVEL, (prior.streakCount || 1) + 1) : 1;
         const challenge = {
-          id: randomUUID(), host: input.host, round, createdAt: now, expiresAt: now + 30000, used: false,
-          duration: DURATION_MS, level, path: createCandyPath(level),
+          id: randomUUID(), host: input.host, round, createdAt: now, used: false,
+          level, seed: createCandySeed(),
           streakHost: input.host, streakRound: round, streakCount: level,
         };
         tx.set(challengeRef, challenge);
-        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, expiresAt: challenge.expiresAt,
-          duration: challenge.duration, level, path: challenge.path } };
+        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed } };
       } else if (type === 'knock-finish') {
         const challengeDoc = await tx.get(challengeRef);
         const challenge = challengeDoc.exists ? challengeDoc.data() : null;
-        if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round || now > challenge.expiresAt) fail('노크가 만료됐어요. 다시 시도해 주세요.');
+        if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round) fail('도전이 끝났거나 다시 시작됐어요. 다시 시도해 주세요.');
         const hostRef = db.collection('gamePlayers').doc(challenge.host);
         const hostDoc = await tx.get(hostRef);
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
