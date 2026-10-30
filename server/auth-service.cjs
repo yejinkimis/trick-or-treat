@@ -124,6 +124,9 @@ async function checkLoginLimit(db, nicknameKey) {
 
 async function signup({ nickname: rawNickname, password: rawPassword }) {
   const { nickname, key } = cleanNickname(rawNickname);
+  if (/\p{Default_Ignorable_Code_Point}/u.test(nickname)) {
+    throw new AuthError(400, 'invalid-nickname', '보이지 않는 문자는 닉네임에 사용할 수 없어요.');
+  }
   const password = validatePassword(rawPassword, { signup: true });
   const firebase = services();
   const claimRef = firebase.db.collection('nicknameClaims').doc(key);
