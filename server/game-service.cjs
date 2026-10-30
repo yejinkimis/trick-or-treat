@@ -1,16 +1,14 @@
-const { randomUUID, randomInt } = require('node:crypto');
+const { randomUUID } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
+const { DURATION_MS, MAX_LEVEL, createCandyPath, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
-const TRICKS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
 const roundOf = (event) => event?.id || 'practice';
 const balance = (player, event) => player.round === roundOf(event) ? player.candies : 10;
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
 const fail = (message, status = 400) => { throw new AuthError(status, 'game-action-rejected', message); };
-const roll = () => randomInt(1000000) / 1000000;
-
 async function finalResults(tx, db, event, cutoff) {
   if (event.results) return event.results;
   const participants = await tx.get(db.collection('gamePlayers'));
@@ -18,21 +16,6 @@ async function finalResults(tx, db, event, cutoff) {
     .filter((p) => p.costume && (p.readyAt || p.joinedAt || 0) <= cutoff)
     .map((p) => ({ id: p.id, nick: p.nick, costume: p.costume, n: balance(p, event) }))
     .sort((a, b) => b.n - a.n || a.nick.localeCompare(b.nick, 'ko'));
-}
-
-function evaluateChallenge(challenge, presses, now = Date.now()) {
-  if (!Array.isArray(presses) || presses.length > 3) fail('노크 입력을 확인해 주세요.');
-  let previous = 0;
-  for (let i = 0; i < presses.length; i++) {
-    const time = presses[i];
-    if (!Number.isFinite(time) || time < previous || time - previous > 6000
-      || time > now - challenge.createdAt + 250 || time < 0) fail('노크 입력 시간이 올바르지 않아요.');
-    const raw = (time / 1000 * challenge.speed + challenge.phase) % 2;
-    const position = raw < 1 ? raw : 2 - raw;
-    if (Math.abs(position - challenge.centers[i]) > challenge.zone / 2 + 0.00001) return false;
-    previous = time;
-  }
-  return presses.length === 3;
 }
 
 async function session(authorization) {
@@ -114,15 +97,18 @@ async function action(authorization, input) {
         ]);
         if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
-        if (pending.exists && !pending.data().used && pending.data().expiresAt > now) fail('진행 중인 노크를 먼저 마쳐 주세요.');
-        const zone = Math.max(.20, .32 - balance(host.data(), event) * .004);
+        const prior = pending.exists ? pending.data() : {};
+        if (prior.round === round && !prior.used && prior.expiresAt > now) fail('진행 중인 노크를 먼저 마쳐 주세요.');
+        const sameTarget = prior.streakHost === input.host && prior.streakRound === round;
+        const level = sameTarget ? Math.min(MAX_LEVEL, (prior.streakCount || 1) + 1) : 1;
         const challenge = {
           id: randomUUID(), host: input.host, round, createdAt: now, expiresAt: now + 30000, used: false,
-          zone, speed: .78 + roll() * .30, phase: roll() * 2,
-          centers: [.5, ...Array.from({ length: 2 }, () => zone / 2 + .05 + roll() * (.9 - zone))],
+          duration: DURATION_MS, level, path: createCandyPath(level),
+          streakHost: input.host, streakRound: round, streakCount: level,
         };
         tx.set(challengeRef, challenge);
-        result = { challenge };
+        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, expiresAt: challenge.expiresAt,
+          duration: challenge.duration, level, path: challenge.path } };
       } else if (type === 'knock-finish') {
         const challengeDoc = await tx.get(challengeRef);
         const challenge = challengeDoc.exists ? challengeDoc.data() : null;
@@ -130,16 +116,19 @@ async function action(authorization, input) {
         const hostRef = db.collection('gamePlayers').doc(challenge.host);
         const hostDoc = await tx.get(hostRef);
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
-        const win = evaluateChallenge(challenge, input.presses, now);
+        const outcome = evaluateCandyChallenge(challenge, input.inputs, input.elapsedMs, now);
+        if (!outcome.valid) fail(outcome.message || '조작 기록을 확인해 주세요.');
+        if (!outcome.finished) fail('도전이 아직 끝나지 않았어요.');
+        const win = outcome.won;
         const hostCount = balance(hostDoc.data(), event);
-        const moved = (win ? hostCount : count) > 0;
-        const delta = moved ? (win ? 1 : -1) : 0;
-        const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved,
-          ...(!win ? { k: TRICKS[randomInt(TRICKS.length)] } : {}) };
-        tx.update(playerRef, { round, candies: count + delta, knockAt: now, knocks: [...(player.knocks || []), entry].slice(-100) });
-        tx.update(hostRef, { round, candies: hostCount - delta });
+        const moved = win && hostCount > 0;
+        const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level };
+        const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now };
+        if (win) playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
+        tx.update(playerRef, playerUpdate);
+        if (moved) tx.update(hostRef, { round, candies: hostCount - 1 });
         tx.update(challengeRef, { used: true });
-        result = { entry, candies: count + delta, hostCandies: hostCount - delta };
+        result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
       } else fail('지원하지 않는 행동이에요.');
     }
     tx.create(receiptRef, { uid, type, result, createdAt: now });
@@ -147,4 +136,4 @@ async function action(authorization, input) {
   }, { maxAttempts: 20 });
 }
 
-module.exports = { session, action, balance, roundOf, evaluateChallenge };
+module.exports = { session, action, balance, roundOf, evaluateCandyChallenge };

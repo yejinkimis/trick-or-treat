@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { signup, updateProfile } = require('../server/auth-service.cjs');
-const { session, action, balance, evaluateChallenge } = require('../server/game-service.cjs');
+const { session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
 
 async function player(prefix) {
@@ -21,18 +21,9 @@ const saved = async (p) => (await services().db.collection('gamePlayers').doc(p.
 
 async function winningChallenge(visitor, host) {
   const { challenge } = await act(visitor, { type: 'knock-start', host: host.uid });
-  const presses = []; let last = 0;
-  for (const center of challenge.centers) {
-    let time = last;
-    for (; time < last + 6000; time++) {
-      const raw = (time / 1000 * challenge.speed + challenge.phase) % 2;
-      if (Math.abs((raw < 1 ? raw : 2 - raw) - center) < challenge.zone / 3) break;
-    }
-    presses.push(time); last = time + 1;
-  }
-  await services().db.collection('gameChallenges').doc(visitor.uid).update({ createdAt: Date.now() - 20000 });
-  assert.equal(evaluateChallenge({ ...challenge, createdAt: Date.now() - 20000 }, presses), true);
-  return { challengeId: challenge.id, presses };
+  const path = [{ t: 0, y: .05 }, { t: challenge.duration, y: .05 }];
+  await services().db.collection('gameChallenges').doc(visitor.uid).update({ createdAt: Date.now() - 6000, path });
+  return { challengeId: challenge.id, inputs: [{ t: 20, down: true }], elapsedMs: 6000, level: challenge.level };
 }
 
 test('server stores atomic candy transfers, deduplicates retries, resets rounds and freezes final results', async () => {
@@ -74,14 +65,20 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   assert.equal(balance(await saved(first), next.event), 8);
   await services().db.collection('gamePlayers').doc(first.uid).update({ knockAt: 0 });
   const failed = (await act(first, { type: 'knock-start', host: host.uid })).challenge;
-  const lost = await act(first, { type: 'knock-finish', challengeId: failed.id, presses: [] });
-  assert.equal(lost.candies, 7);
-  assert.equal(lost.hostCandies, 11);
+  assert.equal(failed.level, 1, 'a new event resets the challenger streak');
+  await services().db.collection('gameChallenges').doc(first.uid).update({ createdAt: Date.now() - 4000,
+    path: [{ t: 0, y: .05 }, { t: failed.duration, y: .05 }] });
+  const lost = await act(first, { type: 'knock-finish', challengeId: failed.id, inputs: [], elapsedMs: 2800 });
+  assert.equal(lost.candies, 8);
+  assert.equal(lost.hostCandies, 10);
   await services().db.collection('gamePlayers').doc(first.uid).update({ knockAt: 0, candies: 0 });
   const empty = (await act(first, { type: 'knock-start', host: host.uid })).challenge;
-  const noCandy = await act(first, { type: 'knock-finish', challengeId: empty.id, presses: [] });
+  assert.equal(empty.level, 2, 'a repeat challenge to the same house is harder');
+  await services().db.collection('gameChallenges').doc(first.uid).update({ createdAt: Date.now() - 4000,
+    path: [{ t: 0, y: .05 }, { t: empty.duration, y: .05 }] });
+  const noCandy = await act(first, { type: 'knock-finish', challengeId: empty.id, inputs: [], elapsedMs: 2800 });
   assert.equal(noCandy.candies, 0);
-  assert.equal(noCandy.hostCandies, 11);
+  assert.equal(noCandy.hostCandies, 10);
   assert.equal(noCandy.entry.moved, false);
   await act(owner, { type: 'event-stop' });
 });
