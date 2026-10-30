@@ -95,7 +95,7 @@ test('Firebase rankings use server balances and reset to ten for a new event', (
     S.players.host.round = 'round1'; S.players.host.candies = 13;
     S.players.me.knocks = [{ h: 'host', r: 'win', at: Date.now() }];`);
   assert.equal(g.run('candiesOf(S.me)'), 7);
-  assert.equal(g.run('ranking()[0].id'), 'host');
+  assert.equal(g.run('rankingOf(S.players)[0].id'), 'host');
   g.run(`S.event.id = 'round2'`);
   assert.equal(g.run('candiesOf(S.me)'), 10);
   assert.equal(g.run('candiesOf("host")'), 10);
@@ -295,7 +295,7 @@ test('a miss leaves candy unchanged; decor reduces rank balance', () => {
   assert.equal(g.run('candiesOf("host")'), 10);
   g.run(`S.players.me.knocks = []; S.ledger = null; buyDecor('lantern')`);
   assert.equal(g.run('candiesOf("me")'), 8);
-  assert.equal(g.run('ranking()[0].id'), 'host');
+  assert.equal(g.run('rankingOf(S.players)[0].id'), 'host');
 });
 
 test('HUD explains rank and prizes before, during and after event', () => {
@@ -658,4 +658,78 @@ test('own costume survives until the village snapshot arrives', () => {
   assert.equal(run('myCostume()'), 'cat');
   run(`S.firebasePlayers = { u1: { ...blankPlayer(), nick: '나', costume: 'witch' } }; applyFirebasePlayers();`);
   assert.equal(run('myCostume()'), 'witch');
+});
+
+function village(g) {
+  g.run(`S.mode = 'firebase'; S.me = 'me'; S.village = 1;
+    S.villages = { 1: { n: 1, name: '해골골' }, 2: { n: 2, name: '박쥐떼늪' }, 3: { n: 3, name: '관뚜껑묘지' } };
+    S.players = {
+      me: { ...blankPlayer(), nick: '나', costume: 'ghost', village: 1, joinedAt: 1 },
+      near: { ...blankPlayer(), nick: '이웃', costume: 'witch', village: 1, joinedAt: 2 },
+      far: { ...blankPlayer(), nick: '먼집', costume: 'cat', village: 2, joinedAt: 3 },
+    }; render();`);
+}
+
+test('an online village shows only its own eight lots and wraps its gates around', () => {
+  const g = game(); village(g);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(houseOwners())')), ['me', 'near']);
+  assert.equal(g.run('MAP.slots.length'), 8);
+  assert.equal(g.run('MAP.gates'), true);
+  assert.equal(g.run('nextVillage(1)'), 2);
+  assert.equal(g.run('nextVillage(-1)'), 3);
+  g.run('S.village = 3; render();');
+  assert.equal(g.run('nextVillage(1)'), 1);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(houseOwners())')), []);
+  g.run('S.villages = { 1: { n: 1 } }; S.village = 1; render();');
+  assert.equal(g.run('MAP.gates'), false);
+});
+
+test('walking through the bottom sign moves to the next village and arrives at its top sign', async () => {
+  const g = game(); village(g);
+  g.run(`var entered = []; S.room = { peers: () => [], presence: async () => {},
+    enterVillage: async (n) => { entered.push(n); S.village = n; } };
+    S.pos.x = 13 * T; S.pos.y = (MAP.rows - 2) * T + 14; keys.add('d');`);
+  for (let i = 0; i < 10 && !g.run('S.busy'); i++) g.run('update(0.05)');
+  assert.equal(g.run('S.busy'), true);
+  assert.equal(g.elements.get('veil').classList.contains('on'), true);
+  assert.equal(g.elements.get('veil').textContent, '박쥐떼늪');
+  g.fire(300); await tick(); await tick();
+  g.fire(200); await tick();
+  assert.equal(g.run('JSON.stringify(entered)'), '[2]');
+  assert.equal(g.run('S.pos.y'), g.run('T + 10'));
+  assert.equal(g.run('S.busy'), false);
+  assert.equal(g.elements.get('veil').classList.contains('on'), false);
+});
+
+test('visits from another village are read from the host document without double counting', () => {
+  const g = game(); village(g);
+  g.run(`S.seenAt = 0; var toasts = []; toast = (m) => toasts.push(m);
+    S.players.near.knocks = [{ h: 'me', r: 'win', at: 50, c: 'witch', moved: true }];
+    S.players.me.guests = [
+      { v: 'near', r: 'win', at: 50, c: 'witch', moved: true },
+      { v: 'far', nick: '먼집', r: 'win', at: 60, c: 'cat', moved: false },
+      { v: 'far', nick: '먼집', text: '또 올게', at: 70, c: 'cat' },
+    ];
+    delete S.players.far;`);
+  assert.equal(g.run('visitsTo(S.me).length'), 3);
+  g.run(`S.names.far = '먼집'; notifyKnocks();`);
+  assert.equal(g.run('toasts.length'), 3);
+  assert.match(g.run('toasts.at(-1)'), /먼집이 방명록에 글을 남겼어요: 또 올게/);
+  assert.match(g.run('guestbookHtml(S.me)'), /또 올게/);
+});
+
+test('online rankings come from one full read when the rank window opens', async () => {
+  const g = game(); village(g);
+  g.run(`var reads = 0; S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() + 60000 };
+    S.account = { firestore: {}, firestoreSdk: { collection: (db, name) => name, getDocs: async (name) => { reads += 1; return { docs: [
+      { id: 'me', data: () => ({ nick: '나', costume: 'ghost', round: 'r1', candies: 9 }) },
+      { id: 'far', data: () => ({ nick: '먼집', costume: 'cat', round: 'r1', candies: 12 }) },
+    ] }; } } };`);
+  assert.equal(g.run('ranking().length'), 0);
+  g.run(`openModal('rank')`);
+  await tick(); await tick();
+  assert.equal(g.run('reads'), 1);
+  assert.equal(g.run('ranking()[0].id'), 'far');
+  assert.match(g.run('eventLine()'), /내 순위 2등/);
+  assert.match(g.elements.get('rk-list').innerHTML, /먼집/);
 });
