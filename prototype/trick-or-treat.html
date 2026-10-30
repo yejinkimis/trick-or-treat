@@ -54,7 +54,10 @@ img.px-img{image-rendering:pixelated;display:block}
 .bc span{display:block;font-size:.85rem;color:var(--muted)}
 .bc>div{min-width:0}
 
-.hint{position:fixed;z-index:4;left:50%;transform:translateX(-50%);bottom:calc(22px + env(safe-area-inset-bottom,0px));font-size:.88rem;color:var(--text);background:rgba(11,8,16,.72);padding:6px 12px;text-align:center;max-width:calc(100vw - 40px)}
+.hint{position:fixed;z-index:4;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(400px,calc(100vw - 40px));margin:0;color:var(--text);background:rgba(11,8,16,.9);border:3px solid var(--gold);padding:16px 20px;text-align:center;pointer-events:none}
+.hint b{display:block;font-size:1.2rem;font-weight:400;color:var(--gold);margin-bottom:6px}
+.hint span{display:block;font-size:.95rem}
+.hint small{display:block;color:var(--muted);margin-top:8px}
 
 .dialog{position:fixed;z-index:8;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));width:min(560px,calc(100vw - 40px));padding:20px 18px 16px;cursor:pointer}
 .dialog .who{position:absolute;top:-18px;left:14px;font-size:.95rem;padding:3px 10px;background:var(--pumpkin);color:var(--edge);border:3px solid var(--text);box-shadow:0 0 0 3px var(--edge)}
@@ -111,6 +114,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .mc{all:unset;cursor:pointer;width:30px;height:30px;border:3px solid var(--edge);box-shadow:0 0 0 2px var(--muted);font-size:.7rem;text-align:center;line-height:30px;color:var(--text)}
 .mc[aria-pressed="true"]{box-shadow:0 0 0 3px var(--gold)}
 .intro .sheet{width:min(460px,100%);text-align:center;align-items:stretch}
+.intro-footer{display:flex;justify-content:flex-end;margin-top:4px}
 .born{width:96px;height:96px;margin:4px auto 0}
 .born.hatch{animation:hatch .5s}
 @keyframes hatch{0%{transform:scale(.3) rotate(-10deg)}60%{transform:scale(1.25)}100%{transform:none}}
@@ -188,7 +192,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn hot" id="act-btn" type="button"></button>
   <button class="pbtn" id="act-note" type="button" hidden>방명록</button>
 </div>
-<p class="hint" id="hint">방향키·WASD로 걷거나 땅을 눌러 이동해요. 호박 3개로 바구니를 만들면 친구 집 문을 두드릴 수 있어요</p>
+<p class="hint" id="hint" role="status" hidden><b>이제 마을을 걸어 보세요!</b><span>방향키 · WASD 또는 땅을 클릭·터치해서 이동</span><small>캐릭터가 움직이면 이 안내는 사라져요.</small></p>
 
 <div class="dialog px actor-bubble" id="dialog" role="dialog" aria-live="polite" hidden>
   <span class="who" id="dlg-who"></span>
@@ -304,6 +308,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <span class="note">1~12자. 마을 사람들 눈에 이 이름으로 보여요. 나중에 옷장에서 바꿀 수 있어요.</span>
     </div>
+    <div class="intro-footer"><button class="pbtn" id="in-skip" type="button" aria-label="이야기 건너뛰고 이름 정하기">건너뛰기</button></div>
   </div>
 </div>
 
@@ -424,7 +429,16 @@ const FONT = '"Jua", "Gowun Dodum", sans-serif';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const wait = (ms, signal) => new Promise((resolve) => {
+  if (signal?.aborted) { resolve(); return; }
+  const finish = () => {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', finish);
+    resolve();
+  };
+  const timer = setTimeout(finish, ms);
+  signal?.addEventListener('abort', finish, { once: true });
+});
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -1079,6 +1093,7 @@ function frame(now) {
   lastT = now;
   syncPeers();
   update(dt);
+  renderMovementHint();
   draw();
   positionActorBubbles();
   const sec = Math.floor(Date.now() / 1000);
@@ -1204,7 +1219,6 @@ function renderAction() {
     btn.textContent = '호박 따기';
     btn.disabled = S.readOnly || !myCostume();
     box.hidden = false;
-    $('#hint').hidden = true;
     return;
   }
   delete box.dataset.harvest;
@@ -1225,11 +1239,16 @@ function renderAction() {
     btn.disabled = S.readOnly || !myCostume() || ended || !hasBasket(S.me);
   }
   box.hidden = false;
-  $('#hint').hidden = true;
+}
+
+function renderMovementHint() {
+  const hint = $('#hint');
+  const hidden = S.hintHidden || !myCostume() || !S.players[S.me]?.guideSeen || S.guideRunning || S.busy || S.readOnly || modalOpen();
+  if (hint.hidden !== hidden) hint.hidden = hidden;
 }
 
 function hideHint() {
-  if (S.hintHidden) return;
+  if (S.hintHidden || $('#hint').hidden) return;
   S.hintHidden = true;
   $('#hint').hidden = true;
 }
@@ -1275,6 +1294,7 @@ function renderQuest() {
 }
 
 function renderHud() {
+  renderMovementHint();
   renderQuest();
   const c = myCostume();
   const online = new Set();
@@ -1440,13 +1460,28 @@ function render() {
   if (S.near) { S.near = { ...S.near, key: null }; updateNear(); }
 }
 
-let toastTimer;
+let toastTimer, finishToast;
+let toastDone = Promise.resolve();
 function toast(msg) {
+  // 새 알림으로 교체될 때도 기존 대기자는 풀어 주고 현재 알림을 기다릴 수 있게 한다.
+  finishToast?.();
   const t = $('#toast');
   t.textContent = msg;
   t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 3000);
+  toastDone = new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(toastTimer);
+      t.hidden = true;
+      finishToast = null;
+      resolve();
+    };
+    finishToast = finish;
+    toastTimer = setTimeout(finish, 3000);
+  });
+  return toastDone;
+}
+async function waitForToasts() {
+  while (!$('#toast').hidden) await toastDone;
 }
 
 let writes = Promise.resolve();
@@ -1471,8 +1506,9 @@ function saveMe(patch) {
 }
 
 let typing = null, advanceFn = null;
-function typeText(el, text) {
+function typeText(el, text, signal) {
   return new Promise((done) => {
+    if (signal?.aborted) { done(); return; }
     if (reduceMotion()) { el.textContent = text; done(); return; }
     let i = 0;
     const timer = setInterval(() => {
@@ -1480,8 +1516,16 @@ function typeText(el, text) {
       el.textContent = text.slice(0, i);
       if (i >= text.length) finish();
     }, 32);
-    function finish() { clearInterval(timer); el.textContent = text; typing = null; done(); }
-    typing = { finish };
+    function finish() {
+      clearInterval(timer);
+      signal?.removeEventListener('abort', finish);
+      if (!signal?.aborted) el.textContent = text;
+      if (typing === writer) typing = null;
+      done();
+    }
+    const writer = { finish };
+    typing = writer;
+    signal?.addEventListener('abort', finish, { once: true });
   });
 }
 async function say(who, text, kind = '') {
@@ -1676,26 +1720,50 @@ function openModal(id) {
 function closeModal(id) { $(`#${id}`).hidden = true; canvas.focus({ preventScroll: true }); }
 
 const INTRO_LINES = ['10월 31일, 할로윈 밤.', '마을 호박밭 한가운데서 호박 하나가 들썩거려요.', '쩍! 호박이 갈라지더니 새 주민이 태어났어요.'];
+let introController = null;
+function showNameForm() {
+  $('#in-pic').src = spriteUrl('plain', 6);
+  $('#in-pic').classList.remove('hatch');
+  $('#in-text').textContent = '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?';
+  $('#in-skip').hidden = true;
+  $('#in-form').hidden = false;
+  $('#in-name').value = cleanNick(S.players[S.me]?.nick || S.names[S.me]);
+  $('#in-name').focus();
+}
+function skipIntro() {
+  if ($('#intro').hidden || !$('#in-form').hidden) return;
+  introController?.abort();
+  introController = null;
+  showNameForm();
+}
 async function startIntro() {
   if (S.readOnly) return;
+  introController?.abort();
+  const controller = new AbortController();
+  introController = controller;
+  const { signal } = controller;
   const pic = $('#in-pic'), text = $('#in-text');
   $('#in-form').hidden = true;
+  $('#in-skip').hidden = false;
   pic.src = spriteUrl('pumpkin', 6);
   pic.classList.remove('hatch');
   openModal('intro');
+  $('#in-skip').focus();
   for (const [i, line] of INTRO_LINES.entries()) {
     if (i === INTRO_LINES.length - 1) {
       pic.src = spriteUrl('plain', 6);
       void pic.offsetWidth;
       pic.classList.add('hatch');
     }
-    await typeText(text, line);
-    await wait(reduceMotion() ? 200 : 650);
+    await typeText(text, line, signal);
+    if (signal.aborted) return;
+    await wait(reduceMotion() ? 200 : 650, signal);
+    if (signal.aborted) return;
   }
-  await typeText(text, '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?');
-  $('#in-form').hidden = false;
-  $('#in-name').value = cleanNick(S.players[S.me]?.nick || S.names[S.me]);
-  $('#in-name').focus();
+  await typeText(text, '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?', signal);
+  if (signal.aborted) return;
+  introController = null;
+  showNameForm();
 }
 function confirmName() {
   const nick = cleanNick($('#in-name').value);
@@ -1716,19 +1784,27 @@ function renameMe() {
   saveMe({ nick });
   toast(`이제 ${nick}(으)로 불려요.`);
 }
-async function welcomeTips() {
+async function welcomeTips(creationMessage) {
   S.guideRunning = true;
   S.busy = true;
   keys.clear();
+  S.target = null;
   render();
+  if (creationMessage) await toast(creationMessage);
+  await waitForToasts();
   await say('', '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!', 'sys');
   await say('', '먼저 호박 3개로 바구니를 만드세요. 호박 근처에서 버튼이나 Space로 수집할 수 있어요.', 'sys');
   await say('', '바구니를 들고 친구 집 문을 두드리세요. 박자 맞추면 상대 사탕 1개를 가져오고, 놓치면 내 사탕 1개를 빼앗겨요.', 'sys');
   $('#dialog').hidden = true;
   S.guideRunning = false;
-  S.busy = false;
   saveMe({ guideSeen: true });
-  toast(`새 퀘스트가 도착했습니다! ${$('#quest-title').textContent}`);
+  await toast(`새 퀘스트가 도착했습니다! ${$('#quest-title').textContent}`);
+  await waitForToasts();
+  S.busy = false;
+  keys.clear();
+  S.target = null;
+  canvas.focus({ preventScroll: true });
+  renderMovementHint();
 }
 
 function act() {
@@ -1753,7 +1829,6 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   const hit = MAP.slots.find((s) => s.owner && wx >= s.hx * T && wx < s.hx * T + 64 && wy >= s.hy * T - 4 && wy < s.hy * T + 48);
   S.target = hit ? doorFront(hit) : { x: wx, y: wy };
-  hideHint();
 });
 
 document.addEventListener('keydown', (e) => {
@@ -1802,6 +1877,7 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'act-note') openNote(S.near?.owner);
   else if (t.id === 'nt-send') sendNote();
   else if (t.id === 'in-ok') confirmName();
+  else if (t.id === 'in-skip') skipIntro();
   else if (t.dataset.mc) { S.muralColor = t.dataset.mc; renderMuralEditor(S.players[S.me]); }
   else if (t.id === 'mural-clear') { S.muralDraft = new Array(MURAL_CELLS).fill('.'); renderMuralEditor(S.players[S.me]); }
   else if (t.id === 'mural-save') { saveMe({ mural: muralDraft().join('') }); toast('지붕에 그렸어요. 마을 지도에서 확인해 보세요.'); }
@@ -1814,8 +1890,8 @@ document.addEventListener('click', (e) => {
     saveMe({ costume: t.dataset.cos, joinedAt: cur?.joinedAt || Date.now() });
     presenceDirty = true;
     closeModal('wardrobe');
-    toast(first ? `${COSTUMES[t.dataset.cos].name} 분장 완료. 마을에 우리 집도 생겼어요.` : `${COSTUMES[t.dataset.cos].name}로 갈아입었어요.`);
-    if (first) setTimeout(welcomeTips, 500);
+    if (first) welcomeTips(`${COSTUMES[t.dataset.cos].name} 분장 완료. 마을에 우리 집도 생겼어요.`);
+    else toast(`${COSTUMES[t.dataset.cos].name}로 갈아입었어요.`);
   } else if (t.dataset.door) {
     saveMe({ door: Number(t.dataset.door) });
   } else if (t.id === 'ev-start') {

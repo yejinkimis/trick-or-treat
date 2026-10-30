@@ -8,7 +8,7 @@ const html = fs.readFileSync(path.join(__dirname, '../prototype/trick-or-treat.h
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/^boot\(\);$/m, '');
 const tick = () => new Promise(setImmediate);
 
-function game() {
+function game({ reducedMotion = true } = {}) {
   const elements = new Map(), timers = new Map(), frames = new Map();
   let serial = 0, now = 0;
   const drawing = new Proxy({}, { get: (target, key) => target[key] ?? (() => ({ width: 40 })), set: (target, key, value) => (target[key] = value, true) });
@@ -41,16 +41,17 @@ function game() {
   document.body = element();
   const window = { innerWidth: 1024, innerHeight: 768, devicePixelRatio: 1, addEventListener() {} };
   const sandbox = {
-    document, window, console, performance: { now: () => now }, matchMedia: () => ({ matches: true }),
+    document, window, console, AbortController, performance: { now: () => now }, matchMedia: () => ({ matches: reducedMotion }),
     ResizeObserver: class { observe() {} }, HTMLInputElement: class {}, HTMLTextAreaElement: class {},
     requestAnimationFrame(fn) { const id = ++serial; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); },
     setTimeout(fn, delay) { const id = ++serial; timers.set(id, { fn, delay, at: now + delay }); return id; }, clearTimeout(id) { timers.delete(id); },
-    setInterval() { throw Error('Reduced-motion test should not need intervals'); }, clearInterval() {},
+    setInterval(fn, delay) { const id = ++serial; timers.set(id, { fn, delay, at: now + delay, interval: true }); return id; }, clearInterval(id) { timers.delete(id); },
   };
   const context = vm.createContext(sandbox);
   vm.runInContext(source, context);
   const run = (code) => vm.runInContext(code, context);
-  function fire(delay) { const found = [...timers].find(([, t]) => t.delay === delay); assert.ok(found, `Timer ${delay}ms exists`); timers.delete(found[0]); now = found[1].at; found[1].fn(); }
+  function runTimer(id, timer) { now = timer.at; if (timer.interval) timer.at += timer.delay; else timers.delete(id); timer.fn(); }
+  function fire(delay) { const found = [...timers].find(([, t]) => t.delay === delay); assert.ok(found, `Timer ${delay}ms exists`); runTimer(...found); }
   async function finish(promise) {
     let done = false, failure;
     promise.then(() => { done = true; }, (e) => { done = true; failure = e; });
@@ -59,7 +60,7 @@ function game() {
       if (done) break;
       const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
       assert.ok(next, 'Async game flow can advance');
-      timers.delete(next[0]); now = next[1].at; next[1].fn();
+      runTimer(...next);
     }
     assert.ok(done, 'Async game flow finished');
     if (failure) throw failure;
@@ -95,7 +96,7 @@ test('tutorial introduces prizes and unlocks the persistent quest after three me
   assert.equal(g.run('S.busy'), true);
   assert.equal(g.elements.get('quest').hidden, true);
   for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
-  await welcome;
+  await g.finish(welcome);
   assert.equal(g.run('S.busy'), false);
   assert.equal(g.run('S.players.me.guideSeen'), true);
   assert.equal(g.elements.get('quest').dataset.step, 'pumpkins');
@@ -294,4 +295,95 @@ test('two mocked Claude clients share saved quests, candy transfers and event st
   await tick();
   assert.equal(two.run('eventState()'), 'ended');
   assert.equal(two.elements.get('quest').dataset.step, 'ended');
+});
+
+test('creation, tutorial, quest notice and movement guide appear in sequence', async () => {
+  const g = game(); g.players();
+  g.run('S.players.me.guideSeen = false; renderHud()');
+  const welcome = g.run('welcomeTips("유령 분장 완료. 마을에 우리 집도 생겼어요.")');
+  await tick();
+  assert.equal(g.elements.get('dialog').hidden, true);
+  assert.equal(g.elements.get('hint').hidden, true);
+  assert.match(g.elements.get('toast').textContent, /분장 완료/);
+  assert.equal(g.run('S.busy'), true);
+  g.fire(3000); await tick();
+  assert.equal(g.elements.get('toast').hidden, true);
+  assert.equal(g.elements.get('dialog').hidden, false);
+  assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+  for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
+  assert.equal(g.elements.get('dialog').hidden, true);
+  assert.equal(g.elements.get('quest').hidden, false);
+  assert.match(g.elements.get('toast').textContent, /새 퀘스트/);
+  assert.equal(g.elements.get('hint').hidden, true);
+  assert.equal(g.run('S.busy'), true);
+  g.fire(3000); await welcome;
+  assert.equal(g.elements.get('toast').hidden, true);
+  assert.equal(g.elements.get('hint').hidden, false);
+  assert.equal(g.run('S.busy'), false);
+  g.run('keys.add("r"); update(.05); renderMovementHint()');
+  assert.equal(g.run('S.hintHidden'), true);
+  assert.equal(g.elements.get('hint').hidden, true);
+});
+
+test('click without displacement and nearby actions do not dismiss movement guide', () => {
+  const g = game(); g.players();
+  assert.equal(g.elements.get('hint').hidden, false);
+  g.elements.get('world').listeners.pointerdown({ clientX: 832, clientY: 288 });
+  g.run('update(.05); renderMovementHint()');
+  assert.equal(g.run('S.hintHidden'), false);
+  assert.equal(g.elements.get('hint').hidden, false);
+  g.run('S.near = {owner: "host"}; renderAction()');
+  assert.equal(g.elements.get('hint').hidden, false);
+});
+
+test('replacement notifications finish before the tutorial starts', async () => {
+  const g = game(); g.players();
+  const welcome = g.run('welcomeTips("분장 완료")');
+  await tick();
+  g.run('toast("다른 알림")'); await tick();
+  assert.equal(g.elements.get('dialog').hidden, true);
+  g.fire(3000); await tick();
+  assert.equal(g.elements.get('dialog').hidden, false);
+  for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
+  await g.finish(welcome);
+});
+
+test('intro skip cancels active typewriter and goes straight to name entry', async () => {
+  const g = game({ reducedMotion: false });
+  g.run('S.me = "me"; S.names.me = "테스터"');
+  const intro = g.run('startIntro()');
+  g.fire(32);
+  assert.equal(g.elements.get('in-form').hidden, true);
+  assert.ok([...g.timers.values()].some((t) => t.interval));
+  // 실제 버튼의 위임 핸들러를 통해 건너뛴다.
+  g.run(`document.listeners.click({target: {closest: () => ({id: 'in-skip', dataset: {}})}})`);
+  await intro;
+  assert.equal(g.elements.get('in-form').hidden, false);
+  assert.equal(g.elements.get('in-skip').hidden, true);
+  assert.match(g.elements.get('in-text').textContent, /뭐라고 불러/);
+  assert.equal(g.elements.get('in-name').value, '테스터');
+  assert.equal(g.run('typing'), null);
+  assert.equal(g.timers.size, 0);
+  assert.equal(g.elements.get('dialog').hidden, true);
+});
+
+test('intro skip cancels between-line wait and remains safe on repeat clicks', async () => {
+  const g = game(); g.run('S.me = "me"');
+  const intro = g.run('startIntro()'); await tick();
+  assert.ok([...g.timers.values()].some((t) => t.delay === 200));
+  g.run('skipIntro(); skipIntro()'); await intro;
+  assert.equal(g.timers.size, 0);
+  assert.equal(g.elements.get('in-form').hidden, false);
+  g.elements.get('in-name').value = '입력중';
+  g.run('skipIntro()');
+  assert.equal(g.elements.get('in-name').value, '입력중');
+});
+
+test('intro still completes normally when skip is not used', async () => {
+  const g = game(); g.run('S.me = "me"');
+  await g.finish(g.run('startIntro()'));
+  assert.equal(g.elements.get('in-form').hidden, false);
+  assert.equal(g.elements.get('in-skip').hidden, true);
+  assert.equal(g.run('introController'), null);
+  assert.equal(g.timers.size, 0);
 });
