@@ -701,6 +701,8 @@ const keys = new Set();
 const KEYMAP = { ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r', ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd' };
 const modalOpen = () => MODALS.some((id) => !$(`#${id}`).hidden);
 const typingInField = (e) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+// 일부 브라우저는 조합 확정 Enter에서 isComposing 대신 keyCode 229를 보낸다.
+const isImeComposing = (e) => e.isComposing || e.keyCode === 229;
 
 let lastPresence = 0, presenceDirty = true;
 function update(dt) {
@@ -1833,7 +1835,7 @@ canvas.addEventListener('pointerdown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (typingInField(e)) return;
+  if (typingInField(e) || isImeComposing(e)) return;
   if (S.timingPress && (e.code === 'Space' || e.code === 'Enter')) {
     e.preventDefault();
     if (!e.repeat) S.timingPress();
@@ -1911,7 +1913,12 @@ document.addEventListener('click', (e) => {
 });
 $('#chatbar').addEventListener('submit', (e) => { e.preventDefault(); sendChat(); });
 $('#chat-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeChat(); } });
-$('#in-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); confirmName(); } });
+$('#in-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !isImeComposing(e)) {
+    e.preventDefault();
+    confirmName();
+  }
+});
 $('#nt-text').addEventListener('input', () => { $('#nt-count').textContent = `${$('#nt-text').value.length} / ${NOTE_MAX}`; });
 $('#timing').addEventListener('pointerdown', (e) => { e.preventDefault(); S.timingPress?.(); });
 

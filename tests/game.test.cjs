@@ -387,3 +387,32 @@ test('intro still completes normally when skip is not used', async () => {
   assert.equal(g.run('introController'), null);
   assert.equal(g.timers.size, 0);
 });
+
+for (const composition of [{ isComposing: true, keyCode: 13 }, { isComposing: false, keyCode: 229 }]) {
+  test(`IME Enter does not confirm name or prevent composition (${JSON.stringify(composition)})`, () => {
+    const g = game();
+    g.run('globalThis.confirmations = 0; confirmName = () => confirmations++');
+    let prevented = 0;
+    g.elements.get('in-name').listeners.keydown({ key: 'Enter', ...composition, preventDefault() { prevented++; } });
+    assert.equal(g.run('confirmations'), 0);
+    assert.equal(prevented, 0);
+  });
+}
+
+test('ordinary Enter still confirms a completed Korean name', () => {
+  const g = game(); g.players();
+  g.elements.get('intro').hidden = false;
+  g.elements.get('in-name').value = '호박도둑';
+  let prevented = 0;
+  g.elements.get('in-name').listeners.keydown({ key: 'Enter', isComposing: false, keyCode: 13, preventDefault() { prevented++; } });
+  assert.equal(g.run('S.players.me.nick'), '호박도둑');
+  assert.equal(g.elements.get('intro').hidden, true);
+  assert.equal(prevented, 1);
+});
+
+test('IME keys do not trigger timing or game shortcuts', () => {
+  const g = game();
+  g.run('globalThis.presses = 0; S.timingPress = () => presses++');
+  g.run(`document.listeners.keydown({ target: null, key: 'Enter', code: 'Enter', isComposing: true, preventDefault() { throw Error('Must allow IME'); } })`);
+  assert.equal(g.run('presses'), 0);
+});
