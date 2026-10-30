@@ -120,6 +120,22 @@ test('queued profile saves cannot change their destination after an account swit
   await assert.rejects(g.run('pending'), /Account changed/);
 });
 
+test('logout waits until a pending gameplay request has completed', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; crypto = { randomUUID: () => 'test-request' };
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } } };
+    let finishRequest;
+    accountRequest = async () => new Promise((resolve) => { finishRequest = resolve; });
+    const pendingGameRequest = gameRequest({ type: 'harvest' });`);
+  await tick();
+  assert.equal(g.run('S.pendingGame'), 1);
+  await g.run('logoutAccount()');
+  assert.equal(g.run('S.me'), 'me');
+  g.run('finishRequest({ pumpkins: 3 })');
+  await g.run('pendingGameRequest');
+  assert.equal(g.run('S.pendingGame'), 0);
+});
+
 test('logout saves the latest profile before ending the Firebase session', async () => {
   const g = game(); g.players();
   g.run(`S.mode = 'account'; const calls = [];
