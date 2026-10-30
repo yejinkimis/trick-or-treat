@@ -27,6 +27,7 @@ function game({ reducedMotion = true } = {}) {
       textContent: '', innerHTML: '', value: '', dataset: {}, style: { setProperty(key, value) { this[key] = value; } },
       classList: { add: (...names) => names.forEach((x) => classes.add(x)), remove: (...names) => names.forEach((x) => classes.delete(x)), contains: (x) => classes.has(x), toggle(x, force) { const on = force ?? !classes.has(x); on ? classes.add(x) : classes.delete(x); return on; } },
       width: 1024, height: 768, clientWidth: 1024, clientHeight: 768, rect: { left: 0, top: 0, width: 1024, height: 768 }, listeners: {},
+      setAttribute(name, value) { this[name] = String(value); },
       getBoundingClientRect() { return { ...this.rect, right: this.rect.left + this.rect.width, bottom: this.rect.top + this.rect.height }; },
       getContext: () => drawing, toDataURL: () => 'data:image/png;base64,test',
       addEventListener(type, fn) { this.listeners[type] = fn; }, setPointerCapture() {}, focus() { document.activeElement = this; }, blur() { document.activeElement = null; },
@@ -100,15 +101,19 @@ test('Firebase rankings use server balances and reset to ten for a new event', (
   assert.equal(g.run('candiesOf("host")'), 10);
 });
 
-test('server challenge controls timing zones and captures the actual input trace', async () => {
+test('candy challenge renders the server difficulty and moves the catch bar while held', () => {
   const g = game();
-  const result = g.run(`const challenge = { centers: [.5, .6, .7] }; timingGame(.28, 1, .5, challenge)`);
-  g.run('S.timingPress()');
-  g.setNow(100); g.run('S.timingPress()');
-  g.setNow(200); g.run('S.timingPress()');
-  g.fire(700);
-  assert.equal(await result, true);
-  assert.equal(g.run('JSON.stringify(challenge.presses)'), '[0,100,200]');
+  g.run(`candyGame({ level: 3, duration: 18000, path: [{t:0,y:.5},{t:18000,y:.5}] })`);
+  assert.equal(g.elements.get('timing').hidden, false);
+  assert.match(g.elements.get('t-level').textContent, /난이도 3단계/);
+  assert.equal(g.elements.get('t-bar').style.height, '25%');
+  const before = g.elements.get('t-bar').style.top;
+  g.run('S.candyControl(true)');
+  g.setNow(20);
+  [...g.frames.values()].at(-1)();
+  assert.notEqual(g.elements.get('t-bar').style.top, before);
+  g.run('S.candyControl(false)');
+  assert.notEqual(g.run('S.candyControl'), null);
 });
 
 test('queued profile saves cannot change their destination after an account switch', async () => {
@@ -229,69 +234,65 @@ test('knock prerequisites and ended event disable the action', () => {
   assert.equal(g.elements.get('act-btn').disabled, true);
   g.run('S.players.me.pumpkins = 3; renderAction()');
   assert.equal(g.elements.get('act-btn').disabled, false);
-  assert.match(g.elements.get('act-sub').textContent, /친구 → 나 1개/);
+  assert.match(g.elements.get('act-sub').textContent, /상대 사탕 1개 획득/);
   g.run('S.event = { startedAt: 1, endsAt: 2 }; renderAction()');
   assert.equal(g.elements.get('act-btn').disabled, true);
   assert.match(g.elements.get('act-sub').textContent, /문이 잠겼어요/);
 });
 
-test('difficulty is wider and bounded for empty and rich houses', () => {
+test('candy challenge difficulty has five stages and an eighteen-second limit', () => {
   const g = game();
-  assert.equal(g.run('zoneFor(0)'), .32);
-  assert.equal(g.run('zoneFor(10)'), .28);
-  assert.equal(g.run('zoneFor(1000)'), .20);
-  assert.equal(g.run('KNOCK_SPEED_MIN'), .78);
-  assert.equal(g.run('KNOCK_SPEED_MAX'), 1.08);
+  assert.equal(g.run('CANDY_MAX_LEVEL'), 5);
+  assert.equal(g.run('CANDY_GAME_MS'), 18000);
+  assert.equal(g.run('localCandyPath(5).at(-1).t'), 18000);
 });
 
-test('timing requires three hits, resets six-second timeout and keeps a constant speed', async () => {
-  const g = game(); g.run('Math.random = () => 0.5');
-  const result = g.run('timingGame(.28, 1, .5)');
-  g.run('S.timingPress()');
-  assert.equal(g.elements.get('t-dots').textContent, '●○○');
-  assert.equal([...g.timers.values()].filter((x) => x.delay === 6000).length, 1);
-  g.setNow(100);
-  [...g.frames.values()].at(-1)();
-  assert.equal(g.elements.get('t-marker').style.left, '60%');
-  g.run('S.timingPress(); S.timingPress()');
-  assert.equal(g.run('S.timingPress'), null);
-  assert.equal(g.elements.get('t-dots').textContent, '●●●');
-  g.fire(700);
-  assert.equal(await result, true);
-  assert.equal(g.elements.get('timing').hidden, true);
-  assert.equal([...g.timers.values()].filter((x) => x.delay === 6000).length, 0);
-});
-
-test('timing misses and six-second expiry fail cleanly', async () => {
-  for (const timeout of [false, true]) {
-    const g = game(); const result = g.run('timingGame(.28, 1, 0)');
-    if (timeout) g.fire(6000); else g.run('S.timingPress()');
-    assert.equal(g.run('S.timingPress'), null);
-    g.fire(700);
-    assert.equal(await result, false);
+test('holding the bar until the catch meter fills succeeds', async () => {
+  const g = game();
+  const result = g.run('candyGame({ level: 1, duration: 18000, path: [{t:0,y:.05},{t:18000,y:.05}] })');
+  g.run('S.candyControl(true)');
+  for (let now = 20; now <= 7000 && g.run('S.candyControl !== null'); now += 20) {
+    g.setNow(now);
+    [...g.frames.values()].at(-1)?.();
   }
+  g.fire(0);
+  assert.equal((await result).won, true);
+  assert.equal(g.elements.get('timing').hidden, true);
+});
+
+test('letting the progress bar empty fails without a candy transfer', async () => {
+  const g = game();
+  const result = g.run('candyGame({ level: 1, duration: 18000, path: [{t:0,y:.05},{t:18000,y:.05}] })');
+  for (let now = 20; now <= 4000 && g.run('S.candyControl !== null'); now += 20) {
+    g.setNow(now);
+    [...g.frames.values()].at(-1)?.();
+  }
+  g.fire(0);
+  assert.equal((await result).won, false);
+  assert.equal(g.elements.get('timing').hidden, true);
 });
 
 for (const won of [true, false]) {
-  test(`full knock ${won ? 'success takes' : 'failure gives'} one candy and announces the other player`, async () => {
+  test(`full knock ${won ? 'success takes' : 'failure leaves'} candy and announces the result`, async () => {
     const g = game(); g.players();
     g.run(`S.players.me.pumpkins = 3; globalThis.messages = [];
-      say = async (who, text) => messages.push(text); choose = async () => 'bye'; timingGame = async () => ${won};`);
+      say = async (who, text) => messages.push(text); choose = async () => 'bye';
+      candyGame = async () => ({ won: ${won}, inputs: [], elapsedMs: 4200 });`);
     await g.finish(g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`));
-    assert.equal(g.run('candiesOf("me")'), won ? 11 : 9);
-    assert.equal(g.run('candiesOf("host")'), won ? 9 : 11);
+    assert.equal(g.run('candiesOf("me")'), won ? 11 : 10);
+    assert.equal(g.run('candiesOf("host")'), won ? 9 : 10);
     assert.equal(g.run('S.busy'), false);
-    assert.equal(g.run('S.players.me.knocks.length'), 1);
-    assert.match(g.run('messages.join(" ")'), won ? /친구에게서 사탕 1개 가져옴/ : /친구에게 사탕 1개 빼앗김/);
+    assert.equal(g.run('S.players.me.knocks.length'), won ? 1 : 0);
+    assert.match(g.run('messages.join(" ")'), won ? /친구에게서 사탕 1개 가져옴/ : /사탕은 그대로야/);
     assert.equal(g.elements.get('quest').dataset.step, 'compete');
   });
 }
 
-test('empty giver never creates negative candy; decor reduces rank balance', () => {
+test('a miss leaves candy unchanged; decor reduces rank balance', () => {
   const g = game(); g.players();
   g.run(`S.players.me.knocks = Array.from({length: 15}, (_, i) => ({h: 'host', r: 'lose', at: i + 1})); S.ledger = null`);
-  assert.equal(g.run('candiesOf("me")'), 0);
-  assert.equal(g.run('candiesOf("host")'), 20);
+  assert.equal(g.run('candiesOf("me")'), 10);
+  assert.equal(g.run('candiesOf("host")'), 10);
   g.run(`S.players.me.knocks = []; S.ledger = null; buyDecor('lantern')`);
   assert.equal(g.run('candiesOf("me")'), 8);
   assert.equal(g.run('ranking()[0].id'), 'host');
@@ -315,12 +316,12 @@ test('bubble coordinates follow character, account for DPR and stay within edges
     const [width, height, ratio] = size;
     g.window.innerWidth = width; g.window.innerHeight = height;
     g.run(`dpr = ${ratio}; Z = ${ratio}; camX = 0; camY = 0; S.pos.x = ${width / 2}; S.pos.y = ${height / 2}`);
-    for (const id of ['action', 'dialog', 'timing']) {
+    for (const id of ['action', 'dialog']) {
       const el = g.elements.get(id); el.rect = { left: 0, top: 0, width: Math.min(350, width - 40), height: 140 }; el.hidden = false;
     }
     for (const point of [[width / 2, height / 2], [4, 4], [width - 4, height - 4]]) {
       g.run(`S.pos.x = ${point[0]}; S.pos.y = ${point[1]}; positionActorBubbles()`);
-      for (const id of ['action', 'dialog', 'timing']) {
+      for (const id of ['action', 'dialog']) {
         const el = g.elements.get(id), left = parseFloat(el.style.left), top = parseFloat(el.style.top);
         assert.ok(left >= 20); assert.ok(left + el.rect.width <= width - 20);
         assert.ok(top >= 38); assert.ok(top + el.rect.height <= height - 96);
@@ -387,7 +388,7 @@ test('two mocked Claude clients share saved quests, candy transfers and event st
   await tick();
   assert.equal(two.run('hasBasket("me")'), true);
   assert.equal(two.run('eventState()'), 'running');
-  one.run(`say = async () => {}; choose = async () => 'bye'; timingGame = async () => true`);
+  one.run(`say = async () => {}; choose = async () => 'bye'; candyGame = async () => ({won:true, inputs:[], elapsedMs:4200})`);
   await one.finish(one.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`));
   await tick();
   for (const g of [one, two]) {
@@ -560,8 +561,8 @@ test('ordinary Enter still confirms a completed Korean name', () => {
 
 test('IME keys do not trigger timing or game shortcuts', () => {
   const g = game();
-  g.run('globalThis.presses = 0; S.timingPress = () => presses++');
-  g.run(`document.listeners.keydown({ target: null, key: 'Enter', code: 'Enter', isComposing: true, preventDefault() { throw Error('Must allow IME'); } })`);
+  g.run('globalThis.presses = 0; S.candyControl = () => presses++');
+  g.run(`document.listeners.keydown({ target: null, key: ' ', code: 'Space', isComposing: true, preventDefault() { throw Error('Must allow IME'); } })`);
   assert.equal(g.run('presses'), 0);
 });
 
