@@ -40,6 +40,13 @@ img.px-img{image-rendering:pixelated;display:block}
 .me img{width:40px;height:40px;grid-row:span 2}
 .me b{font-size:1.05rem;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .me .bag{font-family:var(--f-px);font-size:.85rem;color:var(--gold);display:flex;align-items:center;gap:6px}
+.quest{margin-top:14px;padding:10px 12px;display:grid;gap:4px;font-size:.85rem}
+.quest .quest-label{font-size:.75rem;color:var(--gold)}
+.quest b{font-size:.95rem;font-weight:400}
+.quest>span:last-child{color:var(--muted)}
+.quest progress{width:100%;height:10px;accent-color:var(--pumpkin)}
+.quest[data-step="knock"]{border-color:var(--gold)}
+#action[data-harvest="true"] .hot{outline:3px dashed var(--gold);outline-offset:4px}
 .me .status{grid-column:1/-1;font-size:.8rem;color:var(--muted)}
 
 .bc{left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:14px;padding:10px 12px 10px 16px;width:max-content;max-width:calc(100vw - 40px)}
@@ -152,9 +159,17 @@ textarea:focus{outline:none;border-color:var(--gold)}
 }
 </style>
 
-<div id="stage"><canvas id="world" aria-label="할로윈 마을 지도. 방향키나 화면을 눌러 걸어요"></canvas></div>
+<div id="stage"><canvas id="world" tabindex="0" aria-label="할로윈 마을 지도. 방향키나 화면을 눌러 걸어요"></canvas></div>
 
-<div class="hud tl px me" id="me"></div>
+<div class="hud tl">
+  <div class="px me" id="me"></div>
+  <section class="px quest" id="quest" aria-label="현재 퀘스트" aria-live="polite" hidden>
+    <span class="quest-label" id="quest-label"></span>
+    <b id="quest-title"></b>
+    <progress id="quest-progress" max="3" value="0" aria-label="수집한 호박"></progress>
+    <span id="quest-detail"></span>
+  </section>
+</div>
 <div class="hud tr">
   <button class="pbtn" id="open-wardrobe" type="button">옷장</button>
   <button class="pbtn" id="open-home" type="button">우리 집</button>
@@ -464,7 +479,7 @@ function rng(seed) {
 
 const S = {
   mode: 'loading', db: null, user: null, room: null, me: null, players: {}, names: {},
-  readOnly: false, busy: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null, timingPress: null,
+  readOnly: false, busy: false, guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null, timingPress: null,
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
   pumpkins: [], nearPumpkin: null, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
@@ -1150,7 +1165,7 @@ function harvest(p) {
   const have = (S.players[S.me]?.pumpkins || 0) + 1;
   saveMe({ pumpkins: have });
   S.floats.push({ text: '호박 +1', x: p.x, y: p.y - 12, t: 0, life: 0.9 });
-  if (have === BASKET_PUMPKINS) toast('호박 바구니 완성! 이제 들고 다녀요. 친구들 눈에도 보여요.');
+  if (have === BASKET_PUMPKINS) toast('퀘스트 완료! 바구니 완성! 이제 친구 집에서 사탕을 가져올 수 있어요.');
   else if (have < BASKET_PUMPKINS) toast(`호박 ${have}개. 바구니까지 ${BASKET_PUMPKINS - have}개 남았어요.`);
   updateNear();
 }
@@ -1164,12 +1179,14 @@ function renderAction() {
     const have = S.players[S.me]?.pumpkins || 0;
     $('#act-title').textContent = '잘 익은 호박';
     $('#act-sub').textContent = have >= BASKET_PUMPKINS ? `지금까지 호박 ${have}개 · 바구니는 이미 들고 있어요` : `바구니까지 ${BASKET_PUMPKINS - have}개 남음`;
+    box.dataset.harvest = 'true';
     btn.textContent = '호박 따기';
     btn.disabled = S.readOnly || !myCostume();
     box.hidden = false;
     $('#hint').hidden = true;
     return;
   }
+  delete box.dataset.harvest;
   if (!n || S.busy) { box.hidden = true; return; }
   if (n.owner === S.me) {
     $('#act-title').textContent = '우리 집';
@@ -1210,7 +1227,32 @@ function eventLine() {
   const rank = ranking().findIndex((r) => r.id === S.me) + 1;
   return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${rank ? ` · 내 순위 ${rank}등` : ''}`;
 }
+// 별도 퀘스트 잔액을 저장하지 않고 기존 호박 수와 노크 기록으로 진행도를 복원한다.
+function renderQuest() {
+  const el = $('#quest'), p = S.players[S.me];
+  el.hidden = !p?.costume || !p.guideSeen || S.guideRunning || S.readOnly;
+  if (el.hidden) return;
+  const have = Math.min(BASKET_PUMPKINS, p.pumpkins || 0);
+  const ended = eventState() === 'ended';
+  const knocked = (p.knocks || []).some((k) => k.r === 'win' || k.r === 'lose');
+  const step = ended ? 'ended' : have < BASKET_PUMPKINS ? 'pumpkins' : !knocked ? 'knock' : 'compete';
+  el.dataset.step = step;
+  const content = {
+    pumpkins: ['진행 중인 퀘스트', `호박 바구니 만들기 · ${have}/${BASKET_PUMPKINS}`, '주황색 호박 근처에서 ‘호박 따기’ 또는 Space를 누르세요.'],
+    knock: ['퀘스트 완료! 다음 목표', '친구 집 문을 처음 두드려 보세요', '바구니 완성! 친구 집 문 앞에서 버튼이나 Space로 도전하세요.'],
+    compete: ['다음 목표', '사탕을 모아 순위를 올리세요', '성공하면 상대에게서 1개 획득, 실패하면 내 사탕 1개를 잃어요. 최종 순위에 따라 선물을 드려요.'],
+    ended: ['이벤트 종료', '최종 사탕 순위를 확인하세요', '순위 버튼에서 결과를 볼 수 있어요. 최종 순위에 따라 선물을 드려요.'],
+  }[step];
+  for (const [id, value] of [['quest-label', content[0]], ['quest-title', content[1]], ['quest-detail', content[2]]]) {
+    if ($(`#${id}`).textContent !== value) $(`#${id}`).textContent = value;
+  }
+  $('#quest-progress').hidden = step !== 'pumpkins';
+  $('#quest-progress').max = BASKET_PUMPKINS;
+  $('#quest-progress').value = have;
+}
+
 function renderHud() {
+  renderQuest();
   const c = myCostume();
   const online = new Set();
   for (const g of ghosts.values()) if (!g.bot) online.add(g.by || g);
@@ -1599,6 +1641,7 @@ function armOrRun(btn, question, run) {
 }
 
 function openModal(id) {
+  if (S.busy) { toast('진행 중인 대화나 노크를 먼저 마쳐 주세요.'); return; }
   if (id === 'wardrobe') renderWardrobe();
   if (id === 'house') { S.muralDraft = null; renderHouse(); }
   if (id === 'rank') renderRanking();
@@ -1607,7 +1650,7 @@ function openModal(id) {
   keys.clear();
   $(`#${id} .pbtn`).focus();
 }
-function closeModal(id) { $(`#${id}`).hidden = true; }
+function closeModal(id) { $(`#${id}`).hidden = true; canvas.focus({ preventScroll: true }); }
 
 const INTRO_LINES = ['10월 31일, 할로윈 밤.', '마을 호박밭 한가운데서 호박 하나가 들썩거려요.', '쩍! 호박이 갈라지더니 새 주민이 태어났어요.'];
 async function startIntro() {
@@ -1636,7 +1679,7 @@ function confirmName() {
   if (!nick) { toast('이름을 한 글자 이상 정해 주세요.'); return; }
   saveMe({ nick });
   closeModal('intro');
-  if (myCostume()) { toast(`반가워요, ${nick}! 이제 마을에서 이 이름으로 불려요.`); return; }
+  if (myCostume()) { if (!S.players[S.me].guideSeen) welcomeTips(); else toast(`반가워요, ${nick}! 이제 마을에서 이 이름으로 불려요.`); return; }
   $('#wr-title').firstChild.textContent = `${nick}, 오늘 뭐 입고 나가지`;
   openModal('wardrobe');
 }
@@ -1647,9 +1690,18 @@ function renameMe() {
   toast(`이제 ${nick}(으)로 불려요.`);
 }
 async function welcomeTips() {
-  await say('', '마을 곳곳에 호박이 자라요. 3개를 따면 호박 바구니가 생겨요.', 'sys');
-  await say('', '바구니를 들고 친구 집 문 앞에서 Space. 박자 맞추면 사탕, 놓치면 장난이에요.', 'sys');
+  S.guideRunning = true;
+  S.busy = true;
+  keys.clear();
+  render();
+  await say('', '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!', 'sys');
+  await say('', '먼저 호박 3개로 바구니를 만드세요. 호박 근처에서 버튼이나 Space로 수집할 수 있어요.', 'sys');
+  await say('', '바구니를 들고 친구 집 문을 두드리세요. 박자 맞추면 상대 사탕 1개를 가져오고, 놓치면 내 사탕 1개를 빼앗겨요.', 'sys');
   $('#dialog').hidden = true;
+  S.guideRunning = false;
+  S.busy = false;
+  saveMe({ guideSeen: true });
+  toast('새 퀘스트가 도착했습니다! 호박 3개를 모아 사탕 바구니를 만드세요.');
 }
 
 function act() {
@@ -1730,6 +1782,7 @@ document.addEventListener('click', (e) => {
   else if (t.dataset.buy) buyDecor(t.dataset.buy);
   else if (t.dataset.cos) {
     const first = !myCostume();
+    if (first) { S.guideRunning = true; S.busy = true; }
     const cur = S.players[S.me];
     saveMe({ costume: t.dataset.cos, joinedAt: cur?.joinedAt || Date.now() });
     presenceDirty = true;
@@ -1844,7 +1897,7 @@ async function boot() {
     notifyKnocks();
     render();
     if (Object.keys(next).join() !== known) loadNames();
-    if (first) { first = false; if (!S.readOnly) { if (!S.players[S.me]?.nick) startIntro(); else if (!myCostume()) openModal('wardrobe'); } }
+    if (first) { first = false; if (!S.readOnly) { if (!S.players[S.me]?.nick) startIntro(); else if (!myCostume()) openModal('wardrobe'); else if (!S.players[S.me].guideSeen) welcomeTips(); } }
   }, () => toast('마을 소식을 더 받지 못해요. 새로고침해 주세요.'));
 }
 
