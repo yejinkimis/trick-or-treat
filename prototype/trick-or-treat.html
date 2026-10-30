@@ -46,7 +46,6 @@ img.px-img{image-rendering:pixelated;display:block}
 .quest>span:last-child{color:var(--muted)}
 .quest progress{width:100%;height:10px;accent-color:var(--pumpkin)}
 .quest[data-step="knock"]{border-color:var(--gold)}
-#action[data-harvest="true"] .hot{outline:3px dashed var(--gold);outline-offset:4px}
 .me .status{grid-column:1/-1;font-size:.8rem;color:var(--muted)}
 
 .bc{left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:14px;padding:10px 12px 10px 16px;width:max-content;max-width:calc(100vw - 40px)}
@@ -1217,13 +1216,11 @@ function renderAction() {
     const have = S.players[S.me]?.pumpkins || 0;
     $('#act-title').textContent = '잘 익은 호박';
     $('#act-sub').textContent = have >= BASKET_PUMPKINS ? `지금까지 호박 ${have}개 · 바구니는 이미 들고 있어요` : `바구니까지 ${BASKET_PUMPKINS - have}개 남음`;
-    box.dataset.harvest = 'true';
     btn.textContent = '호박 따기';
     btn.disabled = S.readOnly || !myCostume();
     box.hidden = false;
     return;
   }
-  delete box.dataset.harvest;
   if (!n || S.busy) { box.hidden = true; return; }
   if (n.owner === S.me) {
     $('#act-title').textContent = '우리 집';
