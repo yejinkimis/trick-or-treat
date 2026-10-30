@@ -8,7 +8,7 @@ const html = fs.readFileSync(path.join(__dirname, '../prototype/trick-or-treat.h
 const source = html.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/^boot\(\);$/m, '');
 const tick = () => new Promise(setImmediate);
 
-function game({ reducedMotion = true } = {}) {
+function game({ reducedMotion = true, storage } = {}) {
   const elements = new Map(), timers = new Map(), frames = new Map();
   let serial = 0, now = 0;
   const drawing = new Proxy({}, { get: (target, key) => target[key] ?? (() => ({ width: 40 })), set: (target, key, value) => (target[key] = value, true) });
@@ -49,7 +49,7 @@ function game({ reducedMotion = true } = {}) {
   document.body = element();
   const window = { innerWidth: 1024, innerHeight: 768, devicePixelRatio: 1, addEventListener() {} };
   const sandbox = {
-    document, window, console, AbortController, performance: { now: () => now }, matchMedia: () => ({ matches: reducedMotion }),
+    document, window, console, AbortController, performance: { now: () => now }, matchMedia: () => ({ matches: reducedMotion }), localStorage: storage,
     ResizeObserver: class { observe() {} }, HTMLInputElement: class {}, HTMLTextAreaElement: class {},
     requestAnimationFrame(fn) { const id = ++serial; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); },
     setTimeout(fn, delay) { const id = ++serial; timers.set(id, { fn, delay, at: now + delay }); return id; }, clearTimeout(id) { timers.delete(id); },
@@ -1060,4 +1060,90 @@ test('the rank window refreshes the event buttons without opening the crew finde
   g.run(`S.mode = 'firebase'; S.isOwner = true; S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() - 1000 }; renderRanking();`);
   assert.equal(g.elements.get('rk-admin').hidden, false);
   assert.equal(g.elements.get('ev-stop').textContent, '결과 확정');
+});
+
+function memoryStorage(items = {}) {
+  return { items, getItem: (key) => items[key] ?? null, setItem: (key, value) => { items[key] = value; } };
+}
+// 진짜 오디오 대신 어떤 효과음을 냈는지만 기록한다.
+function soundSpy(g) {
+  g.run(`globalThis.played = []; globalThis.contexts = 0;
+    window.AudioContext = class { constructor() { contexts++; this.state = 'running'; this.currentTime = 0; this.destination = {}; }
+      createGain() { return { gain: { value: 1 }, connect: (node) => node }; } resume() { return Promise.resolve(); } };
+    for (const name of Object.keys(SFX)) SFX[name] = () => played.push(name);`);
+}
+
+test('sound starts with music off and effects on, and the sound window saves each switch', () => {
+  const storage = memoryStorage();
+  const g = game({ storage });
+  g.run(`openModal('sound')`);
+  assert.equal(g.elements.get('sound').hidden, false);
+  assert.equal(g.elements.get('sd-bgm').textContent, '꺼짐');
+  assert.equal(g.elements.get('sd-sfx').textContent, '켜짐');
+  g.run(`setSound('sfx', false)`);
+  assert.equal(g.elements.get('sd-sfx').textContent, '꺼짐');
+  assert.equal(g.elements.get('sd-sfx')['aria-pressed'], 'false');
+  assert.deepEqual(JSON.parse(storage.items['trick-or-treat:sound']), { bgm: false, sfx: false });
+  const again = game({ storage });
+  assert.equal(again.run('sound.sfx'), false);
+});
+
+test('the speaker button shows a crossed-out speaker only when music and effects are both off', () => {
+  const g = game();
+  g.run(`var icons = []; const realSprite = spriteUrl; spriteUrl = (key, scale) => (icons.push(key), realSprite(key, scale));`);
+  g.run(`setSound('sfx', false)`);
+  g.run(`setSound('bgm', true)`);
+  g.run(`setSound('bgm', false)`);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(icons)')), ['speakerOff', 'speaker', 'speakerOff']);
+});
+
+test('broken or missing sound storage falls back to the defaults', () => {
+  for (const storage of [memoryStorage({ 'trick-or-treat:sound': '{broken' }), memoryStorage({ 'trick-or-treat:sound': '{"bgm":"yes"}' }), undefined]) {
+    const g = game({ storage });
+    assert.equal(g.run('sound.bgm'), false);
+    assert.equal(g.run('sound.sfx'), true);
+  }
+});
+
+test('turned-off effects make no sound and never create audio', () => {
+  const g = game(); g.players(); soundSpy(g);
+  g.run(`setSound('sfx', false); S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])`);
+  assert.equal(g.run('played.length'), 0);
+  assert.equal(g.run('contexts'), 0);
+});
+
+test('harvest, bonk, stun, knock news and a new trick each make their own sound once', () => {
+  const g = game(); g.players(); soundSpy(g);
+  g.run(`S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])`);
+  g.run(`S.myPeer = 'mine'; for (let i = 0; i < BONK_TO_STUN; i++) onBonk({ data: { to: 'mine' }, by: 'host' })`);
+  g.run(`onBonk({ data: { to: 'someone-else' }, by: 'host' })`);
+  g.run(`S.seenAt = 0; toast = () => {}; S.players.me.guests = [
+    { v: 'host', r: 'win', at: 50, c: 'witch' }, { v: 'host', r: 'lose', at: 60, c: 'witch' }]; notifyKnocks()`);
+  g.run(`S.players.me.knocks = [{ h: 'host', r: 'lose', k: 'slow', at: Date.now() }]; renderHud(); renderHud()`);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(played)')), ['pumpkin', 'hit', 'hit', 'hit', 'hit', 'stun', 'knocks', 'trick']);
+});
+
+test('a knock taps the door three times and the candy catch result sounds', async () => {
+  const g = game(); g.players(); soundSpy(g);
+  g.run(`S.players.me.pumpkins = 3; say = async () => {}; choose = async () => 'bye';
+    candyGame = async () => ({ won: true, inputs: [], elapsedMs: 4200 });`);
+  await g.finish(g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`));
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(played)')), ['knock', 'knock', 'knock']);
+
+  const miss = game(); soundSpy(miss);
+  const result = miss.run('candyGame({ level: 1, path: [{t:0,y:.05},{t:18000,y:.05}] })');
+  for (let now = 20; now <= 4000 && miss.run('S.candyControl !== null'); now += 20) {
+    miss.setNow(now);
+    [...miss.frames.values()].at(-1)?.();
+  }
+  miss.fire(0);
+  await result;
+  assert.deepEqual(JSON.parse(miss.run('JSON.stringify(played)')), ['miss']);
+});
+
+test('the cauldron bubbles while brewing', async () => {
+  const g = game(); g.players(); soundSpy(g);
+  g.run(`say = async () => {}; Math.random = () => 0.5; S.players.me.pumpkins = 60; S.players.me.basket = true;`);
+  await g.finish(g.run('brew()'));
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(played)')), ['bubble', 'bubble', 'bubble']);
 });
