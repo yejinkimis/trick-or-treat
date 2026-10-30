@@ -469,7 +469,8 @@ test('creation, tutorial, quest notice and movement guide appear in sequence', a
 test('click without displacement and nearby actions do not dismiss movement guide', () => {
   const g = game(); g.players();
   assert.equal(g.elements.get('hint').hidden, false);
-  g.elements.get('world').listeners.pointerdown({ clientX: 832, clientY: 288 });
+  const [clientX, clientY] = JSON.parse(g.run('draw(); JSON.stringify(w2s(S.pos.x, S.pos.y))'));
+  g.elements.get('world').listeners.pointerdown({ clientX, clientY });
   g.run('update(.05); renderMovementHint()');
   assert.equal(g.run('S.hintHidden'), false);
   assert.equal(g.elements.get('hint').hidden, false);
@@ -807,7 +808,7 @@ test('online rankings come from the shared server list and are not refetched wit
   await tick(); await tick();
   assert.equal(g.run('JSON.stringify(calls)'), '["/api/game/leaderboard"]');
   assert.equal(g.run('ranking()[0].id'), 'far');
-  assert.match(g.run('eventLine()'), /내 순위 2등/);
+  assert.match(g.run('eventLine()'), /내 순위 2명 중 2등/);
   assert.match(g.elements.get('rk-list').innerHTML, /먼집/);
   g.run(`closeModal('rank'); openModal('rank')`);
   await tick();
@@ -972,6 +973,93 @@ test('choices start on the first option, move with ← →, pick with Space or E
   assert.equal(g.run('settled'), false, 'a required choice ignores Esc');
   key('KeyD'); key('Space');
   assert.equal(await g.run('required'), 'b');
+});
+
+test('crew finder searches by nickname apart from the ranking and walks you to that house, crossing villages when needed', async () => {
+  const g = game(); g.players();
+  g.run(`S.players.c3 = { ...blankPlayer(), nick: '호박도둑', costume: 'cat', joinedAt: 3 }; render(); openModal('rank');`);
+  assert.doesNotMatch(g.elements.get('rk-list').innerHTML, /data-visit/, 'the ranking stays a plain ranking');
+  g.run(`closeModal('rank')`);
+  g.elements.get('cr-search').value = '도둑';
+  g.run(`openModal('crew')`);
+  const found = g.elements.get('cr-list').innerHTML;
+  assert.match(found, /호박도둑/);
+  assert.doesNotMatch(found, /친구/);
+  assert.match(g.elements.get('cr-sub').textContent, /크루 3명/);
+  g.run(`document.listeners.click({ target: { classList: { contains: () => false }, closest: () => ({ dataset: { visit: 'c3' } }) }, preventDefault() {} })`);
+  await tick();
+  assert.equal(g.elements.get('crew').hidden, true);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify([S.pos.x, S.pos.y])')), JSON.parse(g.run('JSON.stringify([doorOf("c3").x, doorOf("c3").y])')));
+  g.elements.get('cr-search').value = '없는사람';
+  g.run(`openModal('crew')`);
+  assert.match(g.elements.get('cr-list').innerHTML, /그런 닉네임의 크루가 없어요/);
+
+  const v = game(); village(v);
+  v.run(`S.rankAt = Date.now(); S.rankList = [{ id: 'far', nick: '먼집', costume: 'cat', n: 12, village: 2 }, { id: 'me', nick: '나', costume: 'ghost', n: 9, village: 1 }];
+    var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };
+    openModal('crew');`);
+  assert.match(v.elements.get('cr-list').innerHTML, /먼집<\/b><small>구리마을<\/small>/);
+  assert.match(v.elements.get('cr-list').innerHTML, /data-visit="far">집 가기/);
+  assert.match(v.elements.get('cr-list').innerHTML, /data-visit="me">우리 집/);
+  v.run(`visitHouse('far')`);
+  v.fire(300); await tick(); await tick();
+  v.fire(200); await tick();
+  assert.equal(v.run('JSON.stringify(entered)'), '[2]');
+  assert.deepEqual(JSON.parse(v.run('JSON.stringify([S.pos.x, S.pos.y])')), JSON.parse(v.run('JSON.stringify([doorOf("far").x, doorOf("far").y])')));
+});
+
+test('the rank board shows the top three and my place, and the board and quest fold and unfold', () => {
+  const g = game(); g.players();
+  g.run(`S.players.c3 = { ...blankPlayer(), nick: '셋째', costume: 'cat', joinedAt: 3 };
+    S.players.c4 = { ...blankPlayer(), nick: '넷째', costume: 'mummy', joinedAt: 4 }; render();`);
+  assert.equal(g.elements.get('board').hidden, false);
+  assert.equal((g.elements.get('board-list').innerHTML.match(/<li/g) || []).length, 3);
+  assert.match(g.elements.get('board-me').textContent, /나 4명 중 \d등 · 사탕 10개/);
+  const press = (button) => g.run(`document.listeners.click({ target: { classList: { contains: () => false }, closest: () => (${JSON.stringify(button)}) }, preventDefault() {} })`);
+  press({ id: '', dataset: { fold: 'board' } });
+  assert.equal(g.elements.get('board').classList.contains('folded'), true);
+  assert.match(g.elements.get('board-label').textContent, /사탕 순위 · 4명 중 \d등/);
+  press({ id: '', dataset: { fold: 'board' } });
+  assert.equal(g.elements.get('board').classList.contains('folded'), false);
+  assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3');
+  press({ id: '', dataset: { fold: 'quest' } });
+  assert.equal(g.elements.get('quest').classList.contains('folded'), true);
+  assert.match(g.elements.get('quest-label').textContent, /진행 중인 퀘스트 · 호박 바구니 만들기/);
+  press({ id: 'board-open', dataset: {} });
+  assert.equal(g.elements.get('rank').hidden, false);
+
+  const v = game(); village(v);
+  v.run(`S.rankList = null; renderHud();`);
+  assert.equal(v.elements.get('board').hidden, true, 'online board waits for the server list');
+  v.run(`S.rankList = [{ id: 'far', nick: '먼집', costume: 'cat', n: 12, village: 2 }, { id: 'me', nick: '나', costume: 'ghost', n: 9, village: 1 }]; renderHud();`);
+  assert.match(v.elements.get('board-list').innerHTML, /1\. 먼집<\/span><b>12개/);
+  assert.match(v.elements.get('board-me').textContent, /나 2명 중 2등 · 사탕 9개/);
+});
+
+test('the home button brings me back to my own door from another house or another village first', async () => {
+  const g = game(); g.players();
+  g.run(`S.pos.x = 30; S.pos.y = 30;`);
+  await g.run('goHome()');
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify([S.pos.x, S.pos.y])')), JSON.parse(g.run('JSON.stringify([doorOf("me").x, doorOf("me").y])')));
+  assert.equal(g.elements.get('house').hidden, false);
+
+  const v = game(); village(v);
+  v.run(`S.village = 2; render();
+    var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };`);
+  const home = v.run('goHome()');
+  v.fire(300); await tick(); await tick();
+  v.fire(200); await tick();
+  await home;
+  assert.equal(v.run('JSON.stringify(entered)'), '[1]');
+  assert.deepEqual(JSON.parse(v.run('JSON.stringify([S.pos.x, S.pos.y])')), JSON.parse(v.run('JSON.stringify([doorOf("me").x, doorOf("me").y])')));
+  assert.equal(v.elements.get('house').hidden, false);
+});
+
+test('the rank window refreshes the event buttons without opening the crew finder', () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.isOwner = true; S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() - 1000 }; renderRanking();`);
+  assert.equal(g.elements.get('rk-admin').hidden, false);
+  assert.equal(g.elements.get('ev-stop').textContent, '결과 확정');
 });
 
 function memoryStorage(items = {}) {
