@@ -17,6 +17,7 @@ const api = new Map([
   ['/api/auth/profile', require('../api/auth/profile.js')],
   ['/api/game/session', require('../api/game/session.js')],
   ['/api/game/action', require('../api/game/action.js')],
+  ['/api/game/leaderboard', require('../api/game/leaderboard.js')],
 ]);
 
 const server = http.createServer((req, res) => {

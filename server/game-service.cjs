@@ -23,13 +23,28 @@ const fail = (message, status = 400) => { throw new AuthError(status, 'game-acti
 const MAX_GUESTS = 100;
 // 다른 마을 방문자의 문서는 집주인이 구독하지 않으므로 집주인 문서에도 방문 기록을 남긴다.
 const withGuest = (host, guest) => [...(host.guests || []), guest].slice(-MAX_GUESTS);
+const rankPlayers = (docs, event, cutoff) => docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+  .filter((p) => p.costume && (p.readyAt || p.joinedAt || 0) <= cutoff)
+  .map((p) => ({ id: p.id, nick: p.nick, costume: p.costume, n: balance(p, event) }))
+  .sort((a, b) => b.n - a.n || a.nick.localeCompare(b.nick, 'ko'));
 async function finalResults(tx, db, event, cutoff) {
   if (event.results) return event.results;
-  const participants = await tx.get(db.collection('gamePlayers'));
-  return participants.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((p) => p.costume && (p.readyAt || p.joinedAt || 0) <= cutoff)
-    .map((p) => ({ id: p.id, nick: p.nick, costume: p.costume, n: balance(p, event) }))
-    .sort((a, b) => b.n - a.n || a.nick.localeCompare(b.nick, 'ko'));
+  return rankPlayers((await tx.get(db.collection('gamePlayers'))).docs, event, cutoff);
+}
+
+const LEADERBOARD_MS = 3 * 60 * 1000;
+let leaderboardMemo = null;
+// 접속자 수와 관계없이 전체 플레이어 읽기가 3분에 한 번을 넘지 않도록 서버와 CDN이 같은 결과를 나눠 준다.
+async function leaderboard(now = Date.now()) {
+  if (leaderboardMemo && now - leaderboardMemo.at < LEADERBOARD_MS) return leaderboardMemo;
+  const { db } = services();
+  const [eventDoc, players] = await Promise.all([db.doc('game/event').get(), db.collection('gamePlayers').get()]);
+  const event = eventDoc.exists ? eventDoc.data() : null;
+  const villageOf = new Map(players.docs.map((doc) => [doc.id, doc.data().village || null]));
+  const ended = event && event.endsAt <= now;
+  const ranked = event?.results || rankPlayers(players.docs, event, ended ? event.endsAt : Infinity);
+  leaderboardMemo = { at: now, round: roundOf(event), players: ranked.map((p) => ({ ...p, village: villageOf.get(p.id) || null })) };
+  return leaderboardMemo;
 }
 
 async function session(authorization) {
@@ -178,4 +193,4 @@ async function action(authorization, input) {
   }, { maxAttempts: 20 });
 }
 
-module.exports = { session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
