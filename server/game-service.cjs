@@ -98,7 +98,9 @@ async function action(authorization, input) {
         if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
-        if (prior.round === round && !prior.used && prior.expiresAt > now) fail('진행 중인 노크를 먼저 마쳐 주세요.');
+        if (prior.round === round && !prior.used && prior.expiresAt > now) {
+          fail(`아까 노크가 아직 정리 중이에요. ${Math.ceil((prior.expiresAt - now) / 1000)}초 뒤 다시 두드릴 수 있어요.`, 429);
+        }
         const sameTarget = prior.streakHost === input.host && prior.streakRound === round;
         const level = sameTarget ? Math.min(MAX_LEVEL, (prior.streakCount || 1) + 1) : 1;
         const challenge = {

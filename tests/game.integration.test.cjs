@@ -44,6 +44,11 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   assert.equal(balance(await saved(host), start.event), 0);
   assert.deepEqual(await act(first, { type: 'knock-finish', ...one, requestId }), a);
   await assert.rejects(act(first, { type: 'knock-finish', ...one }), /만료/);
+  await services().db.collection('gamePlayers').doc(second.uid).update({ knockAt: 0 });
+  await act(second, { type: 'knock-start', host: host.uid });
+  await services().db.collection('gamePlayers').doc(second.uid).update({ knockAt: 0 });
+  await assert.rejects(act(second, { type: 'knock-start', host: host.uid }), (error) => error.status === 429 && /\d+초 뒤 다시/.test(error.message));
+  await services().db.collection('gameChallenges').doc(second.uid).update({ used: true });
   await assert.rejects(act(first, { type: 'candies', candies: 999 }), /지원하지/);
   const before = balance(await saved(first), start.event);
   await act(first, { type: 'decor', item: 'lantern' });
