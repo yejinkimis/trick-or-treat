@@ -745,19 +745,21 @@ test('chat reaches every village but shows a bubble only for people in the same 
   assert.match(log, /<b>이웃<\/b>여기 안녕/);
 });
 
-test('the village map lists every village with who is online and travels to the chosen one', async () => {
+test('the village map draws villages clockwise in sign order and travels to the chosen one', async () => {
   const g = game(); village(g);
   g.run(`S.online = [
     { by: 'far', presence: { v: 2, at: 1 } }, { by: 'me', presence: { v: 1, at: 1 } }, { by: 'near', presence: { v: 1, at: 1 } },
   ]; S.networkConnected = true; openModal('online'); renderHud();
     var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };`);
-  const list = g.elements.get('on-list').innerHTML;
-  assert.ok(list.indexOf('태초마을') < list.indexOf('구리마을') && list.indexOf('구리마을') < list.indexOf('안드로이드 제국'));
-  assert.match(list, /태초마을<\/b> · 지금 여기 · 접속 2명/);
+  const ring = g.elements.get('on-ring').innerHTML, list = g.elements.get('on-list').innerHTML;
+  assert.ok(ring.indexOf('태초마을') < ring.indexOf('구리마을') && ring.indexOf('구리마을') < ring.indexOf('안드로이드 제국'), 'ring follows village numbers');
+  assert.match(ring, /left:50\.00%;top:12\.00%[^>]*aria-current="true"/, 'village 1 sits at the top and is marked as here');
+  assert.match(ring, /안드로이드 제국<\/b><small>접속 0명/);
+  assert.doesNotMatch(ring, /data-go="1"/);
+  assert.match(ring, /data-go="3"/);
+  assert.equal((ring.match(/<path /g) || []).length, 3, 'one clockwise arrow between each pair of villages');
+  assert.ok(list.indexOf('1. 태초마을') < list.indexOf('2. 구리마을'));
   assert.match(list, /나 \(나\), 이웃/);
-  assert.match(list, /안드로이드 제국<\/b> · 접속 0명/);
-  assert.doesNotMatch(list, /data-go="1"/);
-  assert.match(list, /data-go="3"/);
   assert.match(g.elements.get('on-sub').textContent, /마을 3개 · 접속 3명/);
   assert.match(g.elements.get('me').innerHTML, /전체 3명/);
   assert.equal(g.elements.get('open-online').hidden, false);

@@ -56,6 +56,15 @@ img.px-img{image-rendering:pixelated;display:block}
 .hint{position:fixed;z-index:4;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(400px,calc(100vw - 40px));margin:0;color:var(--text);background:rgba(11,8,16,.9);border:3px solid var(--gold);padding:16px 20px;text-align:center;pointer-events:none}
 .veil{position:fixed;z-index:30;inset:0;display:grid;place-items:center;margin:0;color:var(--gold);background:#0d0912;font-size:1.6rem;opacity:0;pointer-events:none;transition:opacity .3s}
 .veil.on{opacity:1;pointer-events:auto}
+.ring{position:relative;width:min(100%,380px);aspect-ratio:1;margin:4px auto 0}
+.ring svg{position:absolute;inset:0;width:100%;height:100%}
+.ring-node{all:unset;box-sizing:border-box;position:absolute;width:84px;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px;background:var(--panel-2);border:3px solid var(--text);color:var(--text);font-size:.75rem;line-height:1.15;text-align:center;cursor:pointer;word-break:keep-all;overflow-wrap:anywhere}
+.ring-node .no{font-family:var(--f-px);color:var(--gold)}
+.ring-node small{color:var(--muted)}
+.ring-node.here{border-color:var(--gold);background:var(--panel);cursor:default}
+.ring-node.here img{width:24px;height:24px}
+.ring-node:focus-visible{outline:3px dashed var(--gold);outline-offset:3px}
+.ring-tip{text-align:center}
 .hint b{display:block;font-size:1.2rem;font-weight:400;color:var(--gold);margin-bottom:6px}
 .hint span{display:block;font-size:.95rem}
 .hint small{display:block;color:var(--muted);margin-top:8px}
@@ -299,6 +308,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <h2 id="on-title">마을 지도<small id="on-sub"></small></h2>
       <button class="pbtn" type="button" data-close="online">닫기</button>
     </div>
+    <div class="ring" id="on-ring"></div>
+    <p class="note ring-tip">▼ 아래 표지판은 시계 방향, ▲ 위 표지판은 반대 방향 마을로 가요. 마을을 누르면 바로 이동해요.</p>
     <ol class="book" id="on-list"></ol>
   </div>
 </div>
@@ -1569,25 +1580,35 @@ function renderHud() {
 }
 
 // 마을 지도는 이미 받고 있는 마을 이름과 접속자 기록(마을 번호만)으로 그려서 추가 읽기가 없다.
+// 표지판으로 오가는 순서 그대로 1번을 맨 위에 두고 번호 순서대로 시계 방향 고리로 놓는다.
 function renderOnline() {
   const groups = new Map();
-  for (let v = 1; v <= villageCount(); v++) groups.set(v, []);
   for (const { by, presence } of S.online) {
     if (!groups.has(presence.v)) groups.set(presence.v, []);
     groups.get(presence.v).push(by);
   }
-  const order = [...groups.keys()].sort((a, b) => (b === S.village) - (a === S.village) || a - b);
-  $('#on-sub').textContent = `마을 ${groups.size}개 · 접속 ${S.online.length}명`;
-  const html = order.length
-    ? order.map((v) => {
-      const here = v === S.village, people = groups.get(v);
-      return `<li><div><b>${esc(villageLabel(v))}</b>${here ? ' · 지금 여기' : ''} · 접속 ${people.length}명<br>
-        <span class="guest-message">${people.map((id) => esc(id === S.me ? `${nameOf(id)} (나)` : nameOf(id))).join(', ')}</span></div>
-        ${here ? '' : `<button class="pbtn" type="button" data-go="${v}">가기</button>`}</li>`;
-    }).join('')
-    : '<li class="note">마을 정보를 불러오는 중…</li>';
-  // 접속 기록은 수시로 갱신되므로 내용이 바뀔 때만 다시 그려 누르려던 버튼이 사라지지 않게 한다.
-  if (html !== renderOnline.last) $('#on-list').innerHTML = renderOnline.last = html;
+  const total = Math.max(villageCount(), ...groups.keys());
+  const at = (v, r) => {
+    const angle = -Math.PI / 2 + ((v - 1) * 2 * Math.PI) / total;
+    return [50 + r * Math.cos(angle), 50 + r * Math.sin(angle), angle];
+  };
+  const arrows = total > 1 ? Array.from({ length: total }, (_, i) => {
+    const [x, y, angle] = at(i + 1.5, 38);
+    return `<path d="M-1.6,-2 L1.6,0 L-1.6,2" transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${((angle * 180) / Math.PI + 90).toFixed(1)})"/>`;
+  }).join('') : '';
+  const nodes = Array.from({ length: total }, (_, i) => {
+    const v = i + 1, here = v === S.village, [x, y] = at(v, 38), people = groups.get(v)?.length || 0;
+    return `<button class="ring-node${here ? ' here' : ''}" type="button" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%" ${here ? 'aria-current="true"' : `data-go="${v}"`}>
+      ${here ? `<img class="px-img" src="${spriteUrl(myCostume() || 'plain', 2)}" alt="">` : ''}<span class="no">${v}</span><b>${esc(villageLabel(v))}</b><small>${here ? '지금 여기' : `접속 ${people}명`}</small></button>`;
+  }).join('');
+  const ring = total ? `<svg viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="38" fill="none" stroke="#a67d57" stroke-width="2.4" stroke-dasharray="1.5 1.5"/>
+    <g fill="none" stroke="#ffd166" stroke-width="0.9">${arrows}</g></svg>${nodes}` : '<p class="note">마을 정보를 불러오는 중…</p>';
+  const list = [...groups.keys()].sort((a, b) => a - b).map((v) => `<li><div><b>${v}. ${esc(villageLabel(v))}</b>${v === S.village ? ' · 지금 여기' : ''}<br>
+    <span class="guest-message">${groups.get(v).map((id) => esc(id === S.me ? `${nameOf(id)} (나)` : nameOf(id))).join(', ')}</span></div><time>${groups.get(v).length}명</time></li>`).join('');
+  $('#on-sub').textContent = `마을 ${total}개 · 접속 ${S.online.length}명`;
+  // 접속 기록은 수시로 갱신되므로 내용이 바뀔 때만 다시 그려 누르려던 마을이 사라지지 않게 한다.
+  if (ring !== renderOnline.ring) $('#on-ring').innerHTML = renderOnline.ring = ring;
+  if (list !== renderOnline.list) $('#on-list').innerHTML = renderOnline.list = list;
 }
 
 function renderWardrobe() {
