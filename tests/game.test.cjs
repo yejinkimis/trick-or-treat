@@ -662,7 +662,7 @@ test('own costume survives until the village snapshot arrives', () => {
 
 function village(g) {
   g.run(`S.mode = 'firebase'; S.me = 'me'; S.village = 1;
-    S.villages = { 1: { n: 1, name: '해골골' }, 2: { n: 2, name: '박쥐떼늪' }, 3: { n: 3, name: '관뚜껑묘지' } };
+    S.villages = { 1: { n: 1, name: '태초마을' }, 2: { n: 2, name: '구리마을' }, 3: { n: 3, name: '안드제국' } };
     S.players = {
       me: { ...blankPlayer(), nick: '나', costume: 'ghost', village: 1, joinedAt: 1 },
       near: { ...blankPlayer(), nick: '이웃', costume: 'witch', village: 1, joinedAt: 2 },
@@ -692,7 +692,7 @@ test('walking through the bottom sign moves to the next village and arrives at i
   for (let i = 0; i < 10 && !g.run('S.busy'); i++) g.run('update(0.05)');
   assert.equal(g.run('S.busy'), true);
   assert.equal(g.elements.get('veil').classList.contains('on'), true);
-  assert.equal(g.elements.get('veil').textContent, '박쥐떼늪');
+  assert.equal(g.elements.get('veil').textContent, '구리마을');
   g.fire(300); await tick(); await tick();
   g.fire(200); await tick();
   assert.equal(g.run('JSON.stringify(entered)'), '[2]');
@@ -741,7 +741,7 @@ test('chat reaches every village but shows a bubble only for people in the same 
   assert.equal(g.run(`chatBubbles.has('far:tab')`), false);
   assert.equal(g.run(`chatBubbles.has('near:tab')`), true);
   const log = g.elements.get('chatlog').innerHTML;
-  assert.match(log, /\[박쥐떼늪\]<\/small> 먼집<\/b>옆 마을 안녕/);
+  assert.match(log, /\[구리마을\]<\/small> 먼집<\/b>옆 마을 안녕/);
   assert.match(log, /<b>이웃<\/b>여기 안녕/);
 });
 
@@ -752,10 +752,10 @@ test('the village map lists every village with who is online and travels to the 
   ]; S.networkConnected = true; openModal('online'); renderHud();
     var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };`);
   const list = g.elements.get('on-list').innerHTML;
-  assert.ok(list.indexOf('해골골') < list.indexOf('박쥐떼늪') && list.indexOf('박쥐떼늪') < list.indexOf('관뚜껑묘지'));
-  assert.match(list, /해골골<\/b> · 지금 여기 · 접속 2명/);
+  assert.ok(list.indexOf('태초마을') < list.indexOf('구리마을') && list.indexOf('구리마을') < list.indexOf('안드제국'));
+  assert.match(list, /태초마을<\/b> · 지금 여기 · 접속 2명/);
   assert.match(list, /나 \(나\), 이웃/);
-  assert.match(list, /관뚜껑묘지<\/b> · 접속 0명/);
+  assert.match(list, /안드제국<\/b> · 접속 0명/);
   assert.doesNotMatch(list, /data-go="1"/);
   assert.match(list, /data-go="3"/);
   assert.match(g.elements.get('on-sub').textContent, /마을 3개 · 접속 3명/);

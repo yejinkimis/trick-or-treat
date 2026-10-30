@@ -1,15 +1,12 @@
 const VILLAGE_SIZE = 8;
-const NAME_HEADS = ['피눈물', '목없는', '썩은호박', '울부짖는', '검은안개', '거미줄', '해골', '저주받은', '새벽없는', '관뚜껑', '박쥐떼', '귀신불'];
-const NAME_TAILS = ['골', '동', '리', '마을', '숲', '고개', '늪', '묘지'];
-const pick = (list, random) => list[Math.floor(random() * list.length)];
+const VILLAGE_NAMES = ['뽀롱뽀롱마을', '둠바족', '태초마을', '구리마을', '안드제국', '프론트마을'];
 
+// 여섯 이름을 다 쓰면 '뽀롱뽀롱마을2'처럼 숫자를 붙여 다음 묶음에서 뽑는다.
 function villageName(taken, random = Math.random) {
-  for (let i = 0; i < 200; i++) {
-    const name = `${pick(NAME_HEADS, random)}${pick(NAME_TAILS, random)}`;
-    if (!taken.has(name)) return name;
+  for (let round = 1; ; round++) {
+    const left = VILLAGE_NAMES.map((name) => round === 1 ? name : `${name}${round}`).filter((name) => !taken.has(name));
+    if (left.length) return left[Math.floor(random() * left.length)];
   }
-  const base = `${pick(NAME_HEADS, random)}${pick(NAME_TAILS, random)}`;
-  for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`;
 }
 
 // 빈 집은 다시 채우지 않고, 새로 분장한 사람은 분장한 순서대로 항상 맨 뒤 마을에 들어간다.
@@ -61,4 +58,4 @@ async function readVillagePlan(tx, db, newcomer, now = Date.now()) {
   };
 }
 
-module.exports = { VILLAGE_SIZE, NAME_HEADS, NAME_TAILS, villageName, planVillages, readVillagePlan };
+module.exports = { VILLAGE_SIZE, VILLAGE_NAMES, villageName, planVillages, readVillagePlan };

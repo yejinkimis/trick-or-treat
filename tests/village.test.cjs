@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { VILLAGE_SIZE, NAME_HEADS, NAME_TAILS, villageName, planVillages, readVillagePlan } = require('../server/village.cjs');
+const { VILLAGE_SIZE, VILLAGE_NAMES, villageName, planVillages, readVillagePlan } = require('../server/village.cjs');
 
 const people = (count, from = 0) => Array.from({ length: count }, (_, i) => ({ id: `p${from + i}`, readyAt: from + i }));
 
@@ -11,11 +11,11 @@ test('eight houses per village and the ninth costume opens a new village', () =>
   assert.deepEqual(created.map((v) => v.n), [1, 2]);
   assert.notEqual(created[0].name, created[1].name);
   assert.deepEqual(state, { last: 2, size: 1, names: created.map((v) => v.name) });
-  for (const { name } of created) assert.ok(NAME_HEADS.some((h) => name.startsWith(h)) && NAME_TAILS.some((t) => name.endsWith(t)), name);
+  for (const { name } of created) assert.ok(VILLAGE_NAMES.includes(name), name);
 });
 
 test('newcomers always join the last village in costume order, never an earlier gap', () => {
-  const counter = { last: 3, size: 7, names: ['해골골', '해골동', '해골리'] };
+  const counter = { last: 3, size: 7, names: ['태초마을', '구리마을', '둠바족'] };
   const late = [{ id: 'b', readyAt: 20 }, { id: 'a', readyAt: 10 }];
   const { state, assignments } = planVillages(counter, late);
   assert.deepEqual(assignments, [{ id: 'a', village: 3 }, { id: 'b', village: 4 }]);
@@ -23,10 +23,13 @@ test('newcomers always join the last village in costume order, never an earlier 
   assert.equal(state.names.length, 4);
 });
 
-test('a duplicate village name is drawn again', () => {
-  const rolls = [0, 0, 0, 0, 0.99, 0.99];
-  const name = villageName(new Set(['피눈물골']), () => rolls.shift());
-  assert.equal(name, '귀신불묘지');
+test('village names come from the six names, then repeat with a number', () => {
+  const taken = new Set();
+  for (let i = 0; i < 6; i++) taken.add(villageName(taken));
+  assert.deepEqual([...taken].sort(), [...VILLAGE_NAMES].sort());
+  assert.equal(villageName(taken, () => 0), '뽀롱뽀롱마을2');
+  for (const name of VILLAGE_NAMES) taken.add(`${name}2`);
+  assert.equal(villageName(taken, () => 0.99), '프론트마을3');
 });
 
 test('the first assignment after release places existing players in costume order', async () => {
