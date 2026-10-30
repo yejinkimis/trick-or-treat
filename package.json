@@ -13,7 +13,7 @@
     "test:emulator": "firebase emulators:exec --only auth,firestore,database --project demo-trick-or-treat \"node --test tests/auth.integration.test.cjs tests/game.integration.test.cjs\""
   },
   "dependencies": {
-    "firebase-admin": "14.5.0"
+    "firebase-admin": "13.10.0"
   },
   "devDependencies": {
     "firebase-tools": "15.34.2"
