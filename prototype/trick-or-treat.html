@@ -2022,7 +2022,7 @@ async function knock(slot) {
   S.npc = null;
   S.busy = false;
   canvas.focus({ preventScroll: true });
-  if (next === 'again') { await wait(150); knock(slot); return; }
+  if (next === 'again') { await wait(1000); knock(slot); return; }
   S.near = null;
   updateNear();
   if (next === 'note') openNote(id);
