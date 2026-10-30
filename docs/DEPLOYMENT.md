@@ -52,6 +52,8 @@ Web 설정은 공개 설정이고 `FIREBASE_SERVICE_ACCOUNT_JSON`은 서버 전�
 
 ## Firebase 설정과 배포 확인
 
+Firestore가 `asia-northeast3`(서울)에 있어서 `vercel.json`의 `regions`로 서버 함수도 서울(`icn1`)에서 실행한다. 기본값(미국 동부)에서는 요청마다 서버와 Firestore가 태평양을 여러 번 오가 호박 따기·노크 응답이 늦었다. Firestore 위치를 바꾸면 이 값도 함께 바꾼다.
+
 1. 대상 프로젝트가 `trick-or-treat-89de3`인지 확인하고 `firestore.rules`를 Firestore Rules 화면에, `database.rules.json`의 rules 내용을 Realtime Database Rules 화면에 게시한다. 한쪽만 적용하면 실시간 게임이 정상 동작하지 않는다. 캐릭터 위치·뿅망치 경로가 `presence/{마을}`·`events/{마을}`로, 채팅이 `chat`, 접속자 목록이 `online`으로 바뀌므로, 규칙과 새 배포를 같은 때에 반영한다. 이전 화면을 띄워 둔 사람은 새로고침해야 접속된다.
 2. 서비스 계정 JSON을 Vercel 환경변수에 등록한다. JSON의 `project_id`와 `FIREBASE_PROJECT_ID`가 일치해야 한다.
 3. PR Preview에서 가입 → 분장 선택 → 로그아웃 → 같은 계정 로그인 → 다른 브라우저 로그인 순으로 확인한다. 중복 닉네임과 잘못된 비밀번호도 거부되어야 한다.
