@@ -7,6 +7,8 @@ const { readVillagePlan } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
+// 사탕 잡기에 실패하면 사탕은 그대로 두고 장난 하나를 당한다. 화면의 TRICKS와 이름이 같아야 한다.
+const TRICK_KINDS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
 const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
 const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
 const hasBasket = (player) => player.basket === true || (player.pumpkins || 0) >= BASKET_PUMPKINS;
@@ -249,10 +251,12 @@ async function action(authorization, input) {
           ? { ...challenge.nextLevelByHost } : {};
         if (win) nextLevelByHost[challenge.host] = Math.min(MAX_LEVEL, challenge.level + 1);
         else delete nextLevelByHost[challenge.host];
-        const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level };
+        const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level,
+          ...(win ? {} : { k: TRICK_KINDS[randomInt(TRICK_KINDS.length)] }) };
         const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now,
           challenges: [...(player.challenges || []), { at: now, h: challenge.host, w: win, ms: outcome.at, lv: challenge.level, m: moved }].slice(-MAX_CHALLENGE_LOG) };
-        if (win) playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
+        // 실패도 남겨야 마을 사람들 화면에 낙서·똥 같은 장난이 보인다.
+        playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
         tx.update(playerRef, playerUpdate);
         if (win) tx.update(hostRef, { ...(moved ? { round, candies: hostCount - 1 } : {}),
           guests: withGuest(hostDoc.data(), { ...entry, v: uid, nick: player.nick }) });
@@ -272,4 +276,4 @@ async function action(authorization, input) {
   }, { maxAttempts: 20 });
 }
 
-module.exports = { PRICES, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { TRICK_KINDS, PRICES, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };

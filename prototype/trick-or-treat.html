@@ -299,7 +299,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <div class="field">
         <span class="lab">사탕을 주고받는 경쟁 규칙</span>
-        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로예요. 같은 집에서 이기면 다음 도전이 최대 5단계까지 어려워지고, 그 집에서 실패하면 1단계로 돌아가요. 다른 집 난이도는 따로 기억해요.</span>
+        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로지만 장난을 하나 당해요(30초~1분). 같은 집에서 이기면 다음 도전이 최대 5단계까지 어려워지고, 그 집에서 실패하면 1단계로 돌아가요. 다른 집 난이도는 따로 기억해요.</span>
       </div>
       <div class="field">
         <span class="lab">뿅망치 맞으면 당하는 장난</span>
@@ -338,7 +338,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <button class="pbtn" type="button" data-close="rank">닫기</button>
     </div>
     <p class="reward" id="rk-reward">최종 사탕 순위에 따라 실제 선물을 드려요!</p>
-    <p class="note">친구 집 도전에 성공하면 상대에게서 사탕 1개를 가져오고, 실패해도 사탕은 그대로예요. 장식에 쓴 사탕은 순위에서도 빠져요. 같은 사탕 수는 현재 이름순으로 표시돼요.</p>
+    <p class="note">친구 집 도전에 성공하면 상대에게서 사탕 1개를 가져오고, 실패해도 사탕은 그대로지만 장난을 당해요. 장식에 쓴 사탕은 순위에서도 빠져요. 같은 사탕 수는 현재 이름순으로 표시돼요.</p>
     <ol class="book rank" id="rk-list"></ol>
     <div class="field" id="rk-admin" hidden>
       <span class="lab">운영자</span>
@@ -694,10 +694,9 @@ function computeLedger() {
     if (bal[v] === undefined) continue;
     if (brew !== undefined) { bal[v] += brew; continue; }
     if (item) { bal[v] = Math.max(0, bal[v] - DECOR[item].price); continue; }
-    if (k.r !== 'win' && !(k.r === 'lose' && k.k)) continue;
-    if (bal[k.h] === undefined) continue;
-    const [giver, taker] = k.r === 'win' ? [k.h, v] : [v, k.h];
-    if (bal[giver] > 0) { bal[giver] -= 1; bal[taker] += 1; moved.add(k); }
+    // 실패는 장난만 받고 사탕은 옮기지 않는다.
+    if (k.r !== 'win' || bal[k.h] === undefined) continue;
+    if (bal[k.h] > 0) { bal[k.h] -= 1; bal[v] += 1; moved.add(k); }
   }
   return { bal, moved };
 }
@@ -1639,7 +1638,7 @@ function renderAction() {
     $('#act-sub').textContent = !myCostume() ? '코스튬부터 입어야 문을 두드릴 수 있어요'
       : ended ? '이벤트가 끝나서 문이 잠겼어요'
       : !hasBasket(S.me) ? `호박 바구니가 있어야 두드릴 수 있어요 · 호박 ${S.players[S.me]?.pumpkins || 0}/${BASKET_PUMPKINS}`
-      : '성공하면 상대 사탕 1개 획득 · 실패해도 사탕은 그대로';
+      : '성공하면 상대 사탕 1개 획득 · 실패하면 장난 당함';
     btn.textContent = '똑똑 두드리기';
     btn.disabled = S.readOnly || !myCostume() || ended || !hasBasket(S.me);
   }
@@ -1796,14 +1795,14 @@ function bookLine(k) {
   const fx = TRICKS[k.k] ? ` + ${TRICKS[k.k].book}` : '';
   if (k.r === 'win') return wasMoved(k) ? '<span class="tag trick">털림</span> 사탕 잡기에 성공해 1개 가져감' : '<span class="tag treat">무사</span> 성공했지만 우리 집에 사탕이 없었음';
   if (k.r === 'lose') return k.k
-    ? `<span class="tag treat">득템</span> 박자 놓쳐서 ${wasMoved(k) ? '사탕 1개 두고 감' : '두고 갈 사탕도 없었음'}${esc(fx)}`
+    ? `<span class="tag treat">무사</span> 사탕 잡기에 실패해 장난 당함${esc(fx)}`
     : '<span class="tag treat">무사</span> 사탕 잡기에 실패해 아무 일도 일어나지 않음';
   if (k.r === 'treat') return '<span class="tag treat">TREAT</span> 사탕 하나 챙겨감';
   return `<span class="tag trick">TRICK</span> ${esc(trickBook(k))}`;
 }
 function knockNews(k) {
   if (k.r === 'win') return wasMoved(k) ? '사탕 잡기에 성공해 사탕 1개 가져감' : '성공했지만 줄 사탕이 없었음';
-  if (k.r === 'lose') return k.k ? (wasMoved(k) ? '박자 놓쳐서 사탕 1개 두고 감' : '박자 놓침') : '사탕 잡기에 실패해 아무 일도 일어나지 않음';
+  if (k.r === 'lose') return k.k ? `사탕 잡기에 실패해 ${trickBook(k)}` : '사탕 잡기에 실패해 아무 일도 일어나지 않음';
   return k.r === 'treat' ? '사탕 줌' : trickBook(k);
 }
 
@@ -2654,7 +2653,7 @@ async function knock(slot) {
       entry = result.entry; hit = entry.r === 'win';
       const round = entry.round;
       S.players[S.me] = { ...S.players[S.me], round, candies: result.candies, knockAt: entry.at,
-        ...(hit ? { knocks: [...(S.players[S.me].knocks || []), entry].slice(-100) } : {}) };
+        knocks: [...(S.players[S.me].knocks || []), entry].slice(-100) };
       S.players[id] = { ...S.players[id], round, candies: result.hostCandies };
       render();
     } else {
@@ -2663,11 +2662,10 @@ async function knock(slot) {
       else delete byHost[id];
       S.localKnockStreaks = { challenger: S.me, round, byHost };
       const moved = hit && candiesOf(id) > 0;
-      entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, moved, level: localLevel };
-      if (hit) {
-        const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
-        saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS), knockAt: entry.at });
-      } else saveMe({ knockAt: entry.at });
+      entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, moved, level: localLevel,
+        ...(hit ? {} : { k: pick(Object.keys(TRICKS)) }) };
+      const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
+      saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS), knockAt: entry.at });
     }
   } catch (error) {
     S.busy = false; renderAction(); toast(error.message); return;
@@ -2689,7 +2687,13 @@ async function knock(slot) {
   } else if (hit) {
     await say(hostName, '성공했지만 우리 집 사탕은 다 떨어졌어.');
   } else {
-    await say(hostName, '아쉽다! 이번에는 사탕을 놓쳤어. 사탕은 그대로야.');
+    await say(hostName, pick(['땡! 사탕이 쏙 빠져나갔네.', '땡! 그 바로는 못 잡지.', '땡! 사탕이 더 빨랐어.']));
+    const t = TRICKS[entry.k];
+    if (t) {
+      await say(hostName, `사탕은 그대로 둬. 대신 장난이다. ${t.lines[0]}`);
+      shake();
+      await say('TRICK!', t.lines[1], 'trick');
+    }
   }
   const next = await choose([['again', '한 번 더 똑똑'], ['note', '방명록 쓰기'], ['bye', '그만 갈래']], { cancel: 'bye' });
   $('#dialog').hidden = true;
@@ -2847,7 +2851,7 @@ async function welcomeTips(creationMessage) {
     ? '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!'
     : '연습 마을에서 친구 집 사탕을 가져와 보세요. 연습 결과는 저장되거나 선물 순위에 포함되지 않아요.', 'sys');
   await say('', '먼저 호박 3개로 바구니를 만드세요. 호박 근처에서 버튼이나 Space로 수집할 수 있어요.', 'sys');
-  await say('', '바구니를 들고 친구 집 문을 두드리세요. 움직이는 사탕을 초록 바 안에 오래 가두면 상대 사탕 1개를 가져와요. 실패해도 사탕은 잃지 않아요.', 'sys');
+  await say('', '바구니를 들고 친구 집 문을 두드리세요. 움직이는 사탕을 초록 바 안에 오래 가두면 상대 사탕 1개를 가져와요. 실패해도 사탕은 잃지 않지만 장난을 당해요.', 'sys');
   $('#dialog').hidden = true;
   S.guideRunning = false;
   saveMe({ guideSeen: true });

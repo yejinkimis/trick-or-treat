@@ -284,7 +284,7 @@ test('letting the progress bar empty fails without a candy transfer', async () =
 });
 
 for (const won of [true, false]) {
-  test(`full knock ${won ? 'success takes' : 'failure leaves'} candy and announces the result`, async () => {
+  test(`full knock ${won ? 'success takes candy' : 'failure leaves candy but plays a trick'} and announces the result`, async () => {
     const g = game(); g.players();
     g.run(`S.players.me.pumpkins = 3; globalThis.messages = [];
       say = async (who, text) => messages.push(text); choose = async () => 'bye';
@@ -293,8 +293,14 @@ for (const won of [true, false]) {
     assert.equal(g.run('candiesOf("me")'), won ? 11 : 10);
     assert.equal(g.run('candiesOf("host")'), won ? 9 : 10);
     assert.equal(g.run('S.busy'), false);
-    assert.equal(g.run('S.players.me.knocks.length'), won ? 1 : 0);
-    assert.match(g.run('messages.join(" ")'), won ? /친구에게서 사탕 1개 가져옴/ : /사탕은 그대로야/);
+    assert.equal(g.run('S.players.me.knocks.length'), 1);
+    assert.match(g.run('messages.join(" ")'), won ? /친구에게서 사탕 1개 가져옴/ : /사탕은 그대로 둬\. 대신 장난이다/);
+    if (!won) {
+      const kind = g.run('S.players.me.knocks[0].k');
+      assert.ok(g.run(`Boolean(TRICKS['${kind}'])`), 'a known trick is recorded');
+      assert.equal(g.run('activeFx("me")?.kind'), kind, 'and it is active right away');
+      assert.match(g.run('messages.join(" ")'), new RegExp(g.run(`TRICKS['${kind}'].lines[1]`).replace(/[.!?()]/g, '\\$&')));
+    }
     assert.equal(g.elements.get('quest').dataset.step, 'compete');
   });
 }
