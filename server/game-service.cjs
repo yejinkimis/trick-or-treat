@@ -92,9 +92,11 @@ async function action(authorization, input) {
       } else if (type === 'knock-start') {
         if (input.host === uid || !/^[a-f0-9]{32}$/.test(input.host || '')) fail('노크할 집을 확인해 주세요.');
         if ((player.pumpkins || 0) < 3) fail('호박 3개로 바구니를 먼저 만드세요.');
+        const lockRef = db.collection('gameHouseLocks').doc(input.host);
         const [host, pending] = await Promise.all([
           tx.get(db.collection('gamePlayers').doc(input.host)), tx.get(challengeRef),
         ]);
+        const lockDoc = await tx.get(lockRef);
         if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
@@ -103,6 +105,9 @@ async function action(authorization, input) {
         if (prior.round === round && !prior.used && priorIsActive) {
           fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
         }
+        const lock = lockDoc.exists ? lockDoc.data() : null;
+        const lockIsActive = lock?.round === round && now - (lock.createdAt || now) < STALE_CHALLENGE_MS;
+        if (lockIsActive) fail('이 집은 지금 다른 사람이 도전 중이에요.', 429);
         const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
           ? { ...prior.nextLevelByHost } : {};
         const level = Math.min(MAX_LEVEL, Math.max(1, Number(nextLevelByHost[input.host]) || 1));
@@ -111,14 +116,20 @@ async function action(authorization, input) {
           level, seed: createCandySeed(), nextLevelByHost, streakRound: round,
         };
         tx.set(challengeRef, challenge);
+        tx.set(lockRef, { challengeId: challenge.id, challengerUid: uid, round, createdAt: now });
         result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed } };
       } else if (type === 'knock-finish') {
         const challengeDoc = await tx.get(challengeRef);
         const challenge = challengeDoc.exists ? challengeDoc.data() : null;
         if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round) fail('도전이 끝났거나 다시 시작됐어요. 다시 시도해 주세요.');
         const hostRef = db.collection('gamePlayers').doc(challenge.host);
-        const hostDoc = await tx.get(hostRef);
+        const lockRef = db.collection('gameHouseLocks').doc(challenge.host);
+        const [hostDoc, lockDoc] = await Promise.all([tx.get(hostRef), tx.get(lockRef)]);
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
+        const lock = lockDoc.exists ? lockDoc.data() : null;
+        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round) {
+          fail('이 도전은 더 이상 유효하지 않아요. 다시 노크해 주세요.');
+        }
         const outcome = evaluateCandyChallenge(challenge, input.inputs, input.elapsedMs, now);
         if (!outcome.valid) fail(outcome.message || '조작 기록을 확인해 주세요.');
         if (!outcome.finished) fail('도전이 아직 끝나지 않았어요.');
@@ -135,6 +146,7 @@ async function action(authorization, input) {
         tx.update(playerRef, playerUpdate);
         if (moved) tx.update(hostRef, { round, candies: hostCount - 1 });
         tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
+        tx.delete(lockRef);
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
       } else fail('지원하지 않는 행동이에요.');
     }
