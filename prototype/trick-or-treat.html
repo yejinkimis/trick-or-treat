@@ -255,7 +255,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <div class="field">
         <span class="lab">사탕을 주고받는 경쟁 규칙</span>
-        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로예요. 같은 집에 연속 도전할수록 사탕이 더 빠르고 불규칙하게 움직이고, 포획 바가 좁아져요.</span>
+        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로예요. 같은 집에서 이기면 다음 도전이 최대 5단계까지 어려워지고, 그 집에서 실패하면 1단계로 돌아가요. 다른 집 난이도는 따로 기억해요.</span>
       </div>
       <div class="field">
         <span class="lab">뿅망치 맞으면 당하는 장난</span>
@@ -546,7 +546,7 @@ const S = {
   mode: 'loading', db: null, user: null, room: null, me: null, players: {}, names: {},
   account: null, accountProfile: null,
   readOnly: false, busy: false, guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null,
-  candyControl: null, localKnockStreak: { host: null, round: null, count: 0 },
+  candyControl: null, localKnockStreaks: { challenger: null, round: null, byHost: {} },
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
   pumpkins: [], nearPumpkin: null, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
@@ -1847,9 +1847,10 @@ async function knock(slot) {
   let hit, entry;
   try {
     const round = S.event?.id || 'practice';
-    const localStreak = S.localKnockStreak;
-    const localLevel = localStreak.host === id && localStreak.round === round
-      ? Math.min(CANDY_MAX_LEVEL, localStreak.count + 1) : 1;
+    if (S.localKnockStreaks.challenger !== S.me || S.localKnockStreaks.round !== round) {
+      S.localKnockStreaks = { challenger: S.me, round, byHost: {} };
+    }
+    const localLevel = Math.min(CANDY_MAX_LEVEL, Number(S.localKnockStreaks.byHost[id]) || 1);
     const challenge = S.mode === 'firebase'
       ? (await gameRequest({ type: 'knock-start', host: id })).challenge
       : { level: localLevel, seed: Math.floor(Math.random() * 0x100000000) };
@@ -1864,7 +1865,10 @@ async function knock(slot) {
       S.players[id] = { ...S.players[id], round, candies: result.hostCandies };
       render();
     } else {
-      S.localKnockStreak = { host: id, round, count: localLevel };
+      const byHost = { ...S.localKnockStreaks.byHost };
+      if (hit) byHost[id] = Math.min(CANDY_MAX_LEVEL, localLevel + 1);
+      else delete byHost[id];
+      S.localKnockStreaks = { challenger: S.me, round, byHost };
       const moved = hit && candiesOf(id) > 0;
       entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, moved, level: localLevel };
       if (hit) {

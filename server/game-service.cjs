@@ -99,12 +99,12 @@ async function action(authorization, input) {
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
         if (prior.round === round && !prior.used && now - (prior.createdAt || 0) < STALE_CHALLENGE_MS) fail('진행 중인 노크를 먼저 마쳐 주세요.');
-        const sameTarget = prior.streakHost === input.host && prior.streakRound === round;
-        const level = sameTarget ? Math.min(MAX_LEVEL, (prior.streakCount || 1) + 1) : 1;
+        const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
+          ? { ...prior.nextLevelByHost } : {};
+        const level = Math.min(MAX_LEVEL, Math.max(1, Number(nextLevelByHost[input.host]) || 1));
         const challenge = {
           id: randomUUID(), host: input.host, round, createdAt: now, used: false,
-          level, seed: createCandySeed(),
-          streakHost: input.host, streakRound: round, streakCount: level,
+          level, seed: createCandySeed(), nextLevelByHost, streakRound: round,
         };
         tx.set(challengeRef, challenge);
         result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed } };
@@ -121,12 +121,16 @@ async function action(authorization, input) {
         const win = outcome.won;
         const hostCount = balance(hostDoc.data(), event);
         const moved = win && hostCount > 0;
+        const nextLevelByHost = challenge.streakRound === round && challenge.nextLevelByHost
+          ? { ...challenge.nextLevelByHost } : {};
+        if (win) nextLevelByHost[challenge.host] = Math.min(MAX_LEVEL, challenge.level + 1);
+        else delete nextLevelByHost[challenge.host];
         const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level };
         const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now };
         if (win) playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
         tx.update(playerRef, playerUpdate);
         if (moved) tx.update(hostRef, { round, candies: hostCount - 1 });
-        tx.update(challengeRef, { used: true });
+        tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
       } else fail('지원하지 않는 행동이에요.');
     }

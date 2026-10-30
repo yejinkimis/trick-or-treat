@@ -73,7 +73,7 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   assert.equal(lost.hostCandies, 10);
   await services().db.collection('gamePlayers').doc(first.uid).update({ knockAt: 0, candies: 0 });
   const empty = (await act(first, { type: 'knock-start', host: host.uid })).challenge;
-  assert.equal(empty.level, 2, 'a repeat challenge to the same house is harder');
+  assert.equal(empty.level, 1, 'failure resets that house difficulty');
   await services().db.collection('gameChallenges').doc(first.uid).update({ createdAt: Date.now() - 4000,
     path: [{ t: 0, y: .05 }, { t: 3000, y: .05 }] });
   const noCandy = await act(first, { type: 'knock-finish', challengeId: empty.id, inputs: [], elapsedMs: 2800 });
