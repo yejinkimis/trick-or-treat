@@ -3,8 +3,8 @@ const assert = require('node:assert/strict');
 const { signup, login, getProfile, updateProfile } = require('../server/auth-service.cjs');
 
 const PROJECT_ID = 'demo-trick-or-treat';
-const AUTH_ENDPOINT = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-api-key';
-const FIRESTORE_ENDPOINT = `http://127.0.0.1:8080/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
+const AUTH_ENDPOINT = `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-api-key`;
+const FIRESTORE_ENDPOINT = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
 async function exchangeCustomToken(token) {
   const response = await fetch(AUTH_ENDPOINT, {
