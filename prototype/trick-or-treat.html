@@ -1822,6 +1822,8 @@ async function waitForToasts() {
 
 let writes = Promise.resolve();
 let accountWrites = Promise.resolve();
+// 서버에 아직 반영되지 않은 내 정보. 저장이 끝날 때마다 오는 이전 값이 화면을 되돌리지 않게 덮어 보여 준다.
+let unsavedProfile = { uid: null, fields: {}, pending: 0 }, queuedProfile = null;
 function saveAccountProfile(patch) {
   const user = S.account?.auth?.currentUser;
   const uid = S.me;
@@ -1831,16 +1833,37 @@ function saveAccountProfile(patch) {
     if (Object.hasOwn(patch, key)) allowed[key] = patch[key];
   }
   if (!Object.keys(allowed).length) return Promise.resolve();
-  accountWrites = accountWrites.catch(() => {}).then(async () => {
+  if (unsavedProfile.uid !== uid) unsavedProfile = { uid, fields: {}, pending: 0 };
+  Object.assign(unsavedProfile.fields, allowed);
+  // 아직 보내지 않은 저장이 있으면 거기에 합쳐, 빠르게 여러 번 바꿔도 마지막 값만 보낸다.
+  if (queuedProfile?.uid === uid) { Object.assign(queuedProfile.patch, allowed); return queuedProfile.done; }
+  const queued = queuedProfile = { uid, patch: { ...allowed } };
+  const unsaved = unsavedProfile;
+  unsaved.pending++;
+  queued.done = accountWrites = accountWrites.catch(() => {}).then(async () => {
+    if (queuedProfile === queued) queuedProfile = null;
     if (S.account?.auth?.currentUser?.uid !== uid) throw new Error('Account changed');
     const token = await user.getIdToken();
     const { profile } = await accountRequest('/api/auth/profile', {
-      method: 'PATCH', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(allowed),
+      method: 'PATCH', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(queued.patch),
     });
     if (S.me === uid) S.accountProfile = { ...S.accountProfile, ...profile };
+  }).catch((error) => {
+    for (const [key, value] of Object.entries(queued.patch)) if (unsaved.fields[key] === value) delete unsaved.fields[key];
+    throw error;
+  }).finally(() => {
+    unsaved.pending--;
+    if (S.me === uid && S.mode === 'firebase') applyFirebasePlayers();
   });
-  void accountWrites.catch(() => toast('캐릭터 정보를 저장하지 못했어요. 다시 시도해 주세요.'));
-  return accountWrites;
+  void queued.done.catch(() => toast('캐릭터 정보를 저장하지 못했어요. 다시 시도해 주세요.'));
+  return queued.done;
+}
+// 저장이 모두 끝나고 서버 값이 따라오면 덮어 보여 주던 값을 지운다.
+function unsavedOwnFields() {
+  if (unsavedProfile.uid !== S.me) return {};
+  const { fields } = unsavedProfile;
+  if (!unsavedProfile.pending && S.ownPlayer) for (const key of Object.keys(fields)) if (S.ownPlayer[key] === fields[key]) delete fields[key];
+  return fields;
 }
 function saveMe(patch) {
   if (S.readOnly) return;
@@ -2545,7 +2568,7 @@ async function saveMural() {
 
 function applyFirebasePlayers() {
   const round = S.event?.id || 'practice';
-  const source = { ...S.strangers, ...S.firebasePlayers, ...(S.ownPlayer ? { [S.me]: S.ownPlayer } : {}) };
+  const source = { ...S.strangers, ...S.firebasePlayers, ...(S.ownPlayer ? { [S.me]: { ...S.ownPlayer, ...unsavedOwnFields() } } : {}) };
   for (const p of Object.values(source)) for (const g of p.guests || []) if (g.nick && !S.names[g.v]) S.names[g.v] = cleanNick(g.nick);
   const next = Object.fromEntries(Object.entries(source).map(([uid, player]) => [uid, {
     ...player, decor: Object.fromEntries(Object.entries(player.decor || {}).filter(([, item]) => item.round === round).map(([key, item]) => [key, item.at])),
