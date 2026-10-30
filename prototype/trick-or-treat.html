@@ -301,7 +301,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 <div class="timing px actor-bubble" id="timing" hidden>
   <p class="t-title">박자 맞춰서 <b>똑똑똑</b> <span class="dots" id="t-dots"></span> <span id="t-say"></span></p>
   <div class="track"><div class="zone" id="t-zone"></div><div class="marker" id="t-marker"></div></div>
-  <p class="note">초록 칸에서 Space나 터치, 세 번 연속. 맞출 때마다 칸이 옮겨가고 빨라져요</p>
+  <p class="note">초록 칸에서 Space나 터치, 세 번 연속. 맞출 때마다 칸만 옮겨가요. 한 번에 6초 안에 눌러요</p>
 </div>
 
 <div class="hud chatlog" id="chatlog" aria-live="polite" hidden></div>
@@ -381,6 +381,9 @@ const ROOF = [null, '#f28a2e', '#7a4bb8', '#5fae3c', '#d8343a', '#4a4058'];
 const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
 const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000, KNOCK_HITS = 3;
+// 노크 난이도: 사탕 10개인 집은 폭 28%, 부자 집도 최소 20%를 보장한다.
+const KNOCK_ZONE_MAX = 0.32, KNOCK_ZONE_MIN = 0.20, KNOCK_ZONE_PER_CANDY = 0.004;
+const KNOCK_SPEED_MIN = 0.78, KNOCK_SPEED_MAX = 1.08, KNOCK_TIMEOUT_MS = 6000;
 const DECOR = {
   lantern: { name: '호박등', price: 2, icon: 'lantern', line: '문 옆에서 빛나는 호박' },
   web: { name: '거미줄', price: 2, icon: 'web', line: '지붕 모서리에 거미줄' },
@@ -524,7 +527,7 @@ function computeLedger() {
 const ledger = () => (S.ledger ??= computeLedger());
 const candiesOf = (id) => ledger().bal[id] ?? START_CANDIES;
 const wasMoved = (k) => ledger().moved.has(k);
-const zoneFor = (hostCandies) => Math.min(0.18, Math.max(0.06, 0.18 - hostCandies * 0.008));
+const zoneFor = (hostCandies) => clamp(KNOCK_ZONE_MAX - hostCandies * KNOCK_ZONE_PER_CANDY, KNOCK_ZONE_MIN, KNOCK_ZONE_MAX);
 function ranking() {
   return Object.entries(S.players)
     .filter(([, p]) => p.costume)
@@ -1514,7 +1517,7 @@ function timingGame(zone, speed, phase) {
     const rawT = () => (((performance.now() - start) / 1000) * speed + phase) % 2;
     const pos = () => { const t = rawT(); return t < 1 ? t : 2 - t; };
     const loop = () => { marker.style.left = `${pos() * 100}%`; raf = requestAnimationFrame(loop); };
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => finish(false), 4000); };
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => finish(false), KNOCK_TIMEOUT_MS); };
     const placeZone = () => {
       bar.style.left = `${(center - zone / 2) * 100}%`;
       bar.style.width = `${zone * 100}%`;
@@ -1539,7 +1542,6 @@ function timingGame(zone, speed, phase) {
       if (hits >= KNOCK_HITS) { finish(true); return; }
       phase = rawT();
       start = performance.now();
-      speed *= 1.25;
       center = zone / 2 + 0.05 + Math.random() * (0.9 - zone);
       $('#t-say').textContent = '똑!';
       placeZone();
@@ -1571,7 +1573,7 @@ async function knock(slot) {
     S.shakeDoor = null;
     await wait(reduceMotion() ? 50 : 110);
   }
-  const hit = await timingGame(zoneFor(candiesOf(id)), 1.3 + Math.random() * 0.5, Math.random() * 2);
+  const hit = await timingGame(zoneFor(candiesOf(id)), KNOCK_SPEED_MIN + Math.random() * (KNOCK_SPEED_MAX - KNOCK_SPEED_MIN), Math.random() * 2);
   const kind = hit ? null : pick(Object.keys(TRICKS));
   const entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, ...(kind ? { k: kind } : {}) };
   const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
