@@ -6,7 +6,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Silkscreen:wght@400;700&display=swap">
 <style>
-/* 화면 전체는 픽셀 마을. 행동·대화·노크는 캐릭터를 따라가는 말풍선으로 표시한다. */
+/* 화면 전체는 픽셀 마을. 행동과 대화는 캐릭터를 따라가고 도전 미니게임은 중앙에 표시한다. */
 :root{
   --night:#140f1c; --panel:#2a1f3d; --panel-2:#3b2d55; --text:#fff4e2; --muted:#c3b4da; --edge:#0b0810;
   --pumpkin:#f28a2e; --candy:#ff6fa8; --slime:#8bd450; --gold:#ffd166;
@@ -138,16 +138,17 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .auth-actions{justify-content:flex-end}
 .auth-switch{align-self:flex-end}
 
-.timing{position:fixed;z-index:9;left:50%;top:42%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 40px));padding:16px 18px;display:flex;flex-direction:column;gap:12px;cursor:pointer;touch-action:none;user-select:none}
-.t-title{margin:0;font-size:1.25rem}
-.t-title b{color:var(--pumpkin);font-weight:400}
-#t-say{font-family:var(--f-px);font-weight:700;margin-left:6px}
-.dots{color:var(--gold);letter-spacing:.15em}
-.timing.hit #t-say{color:var(--slime)} .timing.miss #t-say{color:var(--candy)}
-.track{position:relative;height:30px;background:var(--night);border:3px solid var(--text)}
-.timing.hit .track{border-color:var(--slime)} .timing.miss .track{border-color:var(--candy)}
-.zone{position:absolute;top:0;bottom:0;background:var(--slime)}
-.marker{position:absolute;top:-9px;bottom:-9px;width:6px;margin-left:-3px;background:var(--gold);box-shadow:0 0 0 2px var(--edge)}
+.timing{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(360px,calc(100vw - 32px));padding:16px 18px;display:grid;gap:10px;text-align:center;user-select:none;box-shadow:0 0 0 100vmax rgba(11,8,16,.68),0 0 0 4px var(--edge),6px 6px 0 4px rgba(0,0,0,.4)}
+.t-title{margin:0;font-size:1.35rem;font-weight:400;color:var(--gold)}
+.t-subtitle{margin:0;color:var(--muted);font-size:.9rem}
+.timing-track{position:relative;width:86px;height:min(42dvh,320px);min-height:210px;margin:2px auto;background:var(--night);border:3px solid var(--text);overflow:hidden;touch-action:none;user-select:none;cursor:pointer}
+.timing-bar{position:absolute;left:0;right:0;top:50%;height:30%;box-sizing:border-box;background:var(--slime);border:3px solid var(--text);box-shadow:inset 0 0 0 2px rgba(11,8,16,.25);opacity:.94;will-change:top,height}
+.timing-candy{position:absolute;z-index:1;left:50%;top:50%;width:34px;height:22px;object-fit:contain;transform:translate(-50%,-50%);image-rendering:pixelated;pointer-events:none;will-change:top}
+.catch-meter{height:20px;background:var(--night);border:3px solid var(--text);overflow:hidden}
+.catch-meter>span{display:block;width:50%;height:100%;background:var(--gold);transition:width .05s linear}
+.timing-result{min-height:1.4em;margin:0;font-family:var(--f-px);font-size:.82rem;color:var(--text)}
+.timing-result.hit{color:var(--slime)} .timing-result.miss{color:var(--candy)}
+.timing-help{margin:0;color:var(--muted);font-size:.84rem}
 
 
 /* 캔버스의 월드 좌표를 CSS 좌표로 바꿔 캐릭터 위에 배치한다. */
@@ -161,13 +162,14 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .dialog.actor-bubble .bubble-content{max-height:calc(100dvh - 204px);overflow-y:auto;overscroll-behavior:contain;padding:0 2px 4px}
 .dialog.actor-bubble .choices{gap:10px;justify-content:flex-start}
 .dialog.actor-bubble .choices .pbtn{white-space:normal;line-height:1.3}
-.timing.actor-bubble{width:min(400px,calc(100vw - 40px))}
 
 .toast{position:fixed;z-index:12;left:50%;transform:translateX(-50%);top:calc(90px + env(safe-area-inset-top,0px));padding:8px 14px;max-width:calc(100vw - 40px);font-size:.95rem;text-align:center}
 
 @media (max-width:560px){
   .tr{flex-direction:column;align-items:flex-end}
   .toast{top:auto;bottom:calc(110px + env(safe-area-inset-bottom,0px))}
+  .timing{max-height:calc(100dvh - 24px);overflow:auto;padding:12px;gap:8px}
+  .timing-track{height:min(36dvh,260px);min-height:160px}
 }
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
@@ -253,10 +255,10 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <div class="field">
         <span class="lab">사탕을 주고받는 경쟁 규칙</span>
-        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 박자 맞추기가 나와요. 초록 칸을 세 번 연속 맞추면 그 집 사탕 1개를 가져오고, 놓치면 내 사탕 1개를 그 집에 두고 와요. 우리 집에 온 친구가 박자를 놓치면 그 사탕은 내 거예요. 사탕이 많은 집일수록 맞추는 칸이 좁아져요.</span>
+        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로예요. 같은 집에 연속 도전할수록 사탕이 더 빠르고 불규칙하게 움직이고, 포획 바가 좁아져요.</span>
       </div>
       <div class="field">
-        <span class="lab">박자 놓치면 당하는 장난</span>
+        <span class="lab">뿅망치 맞으면 당하는 장난</span>
         <span class="note">얼굴 낙서 1분, 방향키 반대 30초, 신발끈 묶여서 엉금엉금 30초, 똥 뒤집어쓰기 1분, 깜깜해서 내 주변만 보이는 시야 차단 30초 중 하나.</span>
       </div>
       <div class="field">
@@ -275,7 +277,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <button class="pbtn" type="button" data-close="rank">닫기</button>
     </div>
     <p class="reward" id="rk-reward">최종 사탕 순위에 따라 실제 선물을 드려요!</p>
-    <p class="note">친구 집 노크에 성공하면 상대에게서 사탕 1개를 가져오고, 실패하면 내 사탕 1개를 줘요. 장식에 쓴 사탕은 순위에서도 빠져요. 같은 사탕 수는 현재 이름순으로 표시돼요.</p>
+    <p class="note">친구 집 도전에 성공하면 상대에게서 사탕 1개를 가져오고, 실패해도 사탕은 그대로예요. 장식에 쓴 사탕은 순위에서도 빠져요. 같은 사탕 수는 현재 이름순으로 표시돼요.</p>
     <ol class="book rank" id="rk-list"></ol>
     <div class="field" id="rk-admin" hidden>
       <span class="lab">운영자</span>
@@ -343,10 +345,17 @@ textarea:focus{outline:none;border-color:var(--gold)}
   </div>
 </div>
 
-<div class="timing px actor-bubble" id="timing" hidden>
-  <p class="t-title">박자 맞춰서 <b>똑똑똑</b> <span class="dots" id="t-dots"></span> <span id="t-say"></span></p>
-  <div class="track"><div class="zone" id="t-zone"></div><div class="marker" id="t-marker"></div></div>
-  <p class="note">초록 칸에서 Space나 터치, 세 번 연속. 맞출 때마다 칸만 옮겨가요. 한 번에 6초 안에 눌러요</p>
+<div class="timing px" id="timing" role="dialog" aria-modal="true" aria-labelledby="t-title" hidden>
+  <p class="t-title" id="t-title">사탕을 잡아라!</p>
+  <p class="t-subtitle" id="t-level"></p>
+  <div class="timing-track" id="t-track" role="application" tabindex="0" aria-label="사탕을 초록 포획 바 안에 가두세요">
+    <div class="timing-bar" id="t-bar"></div>
+    <img class="timing-candy" id="t-candy" alt="움직이는 사탕">
+  </div>
+  <div class="catch-meter" id="catch-meter" role="progressbar" aria-label="사탕 잡기 진행도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span id="t-progress"></span></div>
+  <p class="timing-result" id="t-result" aria-live="polite"></p>
+  <p class="timing-help">Space나 초록 바를 누르고 있으면 바가 올라가요. 놓으면 내려가요.</p>
+  <p class="note">사탕이 초록 바 안에 있으면 게이지가 차고, 벗어나면 줄어요.</p>
 </div>
 
 <div class="hud chatlog" id="chatlog" aria-live="polite" hidden></div>
@@ -425,10 +434,8 @@ const DOODLE = ['................', '................', '................', '...
 const ROOF = [null, '#f28a2e', '#7a4bb8', '#5fae3c', '#d8343a', '#4a4058'];
 const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
-const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000, KNOCK_HITS = 3;
-// 노크 난이도: 사탕 10개인 집은 폭 28%, 부자 집도 최소 20%를 보장한다.
-const KNOCK_ZONE_MAX = 0.32, KNOCK_ZONE_MIN = 0.20, KNOCK_ZONE_PER_CANDY = 0.004;
-const KNOCK_SPEED_MIN = 0.78, KNOCK_SPEED_MAX = 1.08, KNOCK_TIMEOUT_MS = 6000;
+const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000;
+const CANDY_GAME_MS = 18000, CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5;
 const DECOR = {
   lantern: { name: '호박등', price: 2, icon: 'lantern', line: '문 옆에서 빛나는 호박' },
   web: { name: '거미줄', price: 2, icon: 'web', line: '지붕 모서리에 거미줄' },
@@ -537,7 +544,8 @@ function rng(seed) {
 const S = {
   mode: 'loading', db: null, user: null, room: null, me: null, players: {}, names: {},
   account: null, accountProfile: null,
-  readOnly: false, busy: false, guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null, timingPress: null,
+  readOnly: false, busy: false, guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null,
+  candyControl: null, localKnockStreak: { host: null, round: null, count: 0 },
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
   pumpkins: [], nearPumpkin: null, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
@@ -573,6 +581,7 @@ function computeLedger() {
   for (const { k, v, item } of entries) {
     if (bal[v] === undefined) continue;
     if (item) { bal[v] = Math.max(0, bal[v] - DECOR[item].price); continue; }
+    if (k.r !== 'win' && !(k.r === 'lose' && k.k)) continue;
     if (bal[k.h] === undefined) continue;
     const [giver, taker] = k.r === 'win' ? [k.h, v] : [v, k.h];
     if (bal[giver] > 0) { bal[giver] -= 1; bal[taker] += 1; moved.add(k); }
@@ -585,7 +594,6 @@ const candiesOf = (id) => S.mode === 'firebase'
   ? (S.players[id]?.round === (S.event?.id || 'practice') ? S.players[id].candies : START_CANDIES)
   : ledger().bal[id] ?? START_CANDIES;
 const wasMoved = (k) => S.mode === 'firebase' ? k.moved === true : ledger().moved.has(k);
-const zoneFor = (hostCandies) => clamp(KNOCK_ZONE_MAX - hostCandies * KNOCK_ZONE_PER_CANDY, KNOCK_ZONE_MIN, KNOCK_ZONE_MAX);
 function ranking() {
   if (S.mode === 'firebase' && eventState() === 'ended' && S.event.results) return S.event.results;
   return Object.entries(S.players)
@@ -844,7 +852,7 @@ function botReply() {
   }
 }
 
-const BOT_LINES = ['사탕 몇 개 있어?', '나 때리지 마라', '트릭 오어 트릿!', '아 박자 어렵네', '거기 똥 묻었어', '뿅망치 반칙이야'];
+const BOT_LINES = ['사탕 몇 개 있어?', '나 때리지 마라', '트릭 오어 트릿!', '아 사탕 잡기 어렵네', '거기 똥 묻었어', '뿅망치 반칙이야'];
 function botTick(id, dt) {
   const p = S.players[id];
   if (!p?.costume || !MAP.slots.length) return;
@@ -928,7 +936,7 @@ function syncPeers() {
 
 function w2s(wx, wy) { return [wx * Z - camX, wy * Z - camY]; }
 // 캔버스는 기기 픽셀, DOM은 CSS 픽셀을 쓰므로 dpr로 나눠 위치를 맞춘다.
-const actorBubbles = ['action', 'dialog', 'timing'].map((id) => $(`#${id}`));
+const actorBubbles = ['action', 'dialog'].map((id) => $(`#${id}`));
 function positionActorBubbles() {
   const visible = actorBubbles.filter((el) => !el.hidden);
   if (!visible.length) return;
@@ -1281,7 +1289,7 @@ function renderAction() {
     $('#act-sub').textContent = !myCostume() ? '코스튬부터 입어야 문을 두드릴 수 있어요'
       : ended ? '이벤트가 끝나서 문이 잠겼어요'
       : !hasBasket(S.me) ? `호박 바구니가 있어야 두드릴 수 있어요 · 호박 ${S.players[S.me]?.pumpkins || 0}/${BASKET_PUMPKINS}`
-      : `성공: ${nameOf(n.owner)} → 나 1개 / 실패: 나 → ${nameOf(n.owner)} 1개`;
+      : '성공하면 상대 사탕 1개 획득 · 실패해도 사탕은 그대로';
     btn.textContent = '똑똑 두드리기';
     btn.disabled = S.readOnly || !myCostume() || ended || !hasBasket(S.me);
   }
@@ -1323,13 +1331,13 @@ function renderQuest() {
   if (el.hidden) return;
   const have = Math.min(BASKET_PUMPKINS, p.pumpkins || 0);
   const ended = eventState() === 'ended';
-  const knocked = (p.knocks || []).some((k) => k.r === 'win' || k.r === 'lose');
+  const knocked = Boolean(p.knockAt) || (p.knocks || []).some((k) => k.r === 'win' || k.r === 'lose');
   const step = ended ? 'ended' : have < BASKET_PUMPKINS ? 'pumpkins' : !knocked ? 'knock' : 'compete';
   el.dataset.step = step;
   const content = {
     pumpkins: ['진행 중인 퀘스트', `호박 바구니 만들기 · ${have}/${BASKET_PUMPKINS}`, '주황색 호박 근처에서 ‘호박 따기’ 또는 Space를 누르세요.'],
     knock: ['퀘스트 완료! 다음 목표', '친구 집 문을 처음 두드려 보세요', '바구니 완성! 친구 집 문 앞에서 버튼이나 Space로 도전하세요.'],
-    compete: ['다음 목표', '사탕을 모아 순위를 올리세요', '성공하면 상대에게서 1개 획득, 실패하면 내 사탕 1개를 잃어요. 최종 순위에 따라 선물을 드려요.'],
+    compete: ['다음 목표', '사탕을 모아 순위를 올리세요', '사탕 잡기에 성공하면 상대에게서 1개 가져와요. 실패해도 사탕은 그대로예요. 최종 순위에 따라 선물을 드려요.'],
     ended: ['이벤트 종료', '최종 사탕 순위를 확인하세요', '순위 버튼에서 결과를 볼 수 있어요. 최종 순위에 따라 선물을 드려요.'],
   }[step];
   for (const [id, value] of [['quest-label', content[0]], ['quest-title', content[1]], ['quest-detail', content[2]]]) {
@@ -1376,14 +1384,16 @@ function renderWardrobe() {
 const trickBook = (k) => TRICKS[k.k]?.book || (k.t ? `${k.t} 당함` : '장난 당함');
 function bookLine(k) {
   const fx = TRICKS[k.k] ? ` + ${TRICKS[k.k].book}` : '';
-  if (k.r === 'win') return wasMoved(k) ? '<span class="tag trick">털림</span> 박자 딱 맞춰서 우리 사탕 1개 가져감' : '<span class="tag treat">무사</span> 박자는 맞췄는데 우리 집에 사탕이 없었음';
-  if (k.r === 'lose') return `<span class="tag treat">득템</span> 박자 놓쳐서 ${wasMoved(k) ? '사탕 1개 두고 감' : '두고 갈 사탕도 없었음'}${esc(fx)}`;
+  if (k.r === 'win') return wasMoved(k) ? '<span class="tag trick">털림</span> 사탕 잡기에 성공해 1개 가져감' : '<span class="tag treat">무사</span> 성공했지만 우리 집에 사탕이 없었음';
+  if (k.r === 'lose') return k.k
+    ? `<span class="tag treat">득템</span> 박자 놓쳐서 ${wasMoved(k) ? '사탕 1개 두고 감' : '두고 갈 사탕도 없었음'}${esc(fx)}`
+    : '<span class="tag treat">무사</span> 사탕 잡기에 실패해 아무 일도 일어나지 않음';
   if (k.r === 'treat') return '<span class="tag treat">TREAT</span> 사탕 하나 챙겨감';
   return `<span class="tag trick">TRICK</span> ${esc(trickBook(k))}`;
 }
 function knockNews(k) {
-  if (k.r === 'win') return wasMoved(k) ? '박자 맞춰서 우리 사탕 1개 가져감' : '박자는 맞췄는데 줄 사탕이 없었음';
-  if (k.r === 'lose') return wasMoved(k) ? '박자 놓쳐서 사탕 1개 두고 감' : '박자 놓침';
+  if (k.r === 'win') return wasMoved(k) ? '사탕 잡기에 성공해 사탕 1개 가져감' : '성공했지만 줄 사탕이 없었음';
+  if (k.r === 'lose') return k.k ? (wasMoved(k) ? '박자 놓쳐서 사탕 1개 두고 감' : '박자 놓침') : '사탕 잡기에 실패해 아무 일도 일어나지 않음';
   return k.r === 'treat' ? '사탕 줌' : trickBook(k);
 }
 
@@ -1679,52 +1689,121 @@ function shake() {
   setTimeout(() => stage.classList.remove('fx-shake'), 1000);
 }
 
-function timingGame(zone, speed, phase, challenge = null) {
+function localCandyPath(level) {
+  const stage = clamp(level, 1, CANDY_MAX_LEVEL);
+  const minSegment = 880 - (stage - 1) * 120, maxSegment = 1320 - (stage - 1) * 130;
+  const point = () => .08 + Math.random() * .84;
+  const path = [{ t: 0, y: point() }];
+  let time = 0;
+  while (time < CANDY_GAME_MS) {
+    time = Math.min(CANDY_GAME_MS, time + minSegment + Math.random() * (maxSegment - minSegment));
+    path.push({ t: Math.round(time / CANDY_STEP_MS) * CANDY_STEP_MS, y: point() });
+  }
+  path[path.length - 1].t = CANDY_GAME_MS;
+  return path;
+}
+
+function candyYAt(path, time) {
+  if (time <= path[0].t) return path[0].y;
+  for (let i = 1; i < path.length; i++) {
+    const next = path[i];
+    if (time > next.t) continue;
+    const prev = path[i - 1], progress = (time - prev.t) / Math.max(1, next.t - prev.t);
+    return prev.y + (next.y - prev.y) * progress;
+  }
+  return path[path.length - 1].y;
+}
+
+function candyGame(challenge) {
   return new Promise((done) => {
-    const box = $('#timing'), marker = $('#t-marker'), bar = $('#t-zone');
-    let hits = 0, center = 0.5, start = performance.now(), raf = 0, timer = 0, over = false;
-    const rawT = () => (((performance.now() - start) / 1000) * speed + phase) % 2;
-    const pos = () => { const t = rawT(); return t < 1 ? t : 2 - t; };
-    const loop = () => { marker.style.left = `${pos() * 100}%`; raf = requestAnimationFrame(loop); };
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => finish(false), KNOCK_TIMEOUT_MS); };
-    const placeZone = () => {
-      bar.style.left = `${(center - zone / 2) * 100}%`;
-      bar.style.width = `${zone * 100}%`;
-      $('#t-dots').textContent = '●'.repeat(hits) + '○'.repeat(KNOCK_HITS - hits);
-    };
-    function finish(hit) {
-      if (over) return;
-      over = true;
+    const box = $('#timing'), track = $('#t-track'), bar = $('#t-bar'), candy = $('#t-candy');
+    const meter = $('#catch-meter'), meterFill = $('#t-progress'), result = $('#t-result');
+    const level = clamp(challenge?.level || 1, 1, CANDY_MAX_LEVEL);
+    const duration = challenge?.duration || CANDY_GAME_MS;
+    const path = challenge?.path || localCandyPath(level);
+    const barHeight = .30 - (level - 1) * .025, stepSeconds = CANDY_STEP_MS / 1000;
+    const gain = .12 - (level - 1) * .004;
+    let barY = (1 - barHeight) / 2, velocity = 0, progress = .5;
+    let held = false, wantedHeld = false, inputIndex = 0, simAt = 0, raf = 0, finished = false;
+    const inputs = [];
+    const start = performance.now();
+    const currentCandy = (time) => candyYAt(path, time);
+
+    function setHeld(next) {
+      if (finished || next === wantedHeld) return;
+      const rounded = Math.ceil(Math.max(0, performance.now() - start) / CANDY_STEP_MS) * CANDY_STEP_MS;
+      const previous = inputs[inputs.length - 1];
+      const at = Math.max(simAt + CANDY_STEP_MS, rounded, previous ? previous.t + 60 : CANDY_STEP_MS);
+      if (at > duration || inputs.length >= 240) return;
+      wantedHeld = next;
+      inputs.push({ t: at, down: next });
+    }
+
+    function simulateStep(time) {
+      while (inputIndex < inputs.length && inputs[inputIndex].t <= time) {
+        held = inputs[inputIndex].down;
+        inputIndex++;
+      }
+      velocity = clamp(velocity + (held ? -3.8 : 4.6) * stepSeconds, -1.7, 1.7);
+      barY += velocity * stepSeconds;
+      if (barY < 0) { barY = 0; velocity = Math.max(0, velocity); }
+      if (barY > 1 - barHeight) { barY = 1 - barHeight; velocity = Math.min(0, velocity); }
+      const candyY = currentCandy(time);
+      const inBar = candyY >= barY - .018 && candyY <= barY + barHeight + .018;
+      progress = clamp(progress + (inBar ? gain : -.18) * stepSeconds, 0, 1);
+      return progress >= 1 ? true : progress <= 0 ? false : null;
+    }
+
+    function draw() {
+      const candyY = currentCandy(simAt);
+      bar.style.top = `${barY * 100}%`;
+      bar.style.height = `${barHeight * 100}%`;
+      candy.style.top = `${candyY * 100}%`;
+      meterFill.style.width = `${progress * 100}%`;
+      meter.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
+    }
+
+    function finish(won) {
+      if (finished) return;
+      finished = true;
       cancelAnimationFrame(raf);
-      clearTimeout(timer);
-      S.timingPress = null;
-      box.classList.add(hit ? 'hit' : 'miss');
-      $('#t-say').textContent = hit ? '딱딱딱!' : '땡!';
-      setTimeout(() => { box.hidden = true; done(hit); }, 700);
+      S.candyControl = null;
+      const trace = inputs.filter((input) => input.t <= simAt);
+      box.classList.add(won ? 'hit' : 'miss');
+      result.className = `timing-result ${won ? 'hit' : 'miss'}`;
+      result.textContent = won ? '잡았다!' : '놓쳤어!';
+      setTimeout(() => {
+        box.hidden = true;
+        done({ won, inputs: trace, elapsedMs: simAt });
+      }, reduceMotion() ? 0 : 550);
     }
-    function press() {
-      if (challenge) challenge.presses.push(performance.now() - challenge.clientStart);
-      const p = pos();
-      marker.style.left = `${p * 100}%`;
-      if (Math.abs(p - center) > zone / 2) { finish(false); return; }
-      hits += 1;
-      placeZone();
-      if (hits >= KNOCK_HITS) { finish(true); return; }
-      phase = rawT();
-      start = performance.now();
-      center = challenge ? challenge.centers[hits] : zone / 2 + 0.05 + Math.random() * (0.9 - zone);
-      $('#t-say').textContent = '똑!';
-      placeZone();
-      arm();
+
+    function loop() {
+      const target = Math.min(duration, Math.floor((performance.now() - start) / CANDY_STEP_MS) * CANDY_STEP_MS);
+      let outcome = null;
+      while (simAt + CANDY_STEP_MS <= target && outcome === null) {
+        simAt += CANDY_STEP_MS;
+        outcome = simulateStep(simAt);
+      }
+      draw();
+      if (outcome !== null) { finish(outcome); return; }
+      if (simAt >= duration) { finish(false); return; }
+      raf = requestAnimationFrame(loop);
     }
-    box.className = 'timing px actor-bubble';
-    $('#t-say').textContent = '';
-    placeZone();
+
+    box.className = 'timing px';
+    $('#t-level').textContent = `난이도 ${level}단계 · ${duration / 1000}초 안에 잡으세요`;
+    candy.src = spriteUrl('candy', 2);
+    result.className = 'timing-result';
+    result.textContent = '';
+    progress = .5;
+    barY = (1 - barHeight) / 2;
+    meter.setAttribute('aria-valuenow', '50');
     box.hidden = false;
-    if (challenge) { challenge.clientStart = start; challenge.presses = []; }
-    loop();
-    arm();
-    S.timingPress = press;
+    track.focus({ preventScroll: true });
+    draw();
+    S.candyControl = setHeld;
+    raf = requestAnimationFrame(loop);
   });
 }
 
@@ -1744,22 +1823,33 @@ async function knock(slot) {
     S.shakeDoor = null;
     await wait(reduceMotion() ? 50 : 110);
   }
-  let hit, kind, entry;
+  let hit, entry;
   try {
-    const challenge = S.mode === 'firebase' ? (await gameRequest({ type: 'knock-start', host: id })).challenge : null;
-    hit = await timingGame(challenge?.zone ?? zoneFor(candiesOf(id)), challenge?.speed ?? KNOCK_SPEED_MIN + Math.random() * (KNOCK_SPEED_MAX - KNOCK_SPEED_MIN), challenge?.phase ?? Math.random() * 2, challenge);
-    if (challenge) {
-      const result = await gameRequest({ type: 'knock-finish', challengeId: challenge.id, presses: challenge.presses });
-      entry = result.entry; hit = entry.r === 'win'; kind = entry.k;
+    const round = S.event?.id || 'practice';
+    const localStreak = S.localKnockStreak;
+    const localLevel = localStreak.host === id && localStreak.round === round
+      ? Math.min(CANDY_MAX_LEVEL, localStreak.count + 1) : 1;
+    const challenge = S.mode === 'firebase'
+      ? (await gameRequest({ type: 'knock-start', host: id })).challenge
+      : { level: localLevel, duration: CANDY_GAME_MS, path: localCandyPath(localLevel) };
+    const attempt = await candyGame(challenge);
+    hit = attempt.won;
+    if (S.mode === 'firebase') {
+      const result = await gameRequest({ type: 'knock-finish', challengeId: challenge.id, inputs: attempt.inputs, elapsedMs: attempt.elapsedMs });
+      entry = result.entry; hit = entry.r === 'win';
       const round = entry.round;
-      S.players[S.me] = { ...S.players[S.me], round, candies: result.candies };
+      S.players[S.me] = { ...S.players[S.me], round, candies: result.candies, knockAt: entry.at,
+        ...(hit ? { knocks: [...(S.players[S.me].knocks || []), entry].slice(-100) } : {}) };
       S.players[id] = { ...S.players[id], round, candies: result.hostCandies };
       render();
     } else {
-      kind = hit ? null : pick(Object.keys(TRICKS));
-      entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, ...(kind ? { k: kind } : {}) };
-      const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
-      saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS) });
+      S.localKnockStreak = { host: id, round, count: localLevel };
+      const moved = hit && candiesOf(id) > 0;
+      entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, moved, level: localLevel };
+      if (hit) {
+        const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
+        saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS), knockAt: entry.at });
+      } else saveMe({ knockAt: entry.at });
     }
   } catch (error) {
     S.busy = false; renderAction(); toast(error.message); return;
@@ -1779,19 +1869,9 @@ async function knock(slot) {
     fly(doorPoint, head);
     await say('TREAT!', `${hostName}에게서 사탕 1개 가져옴! 내 사탕 +1 · 지금 ${candiesOf(S.me)}개`, 'sys');
   } else if (hit) {
-    await say(hostName, '박자는 딱 맞췄는데… 우리 집 사탕이 다 떨어졌어.');
+    await say(hostName, '성공했지만 우리 집 사탕은 다 떨어졌어.');
   } else {
-    const t = TRICKS[kind];
-    await say(hostName, pick(['땡! 박자 감각 무엇?', '땡! 문 부서지는 줄.', '땡! 그건 노크가 아니라 박수야.']));
-    if (moved) {
-      fly(head, doorPoint);
-      await say('TRICK!', `${hostName}에게 사탕 1개 빼앗김! 내 사탕 −1 · 지금 ${candiesOf(S.me)}개`, 'trick');
-    } else {
-      await say(hostName, '뺏을 사탕도 없네. 대신 장난이다.');
-    }
-    await say(hostName, t.lines[0]);
-    shake();
-    await say('TRICK!', t.lines[1], 'trick');
+    await say(hostName, '아쉽다! 이번에는 사탕을 놓쳤어. 사탕은 그대로야.');
   }
   const next = await choose([['again', '한 번 더 똑똑'], ['note', '방명록 쓰기'], ['bye', '그만 갈래']]);
   $('#dialog').hidden = true;
@@ -1938,7 +2018,7 @@ async function welcomeTips(creationMessage) {
     ? '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!'
     : '연습 마을에서 친구 집 사탕을 가져와 보세요. 연습 결과는 저장되거나 선물 순위에 포함되지 않아요.', 'sys');
   await say('', '먼저 호박 3개로 바구니를 만드세요. 호박 근처에서 버튼이나 Space로 수집할 수 있어요.', 'sys');
-  await say('', '바구니를 들고 친구 집 문을 두드리세요. 박자 맞추면 상대 사탕 1개를 가져오고, 놓치면 내 사탕 1개를 빼앗겨요.', 'sys');
+  await say('', '바구니를 들고 친구 집 문을 두드리세요. 움직이는 사탕을 초록 바 안에 오래 가두면 상대 사탕 1개를 가져와요. 실패해도 사탕은 잃지 않아요.', 'sys');
   $('#dialog').hidden = true;
   S.guideRunning = false;
   saveMe({ guideSeen: true });
@@ -1977,9 +2057,9 @@ canvas.addEventListener('pointerdown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (typingInField(e) || isImeComposing(e)) return;
-  if (S.timingPress && (e.code === 'Space' || e.code === 'Enter')) {
+  if (S.candyControl && e.code === 'Space') {
     e.preventDefault();
-    if (!e.repeat) S.timingPress();
+    if (!e.repeat) S.candyControl(true);
     return;
   }
   if (e.key === 'Escape') {
@@ -2003,8 +2083,11 @@ document.addEventListener('keydown', (e) => {
     else if ($('#dialog').hidden && (S.near || S.nearPumpkin) && !$('#act-btn').disabled && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); act(); }
   }
 });
-document.addEventListener('keyup', (e) => { if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]); });
-window.addEventListener('blur', () => keys.clear());
+document.addEventListener('keyup', (e) => {
+  if (S.candyControl && e.code === 'Space') { e.preventDefault(); S.candyControl(false); }
+  if (KEYMAP[e.code]) keys.delete(KEYMAP[e.code]);
+});
+window.addEventListener('blur', () => { keys.clear(); S.candyControl?.(false); });
 $('#dialog').addEventListener('click', (e) => { if (!e.target.closest('[data-choice]')) advance(); });
 
 document.addEventListener('click', (e) => {
@@ -2064,7 +2147,14 @@ $('#in-name').addEventListener('keydown', (e) => {
   }
 });
 $('#nt-text').addEventListener('input', () => { $('#nt-count').textContent = `${$('#nt-text').value.length} / ${NOTE_MAX}`; });
-$('#timing').addEventListener('pointerdown', (e) => { e.preventDefault(); S.timingPress?.(); });
+$('#t-track').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  S.candyControl?.(true);
+});
+$('#t-track').addEventListener('pointerup', (e) => { e.preventDefault(); S.candyControl?.(false); });
+$('#t-track').addEventListener('pointercancel', () => S.candyControl?.(false));
+$('#t-track').addEventListener('lostpointercapture', () => S.candyControl?.(false));
 
 function notifyKnocks() {
   let latest = S.seenAt;

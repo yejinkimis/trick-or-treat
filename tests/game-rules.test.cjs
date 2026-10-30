@@ -1,13 +1,21 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { evaluateChallenge } = require('../server/game-service.cjs');
-const challenge = { createdAt: 1000, speed: 1, phase: .5, zone: .28, centers: [.5, .6, .7] };
-test('server validates timing inputs instead of trusting a claimed win', () => {
-  assert.equal(evaluateChallenge(challenge, [0, 100, 200], 2000), true);
-  assert.equal(evaluateChallenge(challenge, [500], 2000), false);
-  assert.equal(evaluateChallenge(challenge, [], 8000), false);
-  assert.throws(() => evaluateChallenge(challenge, [0, 100, 10000], 20000), /입력 시간/);
-  assert.throws(() => evaluateChallenge(challenge, [0, 100, 200], 0), /입력 시간/);
-  assert.throws(() => evaluateChallenge(challenge, [0, NaN], 2000), /입력 시간/);
-  assert.throws(() => evaluateChallenge(challenge, [0, 100, 50], 2000), /입력 시간/);
+const { DURATION_MS, evaluateCandyChallenge } = require('../server/candy-challenge.cjs');
+const challenge = { createdAt: 1000, duration: DURATION_MS, level: 1, path: [{ t: 0, y: .05 }, { t: DURATION_MS, y: .05 }] };
+test('server replays candy-bar inputs instead of trusting a claimed result', () => {
+  const won = evaluateCandyChallenge(challenge, [{ t: 20, down: true }], 6000, 8000);
+  assert.equal(won.valid, true);
+  assert.equal(won.won, true);
+  assert.equal(won.finished, true);
+
+  const missed = evaluateCandyChallenge({ ...challenge, path: [{ t: 0, y: .05 }, { t: DURATION_MS, y: .05 }] }, [], 2800, 6000);
+  assert.equal(missed.valid, true);
+  assert.equal(missed.won, false);
+  assert.equal(missed.finished, true);
+
+  const unfinished = evaluateCandyChallenge(challenge, [{ t: 20, down: true }], 2000, 8000);
+  assert.equal(unfinished.finished, false);
+  assert.equal(evaluateCandyChallenge(challenge, [], DURATION_MS, 2000).valid, false);
+  assert.equal(evaluateCandyChallenge(challenge, [{ t: NaN, down: true }], 2000, 6000).valid, false);
+  assert.equal(evaluateCandyChallenge(challenge, [{ t: 20, down: true }, { t: 40, down: false }], 2000, 6000).valid, false);
 });
