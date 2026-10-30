@@ -23,13 +23,13 @@ const fail = (message, status = 400) => { throw new AuthError(status, 'game-acti
 const MAX_GUESTS = 100;
 // 다른 마을 방문자의 문서는 집주인이 구독하지 않으므로 집주인 문서에도 방문 기록을 남긴다.
 const withGuest = (host, guest) => [...(host.guests || []), guest].slice(-MAX_GUESTS);
-const rankPlayers = (docs, event, cutoff) => docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-  .filter((p) => p.costume && (p.readyAt || p.joinedAt || 0) <= cutoff)
+const rankPlayers = (docs, event, cutoff, includeExcluded = false) => docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+  .filter((p) => p.costume && (includeExcluded || (!p.banned && !p.rankExcluded)) && (p.readyAt || p.joinedAt || 0) <= cutoff)
   .map((p) => ({ id: p.id, nick: p.nick, costume: p.costume, n: balance(p, event) }))
   .sort((a, b) => b.n - a.n || a.nick.localeCompare(b.nick, 'ko'));
 async function finalResults(tx, db, event, cutoff) {
   if (event.results) return event.results;
-  return rankPlayers((await tx.get(db.collection('gamePlayers'))).docs, event, cutoff);
+  return rankPlayers((await tx.get(db.collection('gamePlayers'))).docs, event, cutoff, true);
 }
 
 const LEADERBOARD_MS = 3 * 60 * 1000;
@@ -42,7 +42,8 @@ async function leaderboard(now = Date.now()) {
   const event = eventDoc.exists ? eventDoc.data() : null;
   const villageOf = new Map(players.docs.map((doc) => [doc.id, doc.data().village || null]));
   const ended = event && event.endsAt <= now;
-  const ranked = event?.results || rankPlayers(players.docs, event, ended ? event.endsAt : Infinity);
+  const excluded = new Set(players.docs.filter((doc) => doc.data().rankExcluded || doc.data().banned).map((doc) => doc.id));
+  const ranked = (event?.results || rankPlayers(players.docs, event, ended ? event.endsAt : Infinity)).filter((p) => !excluded.has(p.id));
   leaderboardMemo = { at: now, round: roundOf(event), players: ranked.map((p) => ({ ...p, village: villageOf.get(p.id) || null })) };
   return leaderboardMemo;
 }
@@ -79,6 +80,7 @@ async function action(authorization, input) {
     if (receipt.exists) return receipt.data().result;
     if (!playerDoc.exists) fail('다시 로그인해 주세요.', 401);
     const player = playerDoc.data(), event = eventDoc.exists ? eventDoc.data() : null;
+    if (player.banned) fail('이 계정은 게임 이용이 제한됐어요.', 403);
     const now = Date.now(), round = roundOf(event);
     const count = balance(player, event);
     const type = input.type;
@@ -134,7 +136,7 @@ async function action(authorization, input) {
         const text = typeof input.text === 'string' ? input.text.replace(/\s+/gu, ' ').trim() : '';
         if (!text || Array.from(text).length > 80 || input.host === uid || !/^[a-f0-9]{32}$/.test(input.host || '')) fail('방명록 내용을 확인해 주세요.');
         const host = await tx.get(db.collection('gamePlayers').doc(input.host));
-        if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
+        if (!host.exists || !host.data().costume || host.data().houseHidden || host.data().banned) fail('집을 찾을 수 없어요.');
         if (now - (player.noteAt || 0) < 2000) fail('잠시 뒤 다시 남겨 주세요.', 429);
         tx.update(playerRef, { noteAt: now, notes: [...(player.notes || []), { h: input.host, text, at: now }].slice(-100) });
         tx.update(host.ref, { guests: withGuest(host.data(), { v: uid, nick: player.nick, c: player.costume, text, at: now }) });
@@ -146,7 +148,7 @@ async function action(authorization, input) {
           tx.get(db.collection('gamePlayers').doc(input.host)), tx.get(challengeRef),
         ]);
         const lockDoc = await tx.get(lockRef);
-        if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
+        if (!host.exists || !host.data().costume || host.data().houseHidden || host.data().banned) fail('집을 찾을 수 없어요.');
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
         const priorAge = now - (prior.createdAt || 0);
@@ -197,6 +199,7 @@ async function action(authorization, input) {
         const lockRef = db.collection('gameHouseLocks').doc(challenge.host);
         const [hostDoc, lockDoc] = await Promise.all([tx.get(hostRef), tx.get(lockRef)]);
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
+        if (hostDoc.data().houseHidden || hostDoc.data().banned) fail('운영자가 이 집의 도전을 중단했어요.');
         const lock = lockDoc.exists ? lockDoc.data() : null;
         const lastSeen = lock?.heartbeatAt || lock?.createdAt || 0;
         if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round
@@ -224,7 +227,13 @@ async function action(authorization, input) {
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
       } else fail('지원하지 않는 행동이에요.');
     }
-    if (type !== 'knock-heartbeat') tx.create(receiptRef, { uid, type, result, createdAt: now });
+    if (type !== 'knock-heartbeat') {
+      tx.create(receiptRef, { uid, type, result, createdAt: now });
+      tx.create(db.collection('gameActivity').doc(uid).collection('entries').doc(input.requestId), {
+        uid, type, at: now, round, ...(typeof input.host === 'string' && /^[a-f0-9]{32}$/.test(input.host) ? { host: input.host } : {}),
+        ...(type === 'knock-finish' && result.entry ? { host: result.entry.h, outcome: result.entry.r, moved: result.entry.moved, level: result.entry.level } : {}),
+      });
+    }
     return result;
   }, { maxAttempts: 20 });
 }

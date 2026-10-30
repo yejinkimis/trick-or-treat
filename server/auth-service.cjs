@@ -187,6 +187,10 @@ async function authenticatedUid(authorization) {
   let decoded;
   try { decoded = await services().auth.verifyIdToken(readBearer(authorization)); }
   catch { throw new AuthError(401, 'unauthorized', '다시 로그인해 주세요.'); }
+  const banned = await services().db.collection('gameBans').doc(decoded.uid).get();
+  if (banned.exists && banned.data().banned === true) {
+    throw new AuthError(403, 'account-banned', '이 계정은 게임 이용이 제한됐어요. 운영자에게 문의해 주세요.');
+  }
   return decoded.uid;
 }
 

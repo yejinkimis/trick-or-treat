@@ -4,10 +4,10 @@
     ".write": false,
     "presence": {
       "$village": {
-        ".read": "auth != null",
+        ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",
         "$uid": {
           "$session": {
-            ".write": "auth != null && auth.uid == $uid && $village.matches(/^[1-9][0-9]{0,3}$/)",
+            ".write": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true && auth.uid == $uid && $village.matches(/^[1-9][0-9]{0,3}$/)",
             ".validate": "newData.hasChildren(['x','y','f','m','at'])",
             "x": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 416" },
             "y": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 20000" },
@@ -20,10 +20,10 @@
       }
     },
     "online": {
-      ".read": "auth != null",
+      ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",
       "$uid": {
         "$session": {
-          ".write": "auth != null && auth.uid == $uid",
+          ".write": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true && auth.uid == $uid",
           ".validate": "newData.hasChildren(['v','at'])",
           "v": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999" },
           "at": { ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 1000" },
@@ -32,9 +32,9 @@
       }
     },
     "chat": {
-      ".read": "auth != null",
+      ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",
       "$uid": {
-        ".write": "auth != null && auth.uid == $uid && newData.exists() && (!data.exists() || now - data.child('at').val() >= 600)",
+        ".write": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true && auth.uid == $uid && newData.exists() && (!data.exists() || now - data.child('at').val() >= 600)",
         ".validate": "newData.hasChildren(['id','kind','text','v','at'])",
         "id": { ".validate": "newData.isString() && newData.val().length <= 80" },
         "kind": { ".validate": "newData.val() == 'chat'" },
@@ -46,9 +46,9 @@
     },
     "events": {
       "$village": {
-        ".read": "auth != null",
+        ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",
         "$uid": {
-          ".write": "auth != null && auth.uid == $uid && $village.matches(/^[1-9][0-9]{0,3}$/) && newData.exists() && (!data.exists() || now - data.child('at').val() >= 600)",
+          ".write": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true && auth.uid == $uid && $village.matches(/^[1-9][0-9]{0,3}$/) && newData.exists() && (!data.exists() || now - data.child('at').val() >= 600)",
           ".validate": "newData.hasChildren(['id','kind','to','at'])",
           "id": { ".validate": "newData.isString() && newData.val().length <= 80" },
           "kind": { ".validate": "newData.val() == 'bonk'" },

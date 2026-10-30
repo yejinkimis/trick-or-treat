@@ -7,6 +7,7 @@ process.env.NODE_ENV = 'development';
 process.env.FIREBASE_PROJECT_ID = 'demo-trick-or-treat';
 process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+process.env.FIREBASE_DATABASE_EMULATOR_HOST = '127.0.0.1:9000';
 
 const root = path.resolve(__dirname, '..');
 const htmlPath = path.join(root, 'prototype', 'trick-or-treat.html');
@@ -18,6 +19,7 @@ const api = new Map([
   ['/api/game/session', require('../api/game/session.js')],
   ['/api/game/action', require('../api/game/action.js')],
   ['/api/game/leaderboard', require('../api/game/leaderboard.js')],
+  ['/api/game/admin', require('../api/game/admin.js')],
 ]);
 
 const server = http.createServer((req, res) => {

@@ -1,20 +1,27 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function activePlayer() {
+      return request.auth != null && !exists(/databases/$(database)/documents/gameBans/$(request.auth.uid));
+    }
     match /gamePlayers/{uid} {
-      allow read: if request.auth != null;
+      allow read: if activePlayer();
       allow write: if false;
     }
     match /game/event {
-      allow read: if request.auth != null;
+      allow read: if activePlayer();
+      allow write: if false;
+    }
+    match /game/moderation {
+      allow read: if activePlayer();
       allow write: if false;
     }
     match /villages/{village} {
-      allow read: if request.auth != null;
+      allow read: if activePlayer();
       allow write: if false;
     }
     match /gameRounds/{round} {
-      allow read: if request.auth != null;
+      allow read: if activePlayer();
       allow write: if false;
     }
     match /profiles/{uid} {

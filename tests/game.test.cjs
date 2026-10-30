@@ -101,6 +101,17 @@ test('Firebase rankings use server balances and reset to ten for a new event', (
   assert.equal(g.run('candiesOf("host")'), 10);
 });
 
+test('moderation excludes cached and finalized rankings and restoring eligibility reveals frozen scores', () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.event = { id: 'round1', startedAt: 1, endsAt: Date.now() + 60000 };
+    S.rankList = [{ id: 'host', n: 13 }, { id: 'me', n: 7 }]; S.excluded = ['host'];`);
+  assert.equal(g.run('ranking().length'), 1);
+  g.run(`S.event.endsAt = 1; S.event.results = S.rankList;`);
+  assert.equal(g.run('ranking()[0].id'), 'me');
+  g.run(`S.excluded = []`);
+  assert.equal(g.run('ranking()[0].id'), 'host');
+});
+
 test('candy challenge renders the server difficulty and moves the catch bar while held', () => {
   const g = game();
   g.run(`candyGame({ level: 3, path: [{t:0,y:.5},{t:18000,y:.5}] })`);
