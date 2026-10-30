@@ -4,6 +4,7 @@ const STEP_MS = 20;
 const MAX_LEVEL = 5;
 const MAX_INPUTS = 1000;
 const STALE_CHALLENGE_MS = 60 * 60 * 1000;
+const CHALLENGE_LOCK_TTL_MS = 60 * 1000;
 const BAR_UP_SPEED = .72;
 const BAR_DOWN_SPEED = .82;
 const BAR_ACCELERATION = 2.6;
@@ -140,6 +141,7 @@ module.exports = {
   MAX_LEVEL,
   MAX_INPUTS,
   STALE_CHALLENGE_MS,
+  CHALLENGE_LOCK_TTL_MS,
   createCandySeed,
   createCandyPathLookup,
   evaluateCandyChallenge,

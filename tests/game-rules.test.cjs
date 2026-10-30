@@ -26,5 +26,5 @@ test('server replays candy-bar inputs instead of trusting a claimed result', () 
 
 test('alchemy rolls follow the 20/50/25/5 table', () => {
   const { brewGain } = require('../server/game-service.cjs');
-  assert.deepEqual([0, 19, 20, 69, 70, 94, 95, 99].map((roll) => brewGain(roll)), [0, 0, 2, 2, 5, 5, 10, 10]);
+  assert.deepEqual([0, 19, 20, 69, 70, 94, 95, 99].map((roll) => brewGain(roll)), [0, 0, 2, 2, 5, 5, 5, 5]);
 });

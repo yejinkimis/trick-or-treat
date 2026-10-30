@@ -288,6 +288,31 @@ for (const won of [true, false]) {
   });
 }
 
+for (const changeRound of [false, true]) {
+  test(`retry grace blocks extra actions and ${changeRound ? 'cancels across rounds' : 'continues after the wait'}`, async () => {
+    const g = game(); g.players();
+    g.run(`S.players.me.pumpkins = 3; globalThis.attempts = 0;
+      say = async () => {}; choose = async () => attempts === 1 ? 'again' : 'bye';
+      candyGame = async () => { attempts++; return { won: false, inputs: [], elapsedMs: 4200 }; };`);
+    const flow = g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`);
+    for (let i = 0; i < 20; i++) {
+      await tick();
+      if ([...g.timers.values()].some((timer) => timer.delay === 1000)) break;
+      const timer = [...g.timers.values()].sort((a, b) => a.at - b.at)[0];
+      assert.ok(timer);
+      g.fire(timer.delay);
+    }
+    assert.equal(g.run('S.busy'), true);
+    await g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`);
+    assert.equal(g.run('attempts'), 1);
+    if (changeRound) g.run(`S.event = { id: 'another-round' }`);
+    g.fire(1000);
+    await g.finish(flow);
+    assert.equal(g.run('attempts'), changeRound ? 1 : 2);
+    assert.equal(g.run('S.busy'), false);
+  });
+}
+
 test('a miss leaves candy unchanged; decor reduces rank balance', () => {
   const g = game(); g.players();
   g.run(`S.players.me.knocks = Array.from({length: 15}, (_, i) => ({h: 'host', r: 'lose', at: i + 1})); S.ledger = null`);
@@ -835,4 +860,63 @@ test('an online harvest shows at once while the server answers, and rolls back i
   assert.equal(g.run('S.players.me.pumpkins'), 1, 'a refused harvest is taken back');
   assert.equal(g.run('S.pumpkins.length'), 1, 'and the pumpkin returns');
   assert.match(g.elements.get('toast').textContent, /조금 뒤 다른 호박/);
+});
+
+test('dialog text cannot be selected and any later click, Space, → or ↓ moves to the next line', async () => {
+  assert.match(html, /\.dialog\{[^}]*user-select:none/);
+  const g = game(); g.players();
+  const click = (timeStamp, button = null) => g.run(`document.listeners.click({ timeStamp: ${timeStamp}, preventDefault() {},
+    target: { classList: { contains: () => false }, closest: () => (${JSON.stringify(button)}) } })`);
+  const key = (code, repeat = false) => g.run(`document.listeners.keydown({ code: '${code}', key: '${code}', repeat: ${repeat}, target: null, preventDefault() {} })`);
+  g.setNow(100);
+  g.run(`globalThis.lines = []; (async () => { for (const line of ['하나', '둘', '셋', '넷']) { await say('안내', line); lines.push(line); } })();`);
+  await tick();
+  click(50);
+  await tick();
+  assert.equal(g.run('lines.length'), 0, 'the click that opened the dialog does not skip it');
+  g.elements.get('world').listeners.pointerdown({ clientX: 500, clientY: 500 });
+  assert.equal(g.run('S.target'), null, 'clicking the map while talking does not walk');
+  click(150, { id: 'open-rank', dataset: {} });
+  await tick();
+  assert.equal(g.run('lines.length'), 1, 'a click anywhere, even on a HUD button, moves on');
+  assert.equal(g.elements.get('rank').hidden, true);
+  key('ArrowRight'); await tick();
+  assert.equal(g.run('lines.length'), 2);
+  assert.equal(g.run('keys.has("r")'), false, '→ only turns the page');
+  key('ArrowDown', true); await tick();
+  assert.equal(g.run('lines.length'), 2, 'a held key turns only one page');
+  key('ArrowDown'); await tick();
+  assert.equal(g.run('lines.length'), 3);
+  key('Space'); await tick();
+  assert.equal(g.run('lines.length'), 4);
+  assert.equal(g.run('dialogWaiting()'), true, 'the last line still waits until the caller closes it');
+});
+
+test('choices start on the first option, move with ← →, pick with Space or Enter, and Esc closes only when allowed', async () => {
+  const g = game(); g.players();
+  const key = (code, extra = '') => g.run(`document.listeners.keydown({ code: '${code}', key: '${code === 'Escape' ? 'Escape' : code}', repeat: false, target: null, preventDefault() {} ${extra} })`);
+  const options = `[['again', '한 번 더'], ['note', '방명록'], ['bye', '그만']]`;
+  g.run(`$('#dialog').hidden = false; var picked = choose(${options}, { cancel: 'bye' });`);
+  assert.equal(g.run('choice.index'), 0, 'the first option is chosen by default');
+  key('ArrowRight'); key('ArrowRight'); key('ArrowRight');
+  assert.equal(g.run('choice.index'), 2, 'stops at the last option');
+  key('ArrowLeft');
+  key('Enter');
+  assert.equal(await g.run('picked'), 'note');
+  assert.equal(g.run('choice'), null);
+
+  g.run(`var spaced = choose(${options}, { cancel: 'bye' });`);
+  key('Space');
+  assert.equal(await g.run('spaced'), 'again');
+
+  g.run(`var escaped = choose(${options}, { cancel: 'bye' });`);
+  key('Escape');
+  assert.equal(await g.run('escaped'), 'bye', 'Esc closes with the cancel option');
+
+  g.run(`var settled = false; var required = choose([['a', '가'], ['b', '나']]).then((v) => { settled = true; return v; });`);
+  key('Escape');
+  await tick();
+  assert.equal(g.run('settled'), false, 'a required choice ignores Esc');
+  key('KeyD'); key('Space');
+  assert.equal(await g.run('required'), 'b');
 });

@@ -34,23 +34,49 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   await assert.rejects(act(first, { type: 'knock-start', host: host.uid }), /바구니/);
   for (const p of [first, second]) await services().db.collection('gamePlayers').doc(p.uid).update({ pumpkins: 3 });
   await services().db.collection('gamePlayers').doc(host.uid).update({ round: start.event.id, candies: 1 });
-  const [one, two] = await Promise.all([winningChallenge(first, host), winningChallenge(second, host)]);
+  const contenders = [first, second];
+  const starts = await Promise.allSettled(contenders.map((p) => act(p, { type: 'knock-start', host: host.uid })));
+  assert.equal(starts.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(starts.filter((result) => result.status === 'rejected').length, 1);
+  const rejectedStart = starts.find((result) => result.status === 'rejected');
+  assert.equal(rejectedStart.reason.status, 429);
+  assert.match(rejectedStart.reason.message, /다른 사람이 도전 중/);
+  const winnerIndex = starts.findIndex((result) => result.status === 'fulfilled');
+  const winner = contenders[winnerIndex], waiting = contenders[1 - winnerIndex];
+  const challenge = starts[winnerIndex].value.challenge;
+  const one = { challengeId: challenge.id, inputs: [1, 1], elapsedMs: 6000, level: challenge.level };
+  const houseLock = services().db.collection('gameHouseLocks').doc(host.uid);
+  const firstHeartbeat = (await houseLock.get()).data().heartbeatAt;
+  await act(winner, { type: 'knock-heartbeat', challengeId: challenge.id });
+  assert.ok((await houseLock.get()).data().heartbeatAt >= firstHeartbeat);
+  await services().db.collection('gameChallenges').doc(winner.uid).update({ createdAt: Date.now() - 6000,
+    path: [{ t: 0, y: .05 }, { t: 6000, y: .05 }] });
   const requestId = randomUUID();
   const [a, b] = await Promise.all([
-    act(first, { type: 'knock-finish', ...one, requestId }), act(second, { type: 'knock-finish', ...two }),
+    act(winner, { type: 'knock-finish', ...one, requestId }), act(winner, { type: 'knock-finish', ...one, requestId }),
   ]);
-  assert.equal(Number(a.entry.moved) + Number(b.entry.moved), 1);
-  assert.equal(balance(await saved(first), start.event) + balance(await saved(second), start.event) + balance(await saved(host), start.event), 21);
+  assert.deepEqual(a, b);
+  assert.equal(balance(await saved(winner), start.event) + balance(await saved(host), start.event), 11);
   assert.equal(balance(await saved(host), start.event), 0);
-  assert.deepEqual(await act(first, { type: 'knock-finish', ...one, requestId }), a);
-  await assert.rejects(act(first, { type: 'knock-finish', ...one }), /끝났거나/);
-  await services().db.collection('gamePlayers').doc(second.uid).update({ knockAt: 0 });
-  await act(second, { type: 'knock-start', host: host.uid });
-  await services().db.collection('gamePlayers').doc(second.uid).update({ knockAt: 0 });
-  await assert.rejects(act(second, { type: 'knock-start', host: host.uid }), (error) => error.status === 429 && /진행 중인 도전/.test(error.message));
-  await services().db.collection('gameChallenges').doc(second.uid).update({ used: true });
+  assert.deepEqual(await act(winner, { type: 'knock-finish', ...one, requestId }), a);
+  await assert.rejects(act(winner, { type: 'knock-finish', ...one }), /끝났거나/);
+
+  const secondChallenge = (await act(waiting, { type: 'knock-start', host: host.uid })).challenge;
+  await services().db.collection('gamePlayers').doc(winner.uid).update({ knockAt: 0 });
+  await assert.rejects(act(winner, { type: 'knock-start', host: host.uid }), (error) => error.status === 429 && /다른 사람이 도전 중/.test(error.message));
+  await services().db.collection('gamePlayers').doc(waiting.uid).update({ knockAt: 0 });
+  await assert.rejects(act(waiting, { type: 'knock-start', host: host.uid }), (error) => error.status === 429 && /진행 중인 도전/.test(error.message));
+  await services().db.collection('gameChallenges').doc(waiting.uid).update({ createdAt: Date.now() - 4000,
+    path: [{ t: 0, y: .05 }, { t: 3000, y: .05 }] });
+  const secondLoss = await act(waiting, { type: 'knock-finish', challengeId: secondChallenge.id, inputs: [], elapsedMs: 2800 });
+  assert.equal(secondLoss.entry.moved, false);
+  assert.equal(secondLoss.hostCandies, 0);
   await assert.rejects(act(first, { type: 'candies', candies: 999 }), /지원하지/);
   const before = balance(await saved(first), start.event);
+  for (const item of ['__proto__', 'constructor', 'toString', ['lantern'], null]) {
+    await assert.rejects(act(first, { type: 'decor', item }), /장식을 확인/);
+    assert.equal(balance(await saved(first), start.event), before);
+  }
   await act(first, { type: 'decor', item: 'lantern' });
   assert.equal(balance(await saved(first), start.event), before - 2);
   await assert.rejects(act(first, { type: 'decor', item: 'lantern' }), /이미 설치/);
@@ -88,12 +114,65 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   await act(owner, { type: 'event-stop' });
 });
 
+test('event stop and a winning candy transfer are serialized at the round boundary', async () => {
+  const [owner, visitor, host] = await Promise.all(['운영', '도전', '집'].map(player));
+  process.env.GAME_ADMIN_UIDS = owner.uid;
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  const started = await act(owner, { type: 'event-start' });
+  const attempt = await winningChallenge(visitor, host);
+
+  const [finish, stop] = await Promise.allSettled([
+    act(visitor, { type: 'knock-finish', ...attempt }),
+    act(owner, { type: 'event-stop' }),
+  ]);
+
+  assert.equal(stop.status, 'fulfilled');
+  const final = stop.value.event.results;
+  const visitorResult = final.find((p) => p.id === visitor.uid);
+  const hostResult = final.find((p) => p.id === host.uid);
+  assert.ok(visitorResult && hostResult);
+  assert.equal(visitorResult.n + hostResult.n, 20);
+  if (finish.status === 'fulfilled') {
+    assert.equal(visitorResult.n, 11);
+    assert.equal(hostResult.n, 9);
+  } else {
+    assert.match(finish.reason.message, /이벤트가 끝났|도전이 끝났/);
+    assert.equal(visitorResult.n, 10);
+    assert.equal(hostResult.n, 10);
+  }
+
+  assert.deepEqual((await services().db.collection('gameRounds').doc(started.event.id).get()).data().results, final);
+  await assert.rejects(act(visitor, { type: 'knock-finish', ...attempt }), /이벤트가 끝났|도전이 끝났/);
+});
+
+test('a replaced or previous-round challenge cannot release another challenger house lock', async () => {
+  const [owner, first, second, host] = await Promise.all(['관리', '이전', '다음', '대상'].map(player));
+  process.env.GAME_ADMIN_UIDS = owner.uid;
+  await act(owner, { type: 'event-start' });
+  for (const p of [first, second]) await services().db.collection('gamePlayers').doc(p.uid).update({ pumpkins: 3 });
+  const prior = await winningChallenge(first, host);
+  const lockRef = services().db.collection('gameHouseLocks').doc(host.uid);
+  await lockRef.update({ createdAt: Date.now() - 60 * 60 * 1000 - 1, heartbeatAt: Date.now() - 60_001 });
+  const next = (await act(second, { type: 'knock-start', host: host.uid })).challenge;
+  await assert.rejects(act(first, { type: 'knock-finish', ...prior }), /유효하지/);
+  await assert.rejects(act(first, { type: 'knock-heartbeat', challengeId: prior.challengeId }), /잠금이 풀렸/);
+  assert.equal((await lockRef.get()).data().challengeId, next.id);
+  await act(owner, { type: 'event-stop' });
+  await act(owner, { type: 'event-start' });
+  await assert.rejects(act(second, { type: 'knock-finish', challengeId: next.id, inputs: [], elapsedMs: 2800 }), /끝났거나/);
+  const fresh = await winningChallenge(second, host);
+  assert.equal(fresh.level, 1);
+  await act(second, { type: 'knock-finish', ...fresh });
+  assert.equal((await lockRef.get()).exists, false);
+  await act(owner, { type: 'event-stop' });
+});
+
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {
   const p = await player('규');
   const base = 'http://127.0.0.1:8080/v1/projects/demo-trick-or-treat/databases/(default)/documents';
   for (const [path, method, expected] of [
     [`gamePlayers/${p.uid}`, 'GET', 200], [`gamePlayers/${p.uid}`, 'DELETE', 403],
-    [`gameChallenges/${p.uid}`, 'GET', 403], [`gameRequests/anything`, 'GET', 403],
+    [`gameChallenges/${p.uid}`, 'GET', 403], [`gameHouseLocks/${p.uid}`, 'GET', 403], [`gameRequests/anything`, 'GET', 403],
     [`villages/${(await saved(p)).village}`, 'GET', 200], ['villages/1', 'DELETE', 403], ['game/villages', 'GET', 403],
   ]) {
     const result = await fetch(`${base}/${path}`, { method, headers: { authorization: `Bearer ${p.token}` } });
