@@ -662,7 +662,7 @@ test('own costume survives until the village snapshot arrives', () => {
 
 function village(g) {
   g.run(`S.mode = 'firebase'; S.me = 'me'; S.village = 1;
-    S.villages = { 1: { n: 1, name: '태초마을' }, 2: { n: 2, name: '구리마을' }, 3: { n: 3, name: '안드제국' } };
+    S.villages = { 1: { n: 1, name: '태초마을' }, 2: { n: 2, name: '구리마을' }, 3: { n: 3, name: '안드로이드 제국' } };
     S.players = {
       me: { ...blankPlayer(), nick: '나', costume: 'ghost', village: 1, joinedAt: 1 },
       near: { ...blankPlayer(), nick: '이웃', costume: 'witch', village: 1, joinedAt: 2 },
@@ -752,10 +752,10 @@ test('the village map lists every village with who is online and travels to the 
   ]; S.networkConnected = true; openModal('online'); renderHud();
     var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };`);
   const list = g.elements.get('on-list').innerHTML;
-  assert.ok(list.indexOf('태초마을') < list.indexOf('구리마을') && list.indexOf('구리마을') < list.indexOf('안드제국'));
+  assert.ok(list.indexOf('태초마을') < list.indexOf('구리마을') && list.indexOf('구리마을') < list.indexOf('안드로이드 제국'));
   assert.match(list, /태초마을<\/b> · 지금 여기 · 접속 2명/);
   assert.match(list, /나 \(나\), 이웃/);
-  assert.match(list, /안드제국<\/b> · 접속 0명/);
+  assert.match(list, /안드로이드 제국<\/b> · 접속 0명/);
   assert.doesNotMatch(list, /data-go="1"/);
   assert.match(list, /data-go="3"/);
   assert.match(g.elements.get('on-sub').textContent, /마을 3개 · 접속 3명/);

@@ -1,5 +1,5 @@
 const VILLAGE_SIZE = 8;
-const VILLAGE_NAMES = ['뽀롱뽀롱마을', '둠바족', '태초마을', '구리마을', '안드제국', '프론트마을'];
+const VILLAGE_NAMES = ['뽀롱뽀롱마을', '둠바족', '태초마을', '구리마을', '안드로이드 제국', '프론트마을'];
 
 // 여섯 이름을 다 쓰면 '뽀롱뽀롱마을2'처럼 숫자를 붙여 다음 묶음에서 뽑는다.
 function villageName(taken, random = Math.random) {

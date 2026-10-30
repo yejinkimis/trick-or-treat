@@ -142,7 +142,7 @@ test('costumed players fill villages of eight in order and visits across village
   const members = await services().db.collection('gamePlayers').where('village', '==', villages.at(-1)).get();
   assert.ok(members.size <= 8);
   const named = await services().db.collection('villages').doc(String(villages.at(-1))).get();
-  assert.match(named.data().name, /^(뽀롱뽀롱마을|둠바족|태초마을|구리마을|안드제국|프론트마을)(\d+)?$/);
+  assert.match(named.data().name, /^(뽀롱뽀롱마을|둠바족|태초마을|구리마을|안드로이드 제국|프론트마을)(\d+)?$/);
   assert.equal((await session(made[0].authorization)).village, villages[0], 'logging in again keeps the same village');
 
   const visitor = made.at(-1), host = made[0];
