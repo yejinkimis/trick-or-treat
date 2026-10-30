@@ -666,7 +666,7 @@ test('basket stays after harvesting more, alchemy tip explains the cauldron, and
   for (let i = 0; i < 3; i++) g.run('S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])');
   await g.finish(g.run('alchemyTips()'));
   assert.equal(g.run('S.players.me.basket'), true);
-  assert.match(g.run('messages.join(" ")'), /50개를 모아 광장 가운데 마녀 솥/);
+  assert.match(g.run('messages.join(" ")'), /30개를 모아 광장 가운데 마녀 솥/);
   assert.equal(g.run('S.busy'), false);
   const told = g.run('messages.length');
   g.run('S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])');
@@ -678,17 +678,17 @@ test('basket stays after harvesting more, alchemy tip explains the cauldron, and
   assert.match(g.elements.get('toast').textContent, /꽉 찼어요/);
 });
 
-test('brewing spends fifty pumpkins, adds rolled candy, keeps the basket and cools down', async () => {
+test('brewing spends thirty pumpkins, adds rolled candy, keeps the basket and cools down', async () => {
   const g = game(); g.players();
   g.run(`globalThis.messages = []; say = async (who, text) => messages.push(text); Math.random = () => 0.5;
-    S.players.me.pumpkins = 40; S.players.me.basket = true; S.nearCauldron = true; renderAction();`);
+    S.players.me.pumpkins = 20; S.players.me.basket = true; S.nearCauldron = true; renderAction();`);
   assert.equal(g.elements.get('act-btn').disabled, true);
   g.run('S.players.me.pumpkins = 60; renderAction()');
   assert.equal(g.elements.get('act-btn').disabled, false);
-  assert.match(g.elements.get('act-title').textContent, /마녀 솥 · 호박 60\/50/);
+  assert.match(g.elements.get('act-title').textContent, /마녀 솥 · 호박 60\/30/);
   await g.finish(g.run('brew()'));
   assert.equal(g.run('candiesOf("me")'), 12);
-  assert.equal(g.run('S.players.me.pumpkins'), 10);
+  assert.equal(g.run('S.players.me.pumpkins'), 30);
   assert.equal(g.run('hasBasket("me")'), true);
   assert.match(g.run('messages.join(" ")'), /사탕 2개가 떠올랐어요/);
   g.run('S.players.me.pumpkins = 60; S.nearCauldron = true; renderAction()');

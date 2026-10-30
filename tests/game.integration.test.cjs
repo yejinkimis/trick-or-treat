@@ -129,14 +129,14 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   assert.equal((await saved(brewer)).basket, true);
   await ref.update({ pumpkins: 100 });
   await assert.rejects(act(brewer, { type: 'harvest' }), /꽉 찼어요/);
-  await ref.update({ pumpkins: 49 });
-  await assert.rejects(act(brewer, { type: 'brew' }), /50개/);
+  await ref.update({ pumpkins: 29 });
+  await assert.rejects(act(brewer, { type: 'brew' }), /30개/);
   await ref.update({ pumpkins: 55 });
   const result = await act(brewer, { type: 'brew' });
   assert.ok([0, 2, 5, 10].includes(result.gain));
   assert.equal(result.candies, 10 + result.gain);
   const after = await saved(brewer);
-  assert.equal(after.pumpkins, 5);
+  assert.equal(after.pumpkins, 25);
   assert.equal(after.basket, true);
   assert.equal(after.brews.at(-1).n, result.gain);
   await ref.update({ pumpkins: 60 });
