@@ -1464,21 +1464,29 @@ function render() {
 
 let toastTimer, finishToast;
 let toastDone = Promise.resolve();
-function toast(msg) {
+function toast(msg, { duration = 3000, dismissOnClick = false } = {}) {
   // 새 알림으로 교체될 때도 기존 대기자는 풀어 주고 현재 알림을 기다릴 수 있게 한다.
   finishToast?.();
   const t = $('#toast');
-  t.textContent = msg;
+  t.textContent = dismissOnClick ? `${msg} · 화면을 클릭·터치하면 바로 시작` : msg;
   t.hidden = false;
   toastDone = new Promise((resolve) => {
     const finish = () => {
       clearTimeout(toastTimer);
+      document.removeEventListener('click', dismiss, true);
       t.hidden = true;
       finishToast = null;
       resolve();
     };
+    const dismiss = (e) => {
+      // 이 클릭이 다음 대화나 뒤쪽 버튼에도 전달되지 않도록 먼저 소비한다.
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      finish();
+    };
     finishToast = finish;
-    toastTimer = setTimeout(finish, 3000);
+    if (dismissOnClick) document.addEventListener('click', dismiss, true);
+    toastTimer = setTimeout(finish, duration);
   });
   return toastDone;
 }
@@ -1792,7 +1800,7 @@ async function welcomeTips(creationMessage) {
   keys.clear();
   S.target = null;
   render();
-  if (creationMessage) await toast(creationMessage);
+  if (creationMessage) await toast(creationMessage, { duration: 4000, dismissOnClick: true });
   await waitForToasts();
   await say('', '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!', 'sys');
   await say('', '먼저 호박 3개로 바구니를 만드세요. 호박 근처에서 버튼이나 Space로 수집할 수 있어요.', 'sys');

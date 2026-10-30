@@ -12,7 +12,14 @@ function game({ reducedMotion = true } = {}) {
   const elements = new Map(), timers = new Map(), frames = new Map();
   let serial = 0, now = 0;
   const drawing = new Proxy({}, { get: (target, key) => target[key] ?? (() => ({ width: 40 })), set: (target, key, value) => (target[key] = value, true) });
-  const document = { activeElement: null, fonts: { load: async () => {} }, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } };
+  const document = {
+    activeElement: null, fonts: { load: async () => {} }, listeners: {}, captureListeners: {},
+    addEventListener(type, fn, capture = false) { (capture ? this.captureListeners : this.listeners)[type] = fn; },
+    removeEventListener(type, fn, capture = false) {
+      const handlers = capture ? this.captureListeners : this.listeners;
+      if (handlers[type] === fn) delete handlers[type];
+    },
+  };
   function element(id = '', tag = 'div', attributes = '') {
     const classes = new Set((attributes.match(/class="([^"]*)"/)?.[1] || '').split(/\s+/).filter(Boolean));
     const el = {
@@ -306,7 +313,7 @@ test('creation, tutorial, quest notice and movement guide appear in sequence', a
   assert.equal(g.elements.get('hint').hidden, true);
   assert.match(g.elements.get('toast').textContent, /분장 완료/);
   assert.equal(g.run('S.busy'), true);
-  g.fire(3000); await tick();
+  g.fire(4000); await tick();
   assert.equal(g.elements.get('toast').hidden, true);
   assert.equal(g.elements.get('dialog').hidden, false);
   assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
@@ -415,4 +422,34 @@ test('IME keys do not trigger timing or game shortcuts', () => {
   g.run('globalThis.presses = 0; S.timingPress = () => presses++');
   g.run(`document.listeners.keydown({ target: null, key: 'Enter', code: 'Enter', isComposing: true, preventDefault() { throw Error('Must allow IME'); } })`);
   assert.equal(g.run('presses'), 0);
+});
+
+test('click dismisses creation notice early without advancing the first tutorial message', async () => {
+  const g = game(); g.players();
+  const welcome = g.run('welcomeTips("분장 완료")'); await tick();
+  assert.ok([...g.timers.values()].some((t) => t.delay === 4000));
+  assert.equal(g.elements.get('dialog').hidden, true);
+  let prevented = 0, stopped = 0;
+  const dismiss = g.run('document.captureListeners.click');
+  dismiss({ preventDefault() { prevented++; }, stopImmediatePropagation() { stopped++; } });
+  await tick();
+  assert.equal(prevented, 1); assert.equal(stopped, 1);
+  assert.equal(g.elements.get('toast').hidden, true);
+  assert.equal(g.elements.get('dialog').hidden, false);
+  assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+  assert.equal(g.run('document.captureListeners.click'), undefined);
+  assert.equal([...g.timers.values()].some((t) => t.delay === 4000), false);
+  for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
+  await g.finish(welcome);
+});
+
+test('replacing a dismissible notice removes its click handler', async () => {
+  const g = game();
+  const oldNotice = g.run('toast("분장 완료", {duration: 4000, dismissOnClick: true})');
+  assert.equal(typeof g.run('document.captureListeners.click'), 'function');
+  const nextNotice = g.run('toast("일반 알림")');
+  await oldNotice;
+  assert.equal(g.run('document.captureListeners.click'), undefined);
+  assert.equal([...g.timers.values()].some((t) => t.delay === 4000), false);
+  g.fire(3000); await nextNotice;
 });
