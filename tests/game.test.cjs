@@ -1,0 +1,297 @@
+// 의존성 없는 로직 회귀 검사. DOM/타이머는 대역이므로 실제 렌더링 검사를 대신하지 않는다.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+const html = fs.readFileSync(path.join(__dirname, '../prototype/trick-or-treat.html'), 'utf8');
+const source = html.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/^boot\(\);$/m, '');
+const tick = () => new Promise(setImmediate);
+
+function game() {
+  const elements = new Map(), timers = new Map(), frames = new Map();
+  let serial = 0, now = 0;
+  const drawing = new Proxy({}, { get: (target, key) => target[key] ?? (() => ({ width: 40 })), set: (target, key, value) => (target[key] = value, true) });
+  const document = { activeElement: null, fonts: { load: async () => {} }, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } };
+  function element(id = '', tag = 'div', attributes = '') {
+    const classes = new Set((attributes.match(/class="([^"]*)"/)?.[1] || '').split(/\s+/).filter(Boolean));
+    const el = {
+      id, tagName: tag.toUpperCase(), hidden: /\shidden(?:\s|$|>)/.test(attributes), disabled: false,
+      textContent: '', innerHTML: '', value: '', dataset: {}, style: { setProperty(key, value) { this[key] = value; } },
+      classList: { add: (...names) => names.forEach((x) => classes.add(x)), remove: (...names) => names.forEach((x) => classes.delete(x)), contains: (x) => classes.has(x), toggle(x, force) { const on = force ?? !classes.has(x); on ? classes.add(x) : classes.delete(x); return on; } },
+      width: 1024, height: 768, clientWidth: 1024, clientHeight: 768, rect: { left: 0, top: 0, width: 1024, height: 768 }, listeners: {},
+      getBoundingClientRect() { return { ...this.rect, right: this.rect.left + this.rect.width, bottom: this.rect.top + this.rect.height }; },
+      getContext: () => drawing, toDataURL: () => 'data:image/png;base64,test',
+      addEventListener(type, fn) { this.listeners[type] = fn; }, setPointerCapture() {}, focus() { document.activeElement = this; }, blur() { document.activeElement = null; },
+      querySelector: () => element('', 'button'), querySelectorAll: () => [],
+      firstChild: { textContent: '' },
+    };
+    Object.defineProperty(el, 'className', { get: () => [...classes].join(' '), set(value) { classes.clear(); value.split(/\s+/).forEach((x) => classes.add(x)); } });
+    return el;
+  }
+  for (const match of html.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) elements.set(match[3], element(match[3], match[1], match[2]));
+  document.querySelector = (selector) => {
+    const id = selector.match(/^#([\w-]+)$/)?.[1];
+    if (id) { assert.ok(elements.has(id), `HTML element exists: ${selector}`); return elements.get(id); }
+    if (selector.startsWith('#')) return element('', 'button');
+    return null;
+  };
+  document.querySelectorAll = () => [];
+  document.createElement = (tag) => element('', tag);
+  document.body = element();
+  const window = { innerWidth: 1024, innerHeight: 768, devicePixelRatio: 1, addEventListener() {} };
+  const sandbox = {
+    document, window, console, performance: { now: () => now }, matchMedia: () => ({ matches: true }),
+    ResizeObserver: class { observe() {} }, HTMLInputElement: class {}, HTMLTextAreaElement: class {},
+    requestAnimationFrame(fn) { const id = ++serial; frames.set(id, fn); return id; }, cancelAnimationFrame(id) { frames.delete(id); },
+    setTimeout(fn, delay) { const id = ++serial; timers.set(id, { fn, delay, at: now + delay }); return id; }, clearTimeout(id) { timers.delete(id); },
+    setInterval() { throw Error('Reduced-motion test should not need intervals'); }, clearInterval() {},
+  };
+  const context = vm.createContext(sandbox);
+  vm.runInContext(source, context);
+  const run = (code) => vm.runInContext(code, context);
+  function fire(delay) { const found = [...timers].find(([, t]) => t.delay === delay); assert.ok(found, `Timer ${delay}ms exists`); timers.delete(found[0]); now = found[1].at; found[1].fn(); }
+  async function finish(promise) {
+    let done = false, failure;
+    promise.then(() => { done = true; }, (e) => { done = true; failure = e; });
+    for (let i = 0; i < 100 && !done; i++) {
+      await tick();
+      if (done) break;
+      const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
+      assert.ok(next, 'Async game flow can advance');
+      timers.delete(next[0]); now = next[1].at; next[1].fn();
+    }
+    assert.ok(done, 'Async game flow finished');
+    if (failure) throw failure;
+    return promise;
+  }
+  function players() {
+    run(`S.mode = 'practice'; S.me = 'me'; S.players = {
+      me: { ...blankPlayer(), nick: '나', costume: 'ghost', pumpkins: 0, guideSeen: true },
+      host: { ...blankPlayer(), nick: '친구', costume: 'witch', joinedAt: 1 }
+    }; S.ledger = null; render();`);
+  }
+  return { run, elements, timers, frames, window, fire, finish, players, setNow: (value) => { now = value; } };
+}
+
+test('HTML contains every static script target and JavaScript loads', () => {
+  const g = game();
+  for (const [, id] of source.matchAll(/\$\(['"]#([\w-]+)['"]\)/g)) assert.ok(g.elements.has(id), id);
+});
+
+test('outside Claude, boot still opens practice and the name intro', async () => {
+  const g = game(); await g.run('boot()');
+  assert.equal(g.run('S.mode'), 'practice');
+  assert.equal(g.elements.get('intro').hidden, false);
+  assert.equal(g.elements.get('quest').hidden, true);
+});
+
+test('tutorial introduces prizes and unlocks the persistent quest after three messages', async () => {
+  const g = game(); g.players();
+  g.run('S.players.me.guideSeen = false');
+  const welcome = g.run('welcomeTips()');
+  await tick();
+  assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+  assert.equal(g.run('S.busy'), true);
+  assert.equal(g.elements.get('quest').hidden, true);
+  for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
+  await welcome;
+  assert.equal(g.run('S.busy'), false);
+  assert.equal(g.run('S.players.me.guideSeen'), true);
+  assert.equal(g.elements.get('quest').dataset.step, 'pumpkins');
+  assert.match(g.elements.get('toast').textContent, /새 퀘스트/);
+});
+
+test('three harvests update progress, unlock knocking, and restore from saved player data', () => {
+  const g = game(); g.players();
+  assert.equal(g.run('hasBasket(S.me)'), false);
+  for (let i = 0; i < 3; i++) g.run('S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])');
+  assert.equal(g.run('hasBasket(S.me)'), true);
+  assert.equal(g.elements.get('quest').dataset.step, 'knock');
+  assert.equal(g.elements.get('quest-progress').hidden, true);
+  assert.match(g.elements.get('toast').textContent, /바구니 완성/);
+  const saved = g.run('JSON.stringify(S.players)');
+  const next = game(); next.run(`S.me = 'me'; S.players = ${saved}; renderQuest()`);
+  assert.equal(next.elements.get('quest').dataset.step, 'knock');
+  next.run(`S.players.me.knocks = [{ r: 'lose' }]; renderQuest()`);
+  assert.equal(next.elements.get('quest').dataset.step, 'compete');
+  next.run(`S.event = { startedAt: 1, endsAt: 2 }; renderQuest()`);
+  assert.equal(next.elements.get('quest').dataset.step, 'ended');
+});
+
+test('knock prerequisites and ended event disable the action', () => {
+  const g = game(); g.players();
+  g.run(`S.near = { owner: 'host' }; renderAction()`);
+  assert.equal(g.elements.get('act-btn').disabled, true);
+  g.run('S.players.me.pumpkins = 3; renderAction()');
+  assert.equal(g.elements.get('act-btn').disabled, false);
+  assert.match(g.elements.get('act-sub').textContent, /친구 → 나 1개/);
+  g.run('S.event = { startedAt: 1, endsAt: 2 }; renderAction()');
+  assert.equal(g.elements.get('act-btn').disabled, true);
+  assert.match(g.elements.get('act-sub').textContent, /문이 잠겼어요/);
+});
+
+test('difficulty is wider and bounded for empty and rich houses', () => {
+  const g = game();
+  assert.equal(g.run('zoneFor(0)'), .32);
+  assert.equal(g.run('zoneFor(10)'), .28);
+  assert.equal(g.run('zoneFor(1000)'), .20);
+  assert.equal(g.run('KNOCK_SPEED_MIN'), .78);
+  assert.equal(g.run('KNOCK_SPEED_MAX'), 1.08);
+});
+
+test('timing requires three hits, resets six-second timeout and keeps a constant speed', async () => {
+  const g = game(); g.run('Math.random = () => 0.5');
+  const result = g.run('timingGame(.28, 1, .5)');
+  g.run('S.timingPress()');
+  assert.equal(g.elements.get('t-dots').textContent, '●○○');
+  assert.equal([...g.timers.values()].filter((x) => x.delay === 6000).length, 1);
+  g.setNow(100);
+  [...g.frames.values()].at(-1)();
+  assert.equal(g.elements.get('t-marker').style.left, '60%');
+  g.run('S.timingPress(); S.timingPress()');
+  assert.equal(g.run('S.timingPress'), null);
+  assert.equal(g.elements.get('t-dots').textContent, '●●●');
+  g.fire(700);
+  assert.equal(await result, true);
+  assert.equal(g.elements.get('timing').hidden, true);
+  assert.equal([...g.timers.values()].filter((x) => x.delay === 6000).length, 0);
+});
+
+test('timing misses and six-second expiry fail cleanly', async () => {
+  for (const timeout of [false, true]) {
+    const g = game(); const result = g.run('timingGame(.28, 1, 0)');
+    if (timeout) g.fire(6000); else g.run('S.timingPress()');
+    assert.equal(g.run('S.timingPress'), null);
+    g.fire(700);
+    assert.equal(await result, false);
+  }
+});
+
+for (const won of [true, false]) {
+  test(`full knock ${won ? 'success takes' : 'failure gives'} one candy and announces the other player`, async () => {
+    const g = game(); g.players();
+    g.run(`S.players.me.pumpkins = 3; globalThis.messages = [];
+      say = async (who, text) => messages.push(text); choose = async () => 'bye'; timingGame = async () => ${won};`);
+    await g.finish(g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`));
+    assert.equal(g.run('candiesOf("me")'), won ? 11 : 9);
+    assert.equal(g.run('candiesOf("host")'), won ? 9 : 11);
+    assert.equal(g.run('S.busy'), false);
+    assert.equal(g.run('S.players.me.knocks.length'), 1);
+    assert.match(g.run('messages.join(" ")'), won ? /친구에게서 사탕 1개 가져옴/ : /친구에게 사탕 1개 빼앗김/);
+    assert.equal(g.elements.get('quest').dataset.step, 'compete');
+  });
+}
+
+test('empty giver never creates negative candy; decor reduces rank balance', () => {
+  const g = game(); g.players();
+  g.run(`S.players.me.knocks = Array.from({length: 15}, (_, i) => ({h: 'host', r: 'lose', at: i + 1})); S.ledger = null`);
+  assert.equal(g.run('candiesOf("me")'), 0);
+  assert.equal(g.run('candiesOf("host")'), 20);
+  g.run(`S.players.me.knocks = []; S.ledger = null; buyDecor('lantern')`);
+  assert.equal(g.run('candiesOf("me")'), 8);
+  assert.equal(g.run('ranking()[0].id'), 'host');
+});
+
+test('HUD explains rank and prizes before, during and after event', () => {
+  const g = game(); g.players();
+  for (const event of ['null', '{startedAt: Date.now() - 1000, endsAt: Date.now() + 60000}', '{startedAt: 1, endsAt: 2}']) {
+    g.run(`S.event = ${event}; S.ledger = null; renderHud()`);
+    const hud = g.elements.get('me').innerHTML;
+    assert.match(hud, /보유 사탕 10개/); assert.match(hud, /내 순위/); assert.match(hud, /실제 선물 지급/);
+  }
+  g.run('renderRanking()');
+  assert.match(html, /최종 사탕 순위에 따라 실제 선물을 드려요/);
+});
+
+test('bubble coordinates follow character, account for DPR and stay within edges', () => {
+  const g = game();
+  for (const size of [[1280, 900, 1], [390, 844, 3]]) {
+    const [width, height, ratio] = size;
+    g.window.innerWidth = width; g.window.innerHeight = height;
+    g.run(`dpr = ${ratio}; Z = ${ratio}; camX = 0; camY = 0; S.pos.x = ${width / 2}; S.pos.y = ${height / 2}`);
+    for (const id of ['action', 'dialog', 'timing']) {
+      const el = g.elements.get(id); el.rect = { left: 0, top: 0, width: Math.min(350, width - 40), height: 140 }; el.hidden = false;
+    }
+    for (const point of [[width / 2, height / 2], [4, 4], [width - 4, height - 4]]) {
+      g.run(`S.pos.x = ${point[0]}; S.pos.y = ${point[1]}; positionActorBubbles()`);
+      for (const id of ['action', 'dialog', 'timing']) {
+        const el = g.elements.get(id), left = parseFloat(el.style.left), top = parseFloat(el.style.top);
+        assert.ok(left >= 20); assert.ok(left + el.rect.width <= width - 20);
+        assert.ok(top >= 38); assert.ok(top + el.rect.height <= height - 96);
+      }
+    }
+  }
+  g.elements.get('wardrobe').hidden = false;
+  g.run('positionActorBubbles()');
+  assert.equal(g.elements.get('action').style.visibility, 'hidden');
+  g.run('closeModal("wardrobe"); positionActorBubbles()');
+  assert.equal(g.elements.get('action').style.visibility, '');
+  assert.equal(g.elements.get('world'), g.run('document.activeElement'));
+});
+
+test('an active knock cannot lose keyboard focus to a modal or chat', () => {
+  const g = game(); g.players(); g.run('S.busy = true; openModal("wardrobe")');
+  assert.equal(g.elements.get('wardrobe').hidden, true);
+  assert.match(g.elements.get('toast').textContent, /먼저 마쳐/);
+  g.run('openChat()');
+  assert.equal(g.elements.get('chatbar').hidden, true);
+});
+
+test('bubble placement also avoids a HUD above the character', () => {
+  const g = game();
+  g.run(`S.pos = {x: 512, y: 430}; Z = 1; dpr = 1`);
+  const action = g.elements.get('action');
+  action.hidden = false; action.rect = {left: 0, top: 0, width: 350, height: 140};
+  g.run(`document.querySelectorAll = () => [{getBoundingClientRect: () => ({left: 300, right: 700, bottom: 300})}]; positionActorBubbles()`);
+  assert.ok(parseFloat(action.style.top) >= 324);
+  assert.equal(action.classList.contains('below'), true);
+});
+
+test('two mocked Claude clients share saved quests, candy transfers and event state', async () => {
+  const one = game(), two = game(), collectionListeners = [], docListeners = new Map();
+  const data = new Map([
+    ['players/me', { nick: '나', costume: 'ghost', knocks: [], pumpkins: 0, guideSeen: true }],
+    ['players/host', { nick: '친구', costume: 'witch', knocks: [], pumpkins: 3, guideSeen: true, joinedAt: 1 }],
+  ]);
+  const snapshot = (key) => ({ exists: data.has(key), data: () => structuredClone(data.get(key)) });
+  const playersSnapshot = () => ({ docs: [...data.keys()].filter((k) => k.startsWith('players/')).map((key) => ({ id: key.split('/')[1], ...snapshot(key) })) });
+  for (const [g, id] of [[one, 'me'], [two, 'host']]) {
+    const db = {
+      doc(key) {
+        return {
+          onSnapshot(fn) { const listeners = docListeners.get(key) || []; listeners.push(fn); docListeners.set(key, listeners); fn(snapshot(key)); },
+          async set(value) {
+            assert.ok(key === `players/${id}` || (id === 'me' && key.startsWith('game/')), 'Client writes only its player or owner game data');
+            data.set(key, structuredClone(value));
+            for (const fn of docListeners.get(key) || []) fn(snapshot(key));
+            if (key.startsWith('players/')) for (const fn of collectionListeners) fn(playersSnapshot());
+          },
+        };
+      },
+      collection(name) { assert.equal(name, 'players'); return { onSnapshot(fn) { collectionListeners.push(fn); fn(playersSnapshot()); } }; },
+    };
+    const user = { id: async () => id, can: async () => true, isOwner: async () => id === 'me', profiles: async () => ({}) };
+    const room = { on() {}, peers: () => [], presence: async () => {}, emit: async () => {} };
+    g.window.claude = { use: async (name) => ({db, user, room})[name] };
+    await g.run('boot()');
+  }
+  await tick();
+  assert.equal(one.run('S.mode'), 'live'); assert.equal(two.run('S.mode'), 'live');
+  one.run('saveEvent({startedAt: Date.now(), endsAt: Date.now() + EVENT_MS}); saveMe({pumpkins: 3})');
+  await tick();
+  assert.equal(two.run('hasBasket("me")'), true);
+  assert.equal(two.run('eventState()'), 'running');
+  one.run(`say = async () => {}; choose = async () => 'bye'; timingGame = async () => true`);
+  await one.finish(one.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`));
+  await tick();
+  for (const g of [one, two]) {
+    assert.equal(g.run('candiesOf("me")'), 11);
+    assert.equal(g.run('candiesOf("host")'), 9);
+    assert.equal(g.run('ranking()[0].id'), 'me');
+  }
+  one.run('saveEvent({...S.event, endsAt: Date.now()})');
+  await tick();
+  assert.equal(two.run('eventState()'), 'ended');
+  assert.equal(two.elements.get('quest').dataset.step, 'ended');
+});
