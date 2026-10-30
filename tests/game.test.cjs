@@ -733,3 +733,28 @@ test('online rankings come from one full read when the rank window opens', async
   assert.match(g.run('eventLine()'), /내 순위 2등/);
   assert.match(g.elements.get('rk-list').innerHTML, /먼집/);
 });
+
+test('chat reaches every village but shows a bubble only for people in the same village', () => {
+  const g = game(); village(g);
+  g.run(`onChat({ data: { text: '옆 마을 안녕', v: 2 }, by: 'far', peer: 'far:tab' });
+    onChat({ data: { text: '여기 안녕', v: 1 }, by: 'near', peer: 'near:tab' });`);
+  assert.equal(g.run(`chatBubbles.has('far:tab')`), false);
+  assert.equal(g.run(`chatBubbles.has('near:tab')`), true);
+  const log = g.elements.get('chatlog').innerHTML;
+  assert.match(log, /\[박쥐떼늪\]<\/small> 먼집<\/b>옆 마을 안녕/);
+  assert.match(log, /<b>이웃<\/b>여기 안녕/);
+});
+
+test('the online list groups everyone by village with the current village first', () => {
+  const g = game(); village(g);
+  g.run(`S.online = [
+    { by: 'far', presence: { v: 2, at: 1 } }, { by: 'me', presence: { v: 1, at: 1 } }, { by: 'near', presence: { v: 1, at: 1 } },
+  ]; S.networkConnected = true; openModal('online'); renderHud();`);
+  const list = g.elements.get('on-list').innerHTML;
+  assert.ok(list.indexOf('해골골') < list.indexOf('박쥐떼늪'));
+  assert.match(list, /해골골<\/b> · 지금 여기/);
+  assert.match(list, /나 \(나\), 이웃/);
+  assert.match(g.elements.get('on-sub').textContent, /전체 3명/);
+  assert.match(g.elements.get('me').innerHTML, /전체 3명/);
+  assert.equal(g.elements.get('open-online').hidden, false);
+});

@@ -194,6 +194,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-home" type="button">우리 집</button>
   <button class="pbtn" id="open-rank" type="button">순위</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
+  <button class="pbtn" id="open-online" type="button" hidden>접속자</button>
   <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
 </div>
 
@@ -292,6 +293,15 @@ textarea:focus{outline:none;border-color:var(--gold)}
   </div>
 </div>
 
+<div class="modal" id="online" hidden>
+  <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="on-title">
+    <div class="sheet-head">
+      <h2 id="on-title">지금 접속한 사람<small id="on-sub"></small></h2>
+      <button class="pbtn" type="button" data-close="online">닫기</button>
+    </div>
+    <ol class="book" id="on-list"></ol>
+  </div>
+</div>
 <div class="modal" id="note" hidden>
   <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="nt-title">
     <div class="sheet-head">
@@ -449,7 +459,7 @@ const DECOR = {
 };
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'note', 'auth', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'online', 'note', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -554,7 +564,7 @@ const S = {
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
   pumpkins: [], nearPumpkin: null, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
   myPeer: null, nearPeer: null, stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [],
-  village: null, villages: {}, rankList: null,
+  village: null, villages: {}, rankList: null, online: [],
 };
 const MAP = { canvas: document.createElement('canvas'), tiles: [], rows: 0, slots: [], grass: [], sig: '' };
 const ghosts = new Map();
@@ -893,18 +903,20 @@ function sendChat() {
   else onChat({ data: { text }, sameTab: true, by: S.me });
   botReply();
 }
+// 채팅은 모든 마을이 함께 보고, 말풍선은 같은 마을에 있는 사람 머리 위에만 띄운다.
 function onChat(msg) {
   const text = String(msg?.data?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX);
   if (!text) return;
-  const key = msg.sameTab ? 'me' : msg.peer;
-  chatBubbles.set(key, { text, until: Date.now() + CHAT_BUBBLE_MS });
-  chatLog.push({ name: msg.sameTab ? nameOf(S.me) : msg.by ? nameOf(msg.by) : '이웃', text });
+  const village = msg.data?.v;
+  const here = village === undefined || village === S.village;
+  if (here) chatBubbles.set(msg.sameTab ? 'me' : msg.peer, { text, until: Date.now() + CHAT_BUBBLE_MS });
+  chatLog.push({ by: msg.sameTab ? S.me : msg.by, village: here ? null : village, text });
   if (chatLog.length > CHAT_LOG) chatLog.shift();
   renderChatLog();
 }
 function renderChatLog() {
   const box = $('#chatlog');
-  box.innerHTML = chatLog.map((c) => `<p><b>${esc(c.name)}</b>${esc(c.text)}</p>`).join('');
+  box.innerHTML = chatLog.map((c) => `<p><b>${c.village ? `<small>[${esc(villageLabel(c.village))}]</small> ` : ''}${esc(c.name || (c.by ? nameOf(c.by) : '이웃'))}</b>${esc(c.text)}</p>`).join('');
   box.hidden = !chatLog.length;
 }
 function bubbleOf(key) {
@@ -1437,7 +1449,7 @@ function renderHud() {
     loading: '마을 불러오는 중…',
     practice: '연습 모드 · 허수아비 집으로 연습해요. 저장되지 않아요',
     account: '연습 마을 · 사탕과 순위 기록은 저장되지 않아요',
-    firebase: S.networkConnected ? `${villageLabel(S.village)}에 지금 ${online.size + 1}명 · 기록 저장 중` : '마을 연결 중…',
+    firebase: S.networkConnected ? `${villageLabel(S.village)} ${online.size + 1}명 · 전체 ${Math.max(S.online.length, online.size + 1)}명 · 기록 저장 중` : '마을 연결 중…',
   }[S.mode] || (S.readOnly ? '구경만 가능 · 참여자(Contributor) 권한이 있어야 놀 수 있어요'
     : online.size ? `지금 마을에 ${online.size + 1}명` : '지금 마을엔 나 혼자');
   const fx = S.me ? activeFx(S.me) : null;
@@ -1449,6 +1461,23 @@ function renderHud() {
     <span class="status ev">${esc(eventLine())}</span>
     <span class="status reward">${sharedGame() ? '최종 사탕 순위에 따라 실제 선물 지급' : '연습 중 · 선물 순위에 포함되지 않아요'}</span>`;
   $('#account-session').hidden = !['account', 'firebase'].includes(S.mode);
+  $('#open-online').hidden = S.mode !== 'firebase';
+}
+
+// 접속자 목록은 마을 번호만 담은 가벼운 기록이라 위치를 받지 않고도 다른 마을 사람을 보여 준다.
+function renderOnline() {
+  const groups = new Map();
+  for (const { by, presence } of S.online) {
+    if (!groups.has(presence.v)) groups.set(presence.v, []);
+    groups.get(presence.v).push(by);
+  }
+  const order = [...groups.keys()].sort((a, b) => (b === S.village) - (a === S.village) || a - b);
+  $('#on-sub').textContent = `전체 ${S.online.length}명`;
+  $('#on-list').innerHTML = order.length
+    ? order.map((v) => `<li><div><b>${esc(villageLabel(v))}</b>${v === S.village ? ' · 지금 여기' : ''}<br>
+        <span class="guest-message">${groups.get(v).map((id) => esc(id === S.me ? `${nameOf(id)} (나)` : nameOf(id))).join(', ')}</span></div>
+        <time>${groups.get(v).length}명</time></li>`).join('')
+    : '<li class="note">접속 정보를 불러오는 중…</li>';
 }
 
 function renderWardrobe() {
@@ -1620,6 +1649,7 @@ function render() {
   if (!$('#wardrobe').hidden) renderWardrobe();
   if (!$('#house').hidden) renderHouse();
   if (!$('#rank').hidden) renderRanking();
+  if (!$('#online').hidden) renderOnline();
   if (!$('#note').hidden) renderNote();
   if (S.near) { S.near = { ...S.near, key: null }; updateNear(); }
 }
@@ -2011,6 +2041,7 @@ function openModal(id) {
   if (id === 'wardrobe') renderWardrobe();
   if (id === 'house') { S.muralDraft = null; renderHouse(); }
   if (id === 'rank') { void loadRanking(); renderRanking(); }
+  if (id === 'online') renderOnline();
   if (id === 'note') renderNote();
   $(`#${id}`).hidden = false;
   keys.clear();
@@ -2192,6 +2223,7 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'open-wardrobe') openModal('wardrobe');
   else if (t.id === 'open-home') openModal('house');
   else if (t.id === 'open-rank') openModal('rank');
+  else if (t.id === 'open-online') openModal('online');
   else if (t.id === 'open-chat') openChat();
   else if (t.id === 'act-btn') act();
   else if (t.id === 'bonk-btn') bonk();
@@ -2354,7 +2386,7 @@ async function connectFirebaseGame(uid) {
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
-  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null });
+  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null, online: [] });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
   const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
@@ -2366,31 +2398,44 @@ async function connectFirebaseGame(uid) {
   let presenceTree = {}, serverOffset = 0;
   const serverNow = () => Date.now() + serverOffset;
   const asked = new Set();
+  // 다른 마을 사람은 이 마을 구독에 없으니 분장과 이름만 처음 한 번 읽어 온다.
+  const know = (by) => {
+    if (S.players[by] || asked.has(by)) return;
+    asked.add(by);
+    fs.getDoc(fs.doc(a.firestore, 'gamePlayers', by)).then((doc) => {
+      if (disposed || !doc.exists()) return;
+      S.strangers[by] = doc.data();
+      applyFirebasePlayers(); renderChatLog();
+    }).catch(() => asked.delete(by));
+  };
   const refreshPeers = () => {
     peers = livePresence(presenceTree, serverNow()).map(({ by, id, presence }) => ({
       by, peer: `${by}:${id}`, sameTab: `${by}:${id}` === myPeer, isMe: by === uid, kind: 'viewer',
       presence: { ...presence, c: S.players[by]?.costume || 'plain' },
     }));
-    // 다른 마을에서 놀러 온 사람은 이 마을 구독에 없으니 분장과 이름만 한 번 읽어 온다.
-    for (const { by } of peers) {
-      if (S.players[by] || asked.has(by)) continue;
-      asked.add(by);
-      fs.getDoc(fs.doc(a.firestore, 'gamePlayers', by)).then((doc) => {
-        if (disposed || !doc.exists()) return;
-        S.strangers[by] = doc.data();
-        applyFirebasePlayers();
-      }).catch(() => asked.delete(by));
-    }
+    for (const { by } of peers) know(by);
     syncPeers();
+  };
+  let onlineTree = {};
+  const onlineRef = rt.ref(a.database, `online/${uid}/${sid}`), onlineGone = rt.onDisconnect(onlineRef);
+  const writeOnline = () => rt.set(onlineRef, { v: S.village, at: rt.serverTimestamp() });
+  const refreshOnline = () => {
+    S.online = livePresence(onlineTree, serverNow());
+    for (const { by } of S.online) know(by);
+    renderHud();
+    if (!$('#online').hidden) renderOnline();
   };
   const seen = new Set(), joined = Date.now();
   const receive = (snapshot) => {
     const data = snapshot.val();
     if (!data || seen.has(data.id) || data.at < joined - 5000) return;
     seen.add(data.id); if (seen.size > 300) seen.delete(seen.values().next().value);
+    if (data.kind === 'chat') know(snapshot.key);
     handlers[data.kind]?.({ data, by: snapshot.key, peer: peers.find((p) => p.by === snapshot.key)?.peer || snapshot.key, sameTab: snapshot.key === uid });
   };
   const messageError = () => toast('채팅 권한을 확인해 주세요.');
+  stops.push(rt.onChildAdded(rt.ref(a.database, 'chat'), receive, messageError));
+  stops.push(rt.onChildChanged(rt.ref(a.database, 'chat'), receive, messageError));
   // 마을을 옮길 때마다 그 마을의 플레이어·접속 위치·채팅만 새로 구독한다.
   const joinVillage = (n) => {
     villageStops.splice(0).forEach((stop) => stop());
@@ -2400,7 +2445,7 @@ async function connectFirebaseGame(uid) {
     ownRef = rt.ref(a.database, `presence/${n}/${uid}/${sid}`);
     disconnect = rt.onDisconnect(ownRef);
     applyFirebasePlayers();
-    if (S.networkConnected) void disconnect.remove().then(writePresence).catch(() => {});
+    if (S.networkConnected) { void disconnect.remove().then(writePresence).catch(() => {}); void writeOnline().catch(() => {}); }
     const presenceReady = new Promise((resolve, reject) => villageStops.push(rt.onValue(rt.ref(a.database, `presence/${n}`), (snapshot) => {
       presenceTree = snapshot.val() || {};
       for (const [id, presence] of Object.entries(presenceTree[uid] || {})) {
@@ -2427,14 +2472,17 @@ async function connectFirebaseGame(uid) {
     },
     emit: async (kind, data) => {
       if (!S.networkConnected) throw new Error('마을에 다시 연결 중이에요.');
-      await rt.set(rt.ref(a.database, `events/${S.village}/${uid}`), { id: crypto.randomUUID(), kind, ...data, at: rt.serverTimestamp() });
+      const message = { id: crypto.randomUUID(), kind, ...data, at: rt.serverTimestamp() };
+      if (kind === 'chat') await rt.set(rt.ref(a.database, `chat/${uid}`), { ...message, v: S.village });
+      else await rt.set(rt.ref(a.database, `events/${S.village}/${uid}`), message);
     },
     enterVillage: (n) => withDeadline(joinVillage(n)),
   };
   a.dispose = async () => {
     disposed = true; [...stops, ...villageStops].forEach((stop) => stop()); S.networkConnected = false;
     if (ownRef) void rt.remove(ownRef).catch(() => {});
-    rt.goOffline(a.database); S.room = null; S.village = null;
+    void rt.remove(onlineRef).catch(() => {});
+    rt.goOffline(a.database); S.room = null; S.village = null; S.online = [];
   };
   const villageReady = joinVillage(session.village);
   stops.push(rt.onValue(rt.ref(a.database, '.info/connected'), async (snapshot) => {
@@ -2442,14 +2490,22 @@ async function connectFirebaseGame(uid) {
     renderHud();
     if (!S.networkConnected || disposed) return;
     try {
-      await disconnect.remove();
+      await Promise.all([disconnect.remove(), onlineGone.remove()]);
       if (disposed) return;
-      await writePresence();
+      await Promise.all([writePresence(), writeOnline()]);
       presenceDirty = true;
     } catch { toast('접속 상태를 저장하지 못했어요. 새로고침해 주세요.'); }
   }));
-  const sweep = setInterval(refreshPeers, 10000);
-  stops.push(() => clearInterval(sweep));
+  const sweep = setInterval(() => { refreshPeers(); refreshOnline(); }, 10000);
+  const beat = setInterval(() => { if (S.networkConnected && !disposed) void writeOnline().catch(() => {}); }, PRESENCE_HEARTBEAT_MS);
+  stops.push(() => clearInterval(sweep), () => clearInterval(beat));
+  stops.push(rt.onValue(rt.ref(a.database, 'online'), (snapshot) => {
+    onlineTree = snapshot.val() || {};
+    for (const [id, entry] of Object.entries(onlineTree[uid] || {})) {
+      if (id !== sid && serverNow() - (Number(entry?.at) || 0) > PRESENCE_STALE_MS) void rt.remove(rt.ref(a.database, `online/${uid}/${id}`)).catch(() => {});
+    }
+    refreshOnline();
+  }, () => toast('접속자 목록 권한을 확인해 주세요.')));
   stops.push(rt.onValue(rt.ref(a.database, '.info/serverTimeOffset'), (snapshot) => { serverOffset = Number(snapshot.val()) || 0; }));
   stops.push(fs.onSnapshot(fs.collection(a.firestore, 'villages'), (snapshot) => {
     S.villages = Object.fromEntries(snapshot.docs.map((doc) => [doc.id, doc.data()]));
