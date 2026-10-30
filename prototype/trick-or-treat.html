@@ -149,6 +149,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .auth-note{padding:10px 12px;border:2px solid var(--panel-2);color:var(--muted)}
 .auth-actions{justify-content:flex-end}
 .auth-switch{align-self:flex-end}
+#ad-detail{overflow-wrap:anywhere}
+#ad-detail>.field{margin-top:16px}
 
 .timing{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(360px,calc(100vw - 32px));padding:16px 18px;display:grid;gap:10px;text-align:center;user-select:none;box-shadow:0 0 0 100vmax rgba(11,8,16,.68),0 0 0 4px var(--edge),6px 6px 0 4px rgba(0,0,0,.4)}
 .t-title{margin:0;font-size:1.35rem;font-weight:400;color:var(--gold)}
@@ -647,9 +649,10 @@ const candiesOf = (id) => S.mode === 'firebase'
   : ledger().bal[id] ?? START_CANDIES;
 const wasMoved = (k) => S.mode === 'firebase' ? k.moved === true : ledger().moved.has(k);
 function ranking() {
-  if (S.mode === 'firebase' && eventState() === 'ended' && S.event.results) return S.event.results;
+  const eligible = (list) => list.filter((r) => !(S.excluded || []).includes(r.id));
+  if (S.mode === 'firebase' && eventState() === 'ended' && S.event.results) return eligible(S.event.results);
   // 온라인 순위는 마을 구독에 없는 사람까지 필요하므로 서버가 3분마다 모아 주는 목록을 쓴다.
-  if (S.mode === 'firebase') return S.rankList || [];
+  if (S.mode === 'firebase') return eligible(S.rankList || []);
   return rankingOf(S.players);
 }
 function rankingOf(players) {
@@ -946,8 +949,8 @@ function onChat(msg) {
   if (!text) return;
   const village = msg.data?.v;
   const here = village === undefined || village === S.village;
-  if (here) chatBubbles.set(msg.sameTab ? 'me' : msg.peer, { text, until: Date.now() + CHAT_BUBBLE_MS });
-  chatLog.push({ by: msg.sameTab ? S.me : msg.by, village: here ? null : village, text });
+  if (here) chatBubbles.set(msg.sameTab ? 'me' : msg.peer, { id: msg.data?.id, text, until: Date.now() + CHAT_BUBBLE_MS });
+  chatLog.push({ id: msg.data?.id, by: msg.sameTab ? S.me : msg.by, village: here ? null : village, text });
   if (chatLog.length > CHAT_LOG) chatLog.shift();
   renderChatLog();
 }
@@ -1775,6 +1778,7 @@ function renderRanking() {
         <div><b>${esc(nameOf(r.id))}</b>${r.id === S.me && nameOf(r.id) !== '나' ? ' (나)' : ''}${S.names[r.id] && S.names[r.id] !== nameOf(r.id) ? `<small class="real">${esc(S.names[r.id])}</small>` : ''}</div><span class="cnt">${r.n}개</span></li>`).join('')
     : `<li class="note">${S.rankLoading ? '순위를 불러오는 중…' : '아직 마을에 아무도 없어요.'}</li>`;
   $('#rk-admin').hidden = !S.isOwner;
+  $('#open-admin').hidden = S.mode !== 'firebase';
   const canFinalize = S.mode === 'firebase' && S.event && !S.event.results && eventState() === 'ended';
   $('#ev-stop').disabled = eventState() !== 'running' && !canFinalize;
   if (!$('#ev-stop').dataset.armed) $('#ev-stop').textContent = canFinalize ? '결과 확정' : '이벤트 종료';
@@ -1808,18 +1812,21 @@ async function loadAdminUsers() {
 }
 async function adminAction(type, extra = {}) {
   const target = S.adminSelected;
-  if (!target || !S.isOwner) return;
+  if (!target || !S.isOwner || S.adminWorking) return;
   let reason = '';
   if (type === 'ban') {
     reason = prompt('밴 사유를 입력해 주세요.')?.trim() || '';
     if (!reason) return;
   }
+  S.adminWorking = true;
+  try {
   const token = await S.account.auth.currentUser.getIdToken();
   await accountRequest('/api/game/admin', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ type, target, reason, ...extra }) });
   toast('관리자 조치를 적용했어요.');
   await loadAdminUsers();
   S.adminSelected = target;
   renderAdmin();
+  } finally { S.adminWorking = false; }
 }
 
 function render() {
@@ -2449,6 +2456,7 @@ document.addEventListener('click', (e) => {
     const action = t.dataset.adminAction;
     const extra = action === 'rank' ? { excluded: t.dataset.value === 'true' }
       : action === 'house' ? { hidden: t.dataset.value === 'true' } : {};
+    if (action === 'delete-chat') extra.chatId = S.adminUsers.find((user) => user.id === S.adminSelected)?.latestChat?.id;
     adminAction(action, extra).catch((error) => toast(error.message));
   } else if (t.dataset.adminDeleteNote) {
     if (confirm('이 방명록을 삭제할까요?')) adminAction('delete-note', {
@@ -2618,7 +2626,7 @@ async function connectFirebaseGame(uid) {
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
-  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [] });
+  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [] });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
   const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
@@ -2667,6 +2675,17 @@ async function connectFirebaseGame(uid) {
   };
   const messageError = () => toast('채팅 권한을 확인해 주세요.');
   stops.push(rt.onChildAdded(rt.ref(a.database, 'chat'), receive, messageError));
+  stops.push(rt.onChildRemoved(rt.ref(a.database, 'chat'), (snapshot) => {
+    const id = snapshot.val()?.id;
+    for (let i = chatLog.length - 1; i >= 0; i--) if (chatLog[i].by === snapshot.key && chatLog[i].id === id) chatLog.splice(i, 1);
+    for (const [key, bubble] of chatBubbles) if (id && bubble.id === id) chatBubbles.delete(key);
+    renderChatLog();
+  }));
+  stops.push(fs.onSnapshot(fs.doc(a.firestore, 'game/moderation'), (snapshot) => {
+    S.excluded = snapshot.exists() ? snapshot.data().excluded || [] : [];
+    renderHud();
+    if (!$('#rank').hidden) renderRanking();
+  }));
   stops.push(rt.onChildChanged(rt.ref(a.database, 'chat'), receive, messageError));
   // 마을을 옮길 때마다 그 마을의 플레이어·접속 위치·채팅만 새로 구독한다.
   const joinVillage = (n) => {

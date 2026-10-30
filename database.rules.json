@@ -23,7 +23,7 @@
       ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",
       "$uid": {
         "$session": {
-        ".write": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true && auth.uid == $uid",
+          ".write": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true && auth.uid == $uid",
           ".validate": "newData.hasChildren(['v','at'])",
           "v": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999" },
           "at": { ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 1000" },

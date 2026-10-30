@@ -1,9 +1,57 @@
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { signup, updateProfile } = require('../server/auth-service.cjs');
 const { LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
+const { searchUsers, moderate } = require('../server/admin-service.cjs');
+after(() => services().database.goOffline());
+
+test('admin moderation enforces permissions, bans existing sessions, hides houses and removes matching content', async (t) => {
+  const [admin, visitor, host] = await Promise.all(['관', '방', '대'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  await act(admin, { type: 'event-start' });
+  t.after(async () => {
+    process.env.GAME_ADMIN_UIDS = admin.uid;
+    const event = (await services().db.doc('game/event').get()).data();
+    if (event && !event.results) await act(admin, { type: 'event-stop' });
+  });
+  await assert.rejects(searchUsers(visitor.authorization, host.uid), (e) => e.status === 403);
+  await assert.rejects(moderate(visitor.authorization, { type: 'ban', target: host.uid, reason: 'test' }), (e) => e.status === 403);
+  await assert.rejects(moderate(admin.authorization, { type: 'ban', target: admin.uid, reason: 'test' }));
+  await act(visitor, { type: 'note', host: host.uid, text: '삭제 대상' });
+  const note = (await saved(visitor)).notes.at(-1);
+  await moderate(admin.authorization, { type: 'delete-note', target: visitor.uid, guest: visitor.uid, host: host.uid, at: note.at });
+  assert.equal((await saved(visitor)).notes.length, 0);
+  assert.equal((await saved(host)).guests.length, 0);
+  const chatRef = services().database.ref(`chat/${visitor.uid}`);
+  await chatRef.set({ id: 'new', text: 'new' });
+  await moderate(admin.authorization, { type: 'delete-chat', target: visitor.uid, chatId: 'old' });
+  assert.equal((await chatRef.get()).val().id, 'new');
+  await moderate(admin.authorization, { type: 'delete-chat', target: visitor.uid, chatId: 'new' });
+  assert.equal((await chatRef.get()).exists(), false);
+  await moderate(admin.authorization, { type: 'house', target: host.uid, hidden: true });
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await assert.rejects(act(visitor, { type: 'knock-start', host: host.uid }), /집을 찾을/);
+  await moderate(admin.authorization, { type: 'house', target: host.uid, hidden: false });
+  await moderate(admin.authorization, { type: 'ban', target: visitor.uid, reason: '도배' });
+  await assert.rejects(act(visitor, { type: 'harvest' }), (e) => e.status === 401 || e.status === 403);
+  const read = await fetch(`http://127.0.0.1:8080/v1/projects/demo-trick-or-treat/databases/(default)/documents/gamePlayers/${visitor.uid}`, { headers: { authorization: visitor.authorization } });
+  assert.equal(read.status, 403);
+  const denied = await fetch(`http://127.0.0.1:9000/chat/${visitor.uid}.json?ns=demo-trick-or-treat-default-rtdb&auth=${visitor.token}`, { method: 'PUT', body: JSON.stringify({ id: 'blocked', text: 'x', kind: 'chat', v: 1, at: { '.sv': 'timestamp' } }) });
+  assert.equal(denied.status, 401);
+  assert.ok((await services().db.doc('game/moderation').get()).data().excluded.includes(visitor.uid));
+  await moderate(admin.authorization, { type: 'unban', target: visitor.uid });
+  assert.equal((await saved(visitor)).rankExcluded, true);
+  await moderate(admin.authorization, { type: 'rank', target: visitor.uid, excluded: false });
+  assert.ok(!(await services().db.doc('game/moderation').get()).data().excluded.includes(visitor.uid));
+  await act(visitor, { type: 'harvest', host: { invalid: true } });
+  const found = (await searchUsers(admin.authorization, visitor.uid)).users[0];
+  assert.equal(found.banned, false);
+  assert.ok(found.activity.some((item) => item.type === 'harvest'));
+  assert.ok(found.activity.every((item) => item.host === undefined || typeof item.host === 'string'));
+  await act(admin, { type: 'event-stop' });
+});
 
 async function player(prefix) {
   const account = await signup({ nickname: `${prefix}${randomUUID().slice(0, 8)}`, password: 'game-password-8' });

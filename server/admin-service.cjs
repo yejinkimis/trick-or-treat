@@ -16,14 +16,15 @@ async function searchUsers(authorization, query) {
   const q = String(query || '').trim().slice(0, 40).toLocaleLowerCase('ko');
   if (q.length < 1) reject(400, 'search-required', '닉네임이나 사용자 ID를 입력해 주세요.');
   const { db } = services();
-  const snap = await db.collection('gamePlayers').limit(300).get();
+  const [snap, eventDoc] = await Promise.all([db.collection('gamePlayers').limit(300).get(), db.doc('game/event').get()]);
+  const round = eventDoc.exists ? eventDoc.data().id : 'practice';
   const matches = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
     .filter((p) => p.id.toLowerCase().includes(q) || String(p.nick || '').toLocaleLowerCase('ko').includes(q))
     .slice(0, 20);
   return { users: await Promise.all(matches.map(async (p) => {
     const [ban, activities] = await Promise.all([
       db.collection('gameBans').doc(p.id).get(),
-      db.collection('gameActivity').where('uid', '==', p.id).limit(100).get(),
+      db.collection('gameActivity').doc(p.id).collection('entries').orderBy('at', 'desc').limit(30).get(),
     ]);
     const chatSnapshot = await services().database.ref(`chat/${p.id}`).get();
     const activity = activities.docs.map((doc) => doc.data());
@@ -34,7 +35,7 @@ async function searchUsers(authorization, query) {
       .sort((a, b) => b.at - a.at).slice(0, 30);
     return {
       id: p.id, nick: p.nick || '이름 없음', costume: p.costume || null, village: p.village || null,
-      candies: Number(p.candies) || 0, pumpkins: Number(p.pumpkins) || 0,
+      candies: p.round === round ? p.candies : 10, pumpkins: Number(p.pumpkins) || 0,
       rankExcluded: p.rankExcluded === true, houseHidden: p.houseHidden === true,
       banned: ban.exists && ban.data().banned === true,
       banReason: ban.exists ? ban.data().reason || '' : '', activity: recentActivity,
@@ -52,6 +53,8 @@ async function moderate(authorization, input) {
     reject(400, 'invalid-admin-action', '대상이나 작업을 확인해 주세요.');
   }
   if (target === actor && type === 'ban') reject(400, 'cannot-ban-self', '운영자 본인은 밴할 수 없어요.');
+  if (type === 'rank' && typeof input.excluded !== 'boolean') reject(400, 'invalid-value', '순위 제외 여부를 확인해 주세요.');
+  if (type === 'house' && typeof input.hidden !== 'boolean') reject(400, 'invalid-value', '집 숨김 여부를 확인해 주세요.');
   const reasonText = String(reason).replace(/\s+/gu, ' ').trim().slice(0, 120);
   const playerRef = db.collection('gamePlayers').doc(target);
   const player = await playerRef.get();
@@ -95,8 +98,19 @@ async function moderate(authorization, input) {
     });
     detail = { host, guest, at };
   } else {
-    await database.ref(`chat/${target}`).remove();
+    if (typeof input.chatId !== 'string') reject(400, 'invalid-chat', '삭제할 채팅을 확인해 주세요.');
+    await database.ref(`chat/${target}`).transaction((current) => current === null || current.id === input.chatId ? null : undefined);
     detail = { deletedChat: true };
+  }
+  if (['ban', 'unban', 'rank'].includes(type)) {
+    await db.runTransaction(async (tx) => {
+      const moderationRef = db.doc('game/moderation');
+      const [current, moderation] = await Promise.all([tx.get(playerRef), tx.get(moderationRef)]);
+      const excluded = new Set(moderation.exists ? moderation.data().excluded || [] : []);
+      if (current.data().banned || current.data().rankExcluded) excluded.add(target);
+      else excluded.delete(target);
+      tx.set(moderationRef, { excluded: [...excluded] });
+    });
   }
   await db.collection('gameAdminActivity').doc(randomUUID()).set({ actor, target, type, detail, at: now });
   return { ok: true };

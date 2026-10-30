@@ -12,6 +12,10 @@ service cloud.firestore {
       allow read: if activePlayer();
       allow write: if false;
     }
+    match /game/moderation {
+      allow read: if activePlayer();
+      allow write: if false;
+    }
     match /villages/{village} {
       allow read: if activePlayer();
       allow write: if false;
