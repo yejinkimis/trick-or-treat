@@ -473,12 +473,11 @@ const DECOR = {
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
 // 호박 연금술: 서버(server/game-service.cjs)와 같은 값이어야 한다.
 const PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
-const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 25 }, { n: 10, weight: 5 }];
+const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
 const BREW_LINES = {
   0: '펑! 연기만 자욱해요… 호박이 전부 재가 됐어요.',
   2: '보글보글… 사탕 2개가 떠올랐어요!',
   5: '부글부글! 사탕 5개가 솟아올랐어요!',
-  10: '솥이 번쩍! 사탕 10개가 쏟아졌어요!',
 };
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
 const MODALS = ['wardrobe', 'house', 'rank', 'online', 'note', 'auth', 'intro'];
@@ -1403,7 +1402,7 @@ async function alchemyTips() {
   S.target = null;
   renderAction();
   await say('', `호박은 바구니에 계속 모을 수 있어요. 최대 ${PUMPKIN_HOLD_MAX}개까지 들어가요.`, 'sys');
-  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 꽝일 수도, 사탕 10개일 수도 있어요!`, 'sys');
+  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 꽝일 수도, 사탕 5개일 수도 있어요!`, 'sys');
   await say('', '솥은 한 번 끓이면 10분 동안 식혀야 해요. 노크 사이사이에 한 방을 노려 보세요.', 'sys');
   $('#dialog').hidden = true;
   S.busy = false;
