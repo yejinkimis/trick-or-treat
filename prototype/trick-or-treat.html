@@ -298,8 +298,21 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <div class="row">
         <button class="pbtn hot" id="ev-start" type="button">이벤트 시작</button>
         <button class="pbtn" id="ev-stop" type="button">지금 끝내기</button>
+        <button class="pbtn" id="open-admin" type="button">관리자 도구</button>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="modal" id="admin" hidden>
+  <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="ad-title">
+    <div class="sheet-head">
+      <h2 id="ad-title">관리자 도구<small>사용자 활동과 운영 조치</small></h2>
+      <button class="pbtn" type="button" data-close="admin">닫기</button>
+    </div>
+    <div class="row"><input id="ad-query" type="text" maxlength="40" placeholder="닉네임 또는 사용자 ID"><button class="pbtn hot" id="ad-search" type="button">검색</button></div>
+    <ol class="book" id="ad-results"></ol>
+    <div id="ad-detail" hidden></div>
   </div>
 </div>
 
@@ -481,7 +494,7 @@ const BREW_LINES = {
   10: '솥이 번쩍! 사탕 10개가 쏟아졌어요!',
 };
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'online', 'note', 'auth', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'admin', 'online', 'note', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -587,6 +600,7 @@ const S = {
   pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
   myPeer: null, nearPeer: null, stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [],
   village: null, villages: {}, rankList: null, online: [],
+  adminUsers: [], adminSelected: null,
 };
 const MAP = { canvas: document.createElement('canvas'), tiles: [], rows: 0, slots: [], grass: [], sig: '' };
 const ghosts = new Map();
@@ -674,7 +688,7 @@ function activeFx(id) {
 
 function houseOwners() {
   return Object.entries(S.players)
-    .filter(([, p]) => p.costume && (S.mode !== 'firebase' || p.village === S.village))
+    .filter(([, p]) => p.costume && !p.houseHidden && !p.banned && (S.mode !== 'firebase' || p.village === S.village))
     .sort(([a, pa], [b, pb]) => (pa.joinedAt || 0) - (pb.joinedAt || 0) || a.localeCompare(b))
     .map(([id]) => id);
 }
@@ -1767,6 +1781,48 @@ function renderRanking() {
   if (!$('#ev-stop').dataset.armed) $('#ev-stop').textContent = canFinalize ? '결과 확정' : '이벤트 종료';
 }
 
+const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
+function renderAdmin() {
+  const results = $('#ad-results'), detail = $('#ad-detail');
+  results.innerHTML = S.adminUsers.map((user) => `<li><button class="pbtn" type="button" data-admin-target="${user.id}">${esc(user.nick)} · ${user.id.slice(0, 8)}${user.banned ? ' · 밴' : ''}</button></li>`).join('');
+  const user = S.adminUsers.find((item) => item.id === S.adminSelected);
+  detail.hidden = !user;
+  if (!user) { detail.innerHTML = ''; return; }
+  const activity = user.activity.length
+    ? user.activity.map((item) => `<li><time>${new Date(item.at).toLocaleString('ko-KR')}</time><div>${esc(adminActivityLabel(item))}${item.host ? ` · 대상 ${esc(item.host.slice(0, 8))}` : ''}${item.moved ? ' · 사탕 이동' : ''}</div></li>`).join('')
+    : '<li><div>기록된 활동이 없어요.</div></li>';
+  const notes = user.notes.length
+    ? user.notes.map((item) => `<li><div>${esc(item.text)}<small class="note"> · ${new Date(item.at).toLocaleString('ko-KR')}</small></div><button class="pbtn" type="button" data-admin-delete-note="${item.host}" data-admin-note-at="${item.at}">삭제</button></li>`).join('')
+    : '<li><div>삭제할 방명록이 없어요.</div></li>';
+  detail.innerHTML = `<div class="field"><span class="lab">${esc(user.nick)} · ${esc(user.id)}</span><span class="note">사탕 ${user.candies}개 · 호박 ${user.pumpkins}개 · ${user.village ? `${user.village}번 마을` : '마을 미배정'}</span><span class="note">밴 ${user.banned ? `상태 · ${esc(user.banReason)}` : '아님'} · 순위 제외 ${user.rankExcluded ? '예' : '아니요'} · 집 숨김 ${user.houseHidden ? '예' : '아니요'}</span>
+    <div class="row"><button class="pbtn ${user.banned ? '' : 'hot'}" type="button" data-admin-action="${user.banned ? 'unban' : 'ban'}">${user.banned ? '밴 해제' : '밴'}</button><button class="pbtn" type="button" data-admin-action="rank" data-value="${!user.rankExcluded}">${user.rankExcluded ? '순위 포함' : '순위 제외'}</button><button class="pbtn" type="button" data-admin-action="house" data-value="${!user.houseHidden}">${user.houseHidden ? '집 복원' : '집 숨김'}</button></div></div>
+    <div class="field"><span class="lab">최근 채팅</span>${user.latestChat ? `<div class="shop-item"><div>${esc(user.latestChat.text || '')}</div><button class="pbtn" type="button" data-admin-action="delete-chat">삭제</button></div>` : '<span class="note">현재 채팅이 없어요.</span>'}</div><div class="field"><span class="lab">최근 활동</span><ol class="book">${activity}</ol></div><div class="field"><span class="lab">방명록</span><ol class="book">${notes}</ol></div>`;
+}
+async function loadAdminUsers() {
+  if (!S.isOwner || S.mode !== 'firebase') return;
+  const token = await S.account.auth.currentUser.getIdToken();
+  const q = encodeURIComponent($('#ad-query').value.trim());
+  const data = await accountRequest(`/api/game/admin?q=${q}`, { headers: { authorization: `Bearer ${token}` } });
+  S.adminUsers = data.users;
+  if (!S.adminUsers.some((user) => user.id === S.adminSelected)) S.adminSelected = null;
+  renderAdmin();
+}
+async function adminAction(type, extra = {}) {
+  const target = S.adminSelected;
+  if (!target || !S.isOwner) return;
+  let reason = '';
+  if (type === 'ban') {
+    reason = prompt('밴 사유를 입력해 주세요.')?.trim() || '';
+    if (!reason) return;
+  }
+  const token = await S.account.auth.currentUser.getIdToken();
+  await accountRequest('/api/game/admin', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ type, target, reason, ...extra }) });
+  toast('관리자 조치를 적용했어요.');
+  await loadAdminUsers();
+  S.adminSelected = target;
+  renderAdmin();
+}
+
 function render() {
   S.ledger = null;
   buildMap();
@@ -2204,6 +2260,7 @@ function openModal(id) {
   if (id === 'house') { S.muralDraft = null; renderHouse(); }
   if (id === 'rank') { void loadRanking(); renderRanking(); }
   if (id === 'online') renderOnline();
+  if (id === 'admin') { S.adminUsers = []; S.adminSelected = null; renderAdmin(); }
   if (id === 'note') renderNote();
   $(`#${id}`).hidden = false;
   keys.clear();
@@ -2385,7 +2442,20 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'open-wardrobe') openModal('wardrobe');
   else if (t.id === 'open-home') openModal('house');
   else if (t.id === 'open-rank') openModal('rank');
+  else if (t.id === 'open-admin' && S.isOwner) openModal('admin');
   else if (t.id === 'open-online') openModal('online');
+  else if (t.id === 'ad-search') loadAdminUsers().catch((error) => toast(error.message));
+  else if (t.dataset.adminTarget) { S.adminSelected = t.dataset.adminTarget; renderAdmin(); }
+  else if (t.dataset.adminAction) {
+    const action = t.dataset.adminAction;
+    const extra = action === 'rank' ? { excluded: t.dataset.value === 'true' }
+      : action === 'house' ? { hidden: t.dataset.value === 'true' } : {};
+    adminAction(action, extra).catch((error) => toast(error.message));
+  } else if (t.dataset.adminDeleteNote) {
+    if (confirm('이 방명록을 삭제할까요?')) adminAction('delete-note', {
+      host: t.dataset.adminDeleteNote, guest: S.adminSelected, at: Number(t.dataset.adminNoteAt),
+    }).catch((error) => toast(error.message));
+  }
   else if (t.dataset.go) { closeModal('online'); void travelTo(Number(t.dataset.go)); }
   else if (t.id === 'open-chat') openChat();
   else if (t.id === 'act-btn') act();
