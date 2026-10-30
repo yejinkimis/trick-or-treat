@@ -7,7 +7,7 @@ const { readVillagePlan } = require('./village.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
-const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 25 }, { n: 10, weight: 5 }];
+const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
 const hasBasket = (player) => player.basket === true || (player.pumpkins || 0) >= BASKET_PUMPKINS;
 function brewGain(roll = randomInt(100)) {
   for (const { n, weight } of BREW_TABLE) {
