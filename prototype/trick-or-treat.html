@@ -194,7 +194,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-home" type="button">우리 집</button>
   <button class="pbtn" id="open-rank" type="button">순위</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
-  <button class="pbtn" id="open-online" type="button" hidden>접속자</button>
+  <button class="pbtn" id="open-online" type="button" hidden>마을 지도</button>
   <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
 </div>
 
@@ -296,7 +296,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 <div class="modal" id="online" hidden>
   <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="on-title">
     <div class="sheet-head">
-      <h2 id="on-title">지금 접속한 사람<small id="on-sub"></small></h2>
+      <h2 id="on-title">마을 지도<small id="on-sub"></small></h2>
       <button class="pbtn" type="button" data-close="online">닫기</button>
     </div>
     <ol class="book" id="on-list"></ol>
@@ -1568,20 +1568,26 @@ function renderHud() {
   $('#open-online').hidden = S.mode !== 'firebase';
 }
 
-// 접속자 목록은 마을 번호만 담은 가벼운 기록이라 위치를 받지 않고도 다른 마을 사람을 보여 준다.
+// 마을 지도는 이미 받고 있는 마을 이름과 접속자 기록(마을 번호만)으로 그려서 추가 읽기가 없다.
 function renderOnline() {
   const groups = new Map();
+  for (let v = 1; v <= villageCount(); v++) groups.set(v, []);
   for (const { by, presence } of S.online) {
     if (!groups.has(presence.v)) groups.set(presence.v, []);
     groups.get(presence.v).push(by);
   }
   const order = [...groups.keys()].sort((a, b) => (b === S.village) - (a === S.village) || a - b);
-  $('#on-sub').textContent = `전체 ${S.online.length}명`;
-  $('#on-list').innerHTML = order.length
-    ? order.map((v) => `<li><div><b>${esc(villageLabel(v))}</b>${v === S.village ? ' · 지금 여기' : ''}<br>
-        <span class="guest-message">${groups.get(v).map((id) => esc(id === S.me ? `${nameOf(id)} (나)` : nameOf(id))).join(', ')}</span></div>
-        <time>${groups.get(v).length}명</time></li>`).join('')
-    : '<li class="note">접속 정보를 불러오는 중…</li>';
+  $('#on-sub').textContent = `마을 ${groups.size}개 · 접속 ${S.online.length}명`;
+  const html = order.length
+    ? order.map((v) => {
+      const here = v === S.village, people = groups.get(v);
+      return `<li><div><b>${esc(villageLabel(v))}</b>${here ? ' · 지금 여기' : ''} · 접속 ${people.length}명<br>
+        <span class="guest-message">${people.map((id) => esc(id === S.me ? `${nameOf(id)} (나)` : nameOf(id))).join(', ')}</span></div>
+        ${here ? '' : `<button class="pbtn" type="button" data-go="${v}">가기</button>`}</li>`;
+    }).join('')
+    : '<li class="note">마을 정보를 불러오는 중…</li>';
+  // 접속 기록은 수시로 갱신되므로 내용이 바뀔 때만 다시 그려 누르려던 버튼이 사라지지 않게 한다.
+  if (html !== renderOnline.last) $('#on-list').innerHTML = renderOnline.last = html;
 }
 
 function renderWardrobe() {
@@ -2352,6 +2358,7 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'open-home') openModal('house');
   else if (t.id === 'open-rank') openModal('rank');
   else if (t.id === 'open-online') openModal('online');
+  else if (t.dataset.go) { closeModal('online'); void travelTo(Number(t.dataset.go)); }
   else if (t.id === 'open-chat') openChat();
   else if (t.id === 'act-btn') act();
   else if (t.id === 'bonk-btn') bonk();

@@ -745,18 +745,28 @@ test('chat reaches every village but shows a bubble only for people in the same 
   assert.match(log, /<b>이웃<\/b>여기 안녕/);
 });
 
-test('the online list groups everyone by village with the current village first', () => {
+test('the village map lists every village with who is online and travels to the chosen one', async () => {
   const g = game(); village(g);
   g.run(`S.online = [
     { by: 'far', presence: { v: 2, at: 1 } }, { by: 'me', presence: { v: 1, at: 1 } }, { by: 'near', presence: { v: 1, at: 1 } },
-  ]; S.networkConnected = true; openModal('online'); renderHud();`);
+  ]; S.networkConnected = true; openModal('online'); renderHud();
+    var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };`);
   const list = g.elements.get('on-list').innerHTML;
-  assert.ok(list.indexOf('해골골') < list.indexOf('박쥐떼늪'));
-  assert.match(list, /해골골<\/b> · 지금 여기/);
+  assert.ok(list.indexOf('해골골') < list.indexOf('박쥐떼늪') && list.indexOf('박쥐떼늪') < list.indexOf('관뚜껑묘지'));
+  assert.match(list, /해골골<\/b> · 지금 여기 · 접속 2명/);
   assert.match(list, /나 \(나\), 이웃/);
-  assert.match(g.elements.get('on-sub').textContent, /전체 3명/);
+  assert.match(list, /관뚜껑묘지<\/b> · 접속 0명/);
+  assert.doesNotMatch(list, /data-go="1"/);
+  assert.match(list, /data-go="3"/);
+  assert.match(g.elements.get('on-sub').textContent, /마을 3개 · 접속 3명/);
   assert.match(g.elements.get('me').innerHTML, /전체 3명/);
   assert.equal(g.elements.get('open-online').hidden, false);
+  g.run(`document.listeners.click({ target: { classList: { contains: () => false }, closest: () => ({ dataset: { go: '3' } }) } })`);
+  assert.equal(g.elements.get('online').hidden, true);
+  g.fire(300); await tick(); await tick();
+  g.fire(200); await tick();
+  assert.equal(g.run('JSON.stringify(entered)'), '[3]');
+  assert.equal(g.run('S.pos.y'), g.run('SPAWN.y'));
 });
 
 test('basket stays after harvesting more, alchemy tip explains the cauldron, and the bag caps at 100', async () => {
