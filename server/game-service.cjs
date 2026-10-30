@@ -32,12 +32,14 @@ function brewGain(roll = randomInt(100)) {
   }
   return 0;
 }
-const roundOf = (event) => event?.id || 'practice';
+// 예약된 이벤트는 시작 시각 전까지 연습 기록으로 돈다. 시작 시각이 되면 문서를 바꾸지 않아도 모두 새 라운드(사탕 10개)가 된다.
+const roundOf = (event, now = Date.now()) => (event?.id && now >= (event.startedAt || 0) ? event.id : 'practice');
+const EVENT_MAX_MS = 48 * 60 * 60 * 1000;
 // 잠금은 신호가 끊기거나 도전 시작 후 90초가 지나면 풀린다. 끝나는 순간의 요청이 늦게 와도 받도록 정산에는 여유를 둔다.
 const FINISH_SLACK_MS = 10 * 1000;
 const lockAlive = (lock, now, slack = 0) => Boolean(lock?.createdAt)
   && now - (lock.heartbeatAt || lock.createdAt) < CHALLENGE_LOCK_TTL_MS && now - lock.createdAt < CHALLENGE_MAX_MS + slack;
-const balance = (player, event) => player.round === roundOf(event) ? player.candies : 10;
+const balance = (player, event, now = Date.now()) => player.round === roundOf(event, now) ? player.candies : 10;
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
 const fail = (message, status = 400) => { throw new AuthError(status, 'game-action-rejected', message); };
 const MAX_GUESTS = 100;
@@ -62,10 +64,25 @@ async function leaderboard(now = Date.now()) {
   const event = eventDoc.exists ? eventDoc.data() : null;
   const villageOf = new Map(players.docs.map((doc) => [doc.id, doc.data().village || null]));
   const ended = event && event.endsAt <= now;
+  // 운영자가 누르지 않아도 끝난 이벤트의 결과는 종료 후 첫 순위 요청에서 한 번 고정해 기록해 둔다.
+  const results = event?.results || (ended ? await freezeResults(db) : null);
   const excluded = new Set(players.docs.filter((doc) => doc.data().rankExcluded || doc.data().banned).map((doc) => doc.id));
-  const ranked = (event?.results || rankPlayers(players.docs, event, ended ? event.endsAt : Infinity)).filter((p) => !excluded.has(p.id));
-  leaderboardMemo = { at: now, round: roundOf(event), players: ranked.map((p) => ({ ...p, village: villageOf.get(p.id) || null })) };
+  const ranked = (results || rankPlayers(players.docs, event, ended ? event.endsAt : Infinity)).filter((p) => !excluded.has(p.id));
+  leaderboardMemo = { at: now, round: roundOf(event, now), players: ranked.map((p) => ({ ...p, village: villageOf.get(p.id) || null })) };
   return leaderboardMemo;
+}
+
+async function freezeResults(db) {
+  const eventRef = db.doc('game/event');
+  return db.runTransaction(async (tx) => {
+    const doc = await tx.get(eventRef);
+    const event = doc.exists ? doc.data() : null;
+    if (!event || event.results || event.endsAt > Date.now()) return event?.results || null;
+    const results = await finalResults(tx, db, event, event.endsAt);
+    tx.set(eventRef, { ...event, results });
+    tx.set(db.collection('gameRounds').doc(event.id), { ...event, results });
+    return results;
+  }, { maxAttempts: 20 });
 }
 
 async function session(authorization) {
@@ -107,28 +124,38 @@ async function action(authorization, input) {
     if (receipt) return receipt.result;
     const player = { ...playerDoc.data(), pumpkins: mine.pumpkins }, event = eventDoc.exists ? eventDoc.data() : null;
     if (player.banned) fail('이 계정은 게임 이용이 제한됐어요.', 403);
-    const round = roundOf(event);
+    const round = roundOf(event, now);
     let privateUpdate = {};
-    const count = balance(player, event);
+    const count = balance(player, event, now);
     const type = input.type;
     let result = {};
     if (type === 'event-start' || type === 'event-stop') {
       if (!isAdmin(uid)) fail('운영자만 이벤트를 변경할 수 있어요.', 403);
       if (type === 'event-start') {
-        if (event && event.endsAt > now) fail('이벤트가 이미 진행 중이에요.');
+        if (event && event.endsAt > now) fail(now < event.startedAt ? '이미 예약된 이벤트가 있어요. 취소한 뒤 다시 예약해 주세요.' : '이벤트가 이미 진행 중이에요.');
+        // 시작·종료 시각을 주면 예약하고, 없으면 지금부터 24시간이다.
+        const startedAt = input.startAt === undefined ? now : input.startAt;
+        const endsAt = input.endAt === undefined ? startedAt + 86400000 : input.endAt;
+        if (!Number.isSafeInteger(startedAt) || !Number.isSafeInteger(endsAt) || startedAt < now - 60000
+          || endsAt <= Math.max(startedAt, now) || endsAt - startedAt > EVENT_MAX_MS) fail('이벤트 시작·종료 시각을 확인해 주세요.');
         if (event) {
           const results = await finalResults(tx, db, event, event.endsAt);
           tx.set(db.collection('gameRounds').doc(event.id), { ...event, results });
         }
-        result.event = { id: randomUUID(), startedAt: now, endsAt: now + 86400000 };
+        result.event = { id: randomUUID(), startedAt, endsAt };
+        tx.set(eventRef, result.event);
+      } else if (event && !event.results && now < event.startedAt) {
+        // 시작 전인 예약은 결과 없이 취소한다. 그동안의 기록은 연습 기록으로 남는다.
+        tx.delete(eventRef);
+        result.event = null;
       } else {
         if (!event || event.results) fail('진행 중인 이벤트가 없어요.');
         const cutoff = Math.min(event.endsAt, now);
         const results = await finalResults(tx, db, event, cutoff);
         result.event = { ...event, endsAt: cutoff, results };
         tx.set(db.collection('gameRounds').doc(event.id), result.event);
+        tx.set(eventRef, result.event);
       }
-      tx.set(eventRef, result.event);
     } else {
       if (!player.costume) fail('분장을 먼저 골라 주세요.');
       if (event && event.endsAt <= now) fail('이벤트가 끝났어요. 결과가 보존됩니다.');
@@ -245,7 +272,7 @@ async function action(authorization, input) {
         if (!outcome.valid) fail(outcome.message || '조작 기록을 확인해 주세요.');
         if (!outcome.finished) fail('도전이 아직 끝나지 않았어요.');
         const win = outcome.won;
-        const hostCount = balance(hostDoc.data(), event);
+        const hostCount = balance(hostDoc.data(), event, now);
         const moved = win && hostCount > 0;
         const nextLevelByHost = challenge.streakRound === round && challenge.nextLevelByHost
           ? { ...challenge.nextLevelByHost } : {};

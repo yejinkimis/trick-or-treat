@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
-const { PRICES } = require('./game-service.cjs');
+const { PRICES, roundOf } = require('./game-service.cjs');
 const { watchList } = require('./watch.cjs');
 
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
@@ -19,7 +19,7 @@ async function searchUsers(authorization, query) {
   if (q.length < 1) reject(400, 'search-required', '닉네임이나 사용자 ID를 입력해 주세요.');
   const { db } = services();
   const [snap, eventDoc] = await Promise.all([db.collection('gamePlayers').limit(300).get(), db.doc('game/event').get()]);
-  const round = eventDoc.exists ? eventDoc.data().id : 'practice';
+  const round = roundOf(eventDoc.exists ? eventDoc.data() : null);
   const matches = snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
     .filter((p) => p.id.toLowerCase().includes(q) || String(p.nick || '').toLocaleLowerCase('ko').includes(q))
     .slice(0, 20);

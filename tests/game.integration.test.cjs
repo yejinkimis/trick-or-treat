@@ -545,3 +545,74 @@ test('a harvest writes only the private document, and retries of the same reques
   assert.ok(publicAfter.isEqual(publicBefore), 'neighbors subscribed to the public document are not woken up');
   assert.ok((await secret(farmer)).activity.some((item) => item.type === 'harvest'));
 });
+
+test('a scheduled event keeps practice going until it starts, can be cancelled, and resets everyone to ten candies at the start time', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, visitor, host] = await Promise.all(['예약', '연습', '이웃집'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const eventRef = services().db.doc('game/event');
+  const now = Date.now(), startAt = now + 60 * 60 * 1000, endAt = startAt + 14 * 60 * 60 * 1000;
+  await assert.rejects(act(admin, { type: 'event-start', startAt: endAt, endAt: startAt }), /시각을 확인/);
+  await assert.rejects(act(admin, { type: 'event-start', startAt: now - 10 * 60 * 1000, endAt }), /시각을 확인/);
+  await assert.rejects(act(admin, { type: 'event-start', startAt, endAt: startAt + 49 * 60 * 60 * 1000 }), /시각을 확인/);
+  await assert.rejects(act(visitor, { type: 'event-start', startAt, endAt }), (e) => e.status === 403);
+
+  const { event } = await act(admin, { type: 'event-start', startAt, endAt });
+  assert.deepEqual([event.startedAt, event.endsAt], [startAt, endAt]);
+  await assert.rejects(act(admin, { type: 'event-start', startAt, endAt }), /이미 예약된/);
+
+  // 시작 전에는 연습으로 계속 놀고, 그 사탕은 연습 기록에 남는다.
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
+  await act(visitor, { type: 'knock-finish', ...(await winningChallenge(visitor, host)) });
+  assert.deepEqual([(await saved(visitor)).round, (await saved(visitor)).candies], ['practice', 11]);
+
+  const cancelled = await act(admin, { type: 'event-stop' });
+  assert.equal(cancelled.event, null);
+  assert.equal((await eventRef.get()).exists, false, 'a cancelled schedule leaves no event behind');
+  assert.equal((await saved(visitor)).candies, 11, 'and does not touch practice candy');
+
+  const again = (await act(admin, { type: 'event-start', startAt, endAt })).event;
+  await eventRef.update({ startedAt: Date.now() - 1000 }); // 시작 시각이 지난 상황
+  const board = await leaderboard(Date.now() + 20 * LEADERBOARD_MS);
+  assert.equal(board.round, again.id);
+  assert.equal(board.players.find((r) => r.id === visitor.uid).n, 10, 'everyone starts the event with ten candies');
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ knockAt: 0 });
+  const won = await act(visitor, { type: 'knock-finish', ...(await winningChallenge(visitor, host)) });
+  assert.deepEqual([won.entry.round, won.candies, won.hostCandies], [again.id, 11, 9]);
+  await eventRef.delete();
+});
+
+test('when the end time passes nothing can change candy, and the results are frozen and kept without an operator', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, visitor, host] = await Promise.all(['마감', '참가', '상대'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const eventRef = services().db.doc('game/event');
+  const { event } = await act(admin, { type: 'event-start' });
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
+  await act(visitor, { type: 'knock-finish', ...(await winningChallenge(visitor, host)) });
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ knockAt: 0 });
+  const pending = (await act(visitor, { type: 'knock-start', host: admin.uid })).challenge;
+
+  await eventRef.update({ endsAt: Date.now() - 1 }); // 자정이 막 지난 상황(참가자들은 그 전에 들어옴)
+  for (const input of [
+    { type: 'knock-finish', challengeId: pending.id, inputs: [1, 1], elapsedMs: 4000 }, { type: 'knock-start', host: host.uid },
+    { type: 'brew' }, { type: 'decor', item: 'lantern' }, { type: 'note', host: host.uid, text: '늦었다' }, { type: 'mural', mural: '.'.repeat(288) },
+  ]) await assert.rejects(act(visitor, input), /이벤트가 끝났어요/, input.type);
+  await assert.rejects(harvest(visitor), /이벤트가 끝났어요/);
+
+  const board = await leaderboard(Date.now() + 30 * LEADERBOARD_MS);
+  const stored = (await eventRef.get()).data();
+  assert.ok(Array.isArray(stored.results), 'the first ranking request after the end freezes the results');
+  assert.deepEqual((await services().db.collection('gameRounds').doc(event.id).get()).data().results, stored.results, 'and keeps a copy');
+  assert.equal(stored.results.find((r) => r.id === visitor.uid).n, 11);
+  assert.equal(stored.results.find((r) => r.id === host.uid).n, 9);
+  assert.equal(board.players.find((r) => r.id === visitor.uid).n, 11);
+
+  // 끝난 뒤 운영자가 부정 계정을 순위에서 빼도 저장된 결과는 그대로이고, 보이는 순위에서만 빠진다.
+  await moderate(admin.authorization, { type: 'rank', target: visitor.uid, excluded: true });
+  const after = await leaderboard(Date.now() + 40 * LEADERBOARD_MS);
+  assert.equal(after.players.some((r) => r.id === visitor.uid), false);
+  assert.deepEqual((await eventRef.get()).data().results, stored.results);
+  await assert.rejects(act(admin, { type: 'event-stop' }), /진행 중인 이벤트가 없어요/, 'frozen results cannot be overwritten');
+  await eventRef.delete();
+});
