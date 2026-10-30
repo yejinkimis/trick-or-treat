@@ -1,4 +1,11 @@
 node_modules/
 .env.local
 .vercel/
+.firebase/
+dist/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+*firebase-adminsdk*.json
+service-account*.json
 .DS_Store

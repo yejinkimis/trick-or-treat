@@ -84,10 +84,11 @@ img.px-img{image-rendering:pixelated;display:block}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .swatch{all:unset;cursor:pointer;width:34px;height:34px;border:3px solid var(--edge);box-shadow:0 0 0 2px var(--muted)}
 .swatch[aria-pressed="true"]{box-shadow:0 0 0 3px var(--gold)}
-textarea,input[type=text],input[type=number]{font:inherit;color:var(--text);background:var(--night);border:3px solid var(--muted);padding:6px 10px;min-width:0;border-radius:0}
+textarea,input[type=text],input[type=password],input[type=number]{font:inherit;color:var(--text);background:var(--night);border:3px solid var(--muted);padding:6px 10px;min-width:0;border-radius:0}
 input:focus{outline:none;border-color:var(--gold)}
 input[type=number]{width:5em;font-variant-numeric:tabular-nums}
 input[type=text]{flex:1 1 180px}
+input[type=password]{flex:1 1 180px}
 .note{font-size:.82rem;color:var(--muted)}
 .book{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .book li{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:2px dashed var(--panel-2)}
@@ -130,6 +131,12 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .rank li.mine{background:var(--panel-2)}
 .rank .no{font-family:var(--f-px);font-weight:700;color:var(--gold);width:1.8em;text-align:center;flex:none}
 .rank .cnt{font-family:var(--f-px);color:var(--gold);white-space:nowrap}
+.auth .sheet{width:min(480px,100%)}
+.auth form{display:grid;gap:12px}
+.auth-error{margin:0;padding:8px 10px;border:2px solid var(--candy);color:var(--text)}
+.auth-note{padding:10px 12px;border:2px solid var(--panel-2);color:var(--muted)}
+.auth-actions{justify-content:flex-end}
+.auth-switch{align-self:flex-end}
 
 .timing{position:fixed;z-index:9;left:50%;top:42%;transform:translate(-50%,-50%);width:min(440px,calc(100vw - 40px));padding:16px 18px;display:flex;flex-direction:column;gap:12px;cursor:pointer;touch-action:none;user-select:none}
 .t-title{margin:0;font-size:1.25rem}
@@ -183,6 +190,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-home" type="button">우리 집</button>
   <button class="pbtn" id="open-rank" type="button">순위</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
+  <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
 </div>
 
 <button class="hud pbtn hot bonk" id="bonk-btn" type="button" hidden>뿅망치 (F)</button>
@@ -208,7 +216,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <h2 id="wr-title">오늘 뭐 입고 나가지<small>고른 코스튬으로 마을을 돌아다녀요. 언제든 갈아입을 수 있어요.</small></h2>
       <button class="pbtn" type="button" data-close="wardrobe">닫기</button>
     </div>
-    <div class="row">
+    <div class="row" id="wr-name-row">
       <input type="text" id="wr-name" maxlength="12" placeholder="마을에서 불릴 이름">
       <button class="pbtn" id="wr-rename" type="button">이름 바꾸기</button>
     </div>
@@ -266,7 +274,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <h2 id="rk-title">사탕 순위<small id="rk-sub"></small></h2>
       <button class="pbtn" type="button" data-close="rank">닫기</button>
     </div>
-    <p class="reward">최종 사탕 순위에 따라 실제 선물을 드려요!</p>
+    <p class="reward" id="rk-reward">최종 사탕 순위에 따라 실제 선물을 드려요!</p>
     <p class="note">친구 집 노크에 성공하면 상대에게서 사탕 1개를 가져오고, 실패하면 내 사탕 1개를 줘요. 장식에 쓴 사탕은 순위에서도 빠져요. 같은 사탕 수는 현재 이름순으로 표시돼요.</p>
     <ol class="book rank" id="rk-list"></ol>
     <div class="field" id="rk-admin" hidden>
@@ -292,6 +300,30 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <button class="pbtn hot" id="nt-send" type="button">남기기</button>
     </div>
     <ul class="book" id="nt-book"></ul>
+  </div>
+</div>
+
+<div class="modal auth" id="auth" hidden>
+  <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <div class="sheet-head">
+      <h2 id="auth-title">마을 계정으로 로그인<small id="auth-subtitle">닉네임과 비밀번호로 다른 기기에서도 이어서 접속해요.</small></h2>
+    </div>
+    <div class="auth-note" id="auth-note">닉네임은 마을 사람들에게 보여요. 연습 마을의 노크와 사탕 기록은 저장되지 않고 선물 순위에도 포함되지 않아요.</div>
+    <form id="auth-form">
+      <label for="auth-nickname">닉네임</label>
+      <input type="text" id="auth-nickname" maxlength="12" autocomplete="username" required placeholder="예: 호박도둑">
+      <label for="auth-password">비밀번호</label>
+      <input type="password" id="auth-password" autocomplete="current-password" required>
+      <div class="field" id="auth-confirm-wrap" hidden>
+        <label for="auth-confirm">비밀번호 확인</label>
+        <input type="password" id="auth-confirm" autocomplete="new-password">
+      </div>
+      <p class="auth-error" id="auth-error" role="alert" hidden></p>
+      <div class="row auth-actions">
+        <button class="pbtn hot" id="auth-submit" type="submit">로그인</button>
+      </div>
+    </form>
+    <button class="pbtn auth-switch" id="auth-switch" type="button">처음 오셨나요? 회원가입</button>
   </div>
 </div>
 
@@ -406,7 +438,7 @@ const DECOR = {
 };
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'note', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'note', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -504,6 +536,7 @@ function rng(seed) {
 
 const S = {
   mode: 'loading', db: null, user: null, room: null, me: null, players: {}, names: {},
+  account: null, accountProfile: null,
   readOnly: false, busy: false, guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null, timingPress: null,
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
@@ -1301,6 +1334,7 @@ function renderHud() {
   const status = {
     loading: '마을 불러오는 중…',
     practice: '연습 모드 · 허수아비 집으로 연습해요. 저장되지 않아요',
+    account: '연습 마을 · 사탕과 순위 기록은 저장되지 않아요',
   }[S.mode] || (S.readOnly ? '구경만 가능 · 참여자(Contributor) 권한이 있어야 놀 수 있어요'
     : online.size ? `지금 마을에 ${online.size + 1}명` : '지금 마을엔 나 혼자');
   const fx = S.me ? activeFx(S.me) : null;
@@ -1310,11 +1344,13 @@ function renderHud() {
     <span class="bag"><img class="px-img" src="${spriteUrl('candy', 2)}" alt="" style="width:22px;height:12px">보유 사탕 ${candiesOf(S.me)}개</span>
     <span class="status" ${fx ? 'style="color:var(--candy)"' : ''}>${esc(shown)}</span>
     <span class="status ev">${esc(eventLine())}</span>
-    <span class="status reward">최종 사탕 순위에 따라 실제 선물 지급</span>`;
+    <span class="status reward">${S.mode === 'live' ? '최종 사탕 순위에 따라 실제 선물 지급' : '연습 중 · 선물 순위에 포함되지 않아요'}</span>`;
+  $('#account-session').hidden = S.mode !== 'account';
 }
 
 function renderWardrobe() {
   const mine = myCostume();
+  $('#wr-name-row').hidden = S.mode === 'account';
   if (document.activeElement !== $('#wr-name')) $('#wr-name').value = cleanNick(S.players[S.me]?.nick);
   $('#costumes').innerHTML = Object.entries(COSTUMES).map(([key, c]) =>
     `<button class="cos-btn" type="button" data-cos="${key}" aria-pressed="${mine === key}" ${S.readOnly ? 'disabled' : ''}>
@@ -1438,6 +1474,9 @@ function sendNote() {
 
 function renderRanking() {
   $('#rk-sub').textContent = eventLine();
+  $('#rk-reward').textContent = S.mode === 'live'
+    ? '최종 사탕 순위에 따라 실제 선물을 드려요!'
+    : '연습 모드의 결과는 저장되지 않으며 실제 선물 순위에 포함되지 않아요.';
   const list = ranking();
   $('#rk-list').innerHTML = list.length
     ? list.map((r, i) => `<li class="${r.id === S.me ? 'mine' : ''}"><span class="no">${i + 1}</span>
@@ -1502,12 +1541,33 @@ async function waitForToasts() {
 }
 
 let writes = Promise.resolve();
+let accountWrites = Promise.resolve();
+function saveAccountProfile(patch) {
+  const allowed = {};
+  for (const key of ['costume', 'door', 'guideSeen', 'introSeen']) {
+    if (Object.hasOwn(patch, key)) allowed[key] = patch[key];
+  }
+  if (!Object.keys(allowed).length) return;
+  accountWrites = accountWrites.then(async () => {
+    const user = S.account?.auth?.currentUser;
+    if (!user) throw new Error('Signed out');
+    const token = await user.getIdToken();
+    const { profile } = await accountRequest('/api/auth/profile', {
+      method: 'PATCH', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(allowed),
+    });
+    S.accountProfile = { ...S.accountProfile, ...profile };
+  }).catch(() => toast('캐릭터 정보를 저장하지 못했어요. 다시 로그인해 주세요.'));
+}
 function saveMe(patch) {
   if (S.readOnly) return;
   const cur = S.players[S.me] || blankPlayer();
   const next = { ...blankPlayer(), ...cur, ...patch };
   S.players = { ...S.players, [S.me]: next };
   render();
+  if (S.mode === 'account') {
+    saveAccountProfile(patch);
+    return;
+  }
   if (S.mode !== 'live') return;
   writes = writes
     .then(() => S.db.doc(`players/${S.me}`).set(next))
@@ -1752,7 +1812,14 @@ function skipIntro() {
   if ($('#intro').hidden || !$('#in-form').hidden) return;
   introController?.abort();
   introController = null;
+  if (S.mode === 'account') { completeAccountIntro(); return; }
   showNameForm();
+}
+function completeAccountIntro() {
+  saveMe({ introSeen: true });
+  $('#intro').hidden = true;
+  $('#wr-title').firstChild.textContent = `${nameOf(S.me)}, 오늘 뭐 입고 나가지`;
+  openModal('wardrobe');
 }
 async function startIntro() {
   if (S.readOnly) return;
@@ -1777,6 +1844,13 @@ async function startIntro() {
     await wait((reduceMotion() ? 200 : 650) / INTRO_SPEED, signal);
     if (signal.aborted) return;
   }
+  if (S.mode === 'account') {
+    await typeText(text, `${nameOf(S.me)} 이름표를 달고 마을에 들어가요. 이제 분장을 골라 볼까요?`, signal, 32 / INTRO_SPEED);
+    if (signal.aborted) return;
+    introController = null;
+    completeAccountIntro();
+    return;
+  }
   await typeText(text, '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?', signal, 32 / INTRO_SPEED);
   if (signal.aborted) return;
   introController = null;
@@ -1796,6 +1870,7 @@ function confirmName() {
   openModal('wardrobe');
 }
 function renameMe() {
+  if (S.mode === 'account') { toast('닉네임은 로그인 이름이라 옷장에서 바꿀 수 없어요.'); return; }
   const nick = cleanNick($('#wr-name').value);
   if (!nick) { toast('이름을 한 글자 이상 정해 주세요.'); return; }
   saveMe({ nick });
@@ -1809,7 +1884,9 @@ async function welcomeTips(creationMessage) {
   render();
   if (creationMessage) await toast(creationMessage, { duration: 4000, dismissOnClick: true });
   await waitForToasts();
-  await say('', '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!', 'sys');
+  await say('', S.mode === 'live'
+    ? '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!'
+    : '연습 마을에서 친구 집 사탕을 가져와 보세요. 연습 결과는 저장되거나 선물 순위에 포함되지 않아요.', 'sys');
   await say('', '먼저 호박 3개로 바구니를 만드세요. 호박 근처에서 버튼이나 Space로 수집할 수 있어요.', 'sys');
   await say('', '바구니를 들고 친구 집 문을 두드리세요. 박자 맞추면 상대 사탕 1개를 가져오고, 놓치면 내 사탕 1개를 빼앗겨요.', 'sys');
   $('#dialog').hidden = true;
@@ -1856,7 +1933,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Escape') {
-    for (const id of MODALS) if (id !== 'intro' && !$(`#${id}`).hidden) closeModal(id);
+    for (const id of MODALS) if (!['intro', 'auth'].includes(id) && !$(`#${id}`).hidden) closeModal(id);
     return;
   }
   if (modalOpen()) return;
@@ -1882,9 +1959,11 @@ $('#dialog').addEventListener('click', (e) => { if (!e.target.closest('[data-cho
 
 document.addEventListener('click', (e) => {
   const t = e.target.closest('button');
-  if (e.target.classList?.contains('modal')) { if (e.target.id !== 'intro') closeModal(e.target.id); return; }
+  if (e.target.classList?.contains('modal')) { if (!['intro', 'auth'].includes(e.target.id)) closeModal(e.target.id); return; }
   if (!t) return;
   if (t.dataset.close) closeModal(t.dataset.close);
+  else if (t.id === 'account-session') logoutAccount();
+  else if (t.id === 'auth-switch') toggleAuthMode();
   else if (t.id === 'open-wardrobe') openModal('wardrobe');
   else if (t.id === 'open-home') openModal('house');
   else if (t.id === 'open-rank') openModal('rank');
@@ -1926,6 +2005,7 @@ document.addEventListener('click', (e) => {
   }
 });
 $('#chatbar').addEventListener('submit', (e) => { e.preventDefault(); sendChat(); });
+$('#auth-form').addEventListener('submit', submitAccountForm);
 $('#chat-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeChat(); } });
 $('#in-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !isImeComposing(e)) {
@@ -1983,54 +2063,205 @@ function startPractice() {
   startIntro();
 }
 
+async function accountRequest(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { ...(options.body ? { 'content-type': 'application/json' } : {}), ...(options.headers || {}) },
+  });
+  let payload = {};
+  try { payload = await response.json(); } catch { /* 서버 오류는 아래의 공통 문구로 표시 */ }
+  if (!response.ok) throw new Error(payload.message || '요청을 처리하지 못했어요.');
+  return payload;
+}
+
+function showAuthGate(message = '') {
+  toggleAuthMode('login');
+  $('#auth-error').textContent = message;
+  $('#auth-error').hidden = !message;
+  $('#auth-submit').disabled = !S.account;
+  $('#auth').hidden = false;
+  $('#auth-nickname').focus();
+}
+
+function toggleAuthMode(mode) {
+  const form = $('#auth-form');
+  const next = mode || (form.dataset.mode === 'login' ? 'signup' : 'login');
+  const signup = next === 'signup';
+  form.dataset.mode = next;
+  $('#auth-title').firstChild.textContent = signup ? '새 계정 만들기' : '마을 계정으로 로그인';
+  $('#auth-subtitle').textContent = signup
+    ? '한 번 정한 닉네임으로 다른 기기에서도 로그인할 수 있어요.'
+    : '가입할 때 정한 닉네임과 비밀번호를 입력해 주세요.';
+  $('#auth-confirm-wrap').hidden = !signup;
+  $('#auth-confirm').required = signup;
+  $('#auth-password').autocomplete = signup ? 'new-password' : 'current-password';
+  $('#auth-submit').textContent = signup ? '가입하고 시작하기' : '로그인';
+  $('#auth-switch').textContent = signup ? '이미 계정이 있어요 · 로그인' : '처음 오셨나요? 회원가입';
+  $('#auth-error').hidden = true;
+  $('#auth-error').textContent = '';
+  $('#auth-password').value = '';
+  $('#auth-confirm').value = '';
+}
+
+async function submitAccountForm(event) {
+  event.preventDefault();
+  if (!S.account) return;
+  const signupMode = $('#auth-form').dataset.mode === 'signup';
+  const nickname = $('#auth-nickname').value;
+  const password = $('#auth-password').value;
+  const confirm = $('#auth-confirm').value;
+  const error = $('#auth-error');
+  if (signupMode && Array.from(password).length < 8) {
+    error.textContent = '비밀번호를 8자 이상 정해 주세요.';
+    error.hidden = false;
+    return;
+  }
+  if (signupMode && password !== confirm) {
+    error.textContent = '비밀번호가 서로 달라요.';
+    error.hidden = false;
+    return;
+  }
+
+  const button = $('#auth-submit');
+  button.disabled = true;
+  error.hidden = true;
+  try {
+    const result = await accountRequest(`/api/auth/${signupMode ? 'signup' : 'login'}`, {
+      method: 'POST', body: JSON.stringify({ nickname, password }),
+    });
+    const credential = await S.account.authSdk.signInWithCustomToken(S.account.auth, result.customToken);
+    if (credential.user.uid !== result.uid) throw new Error('계정 확인에 실패했어요. 다시 로그인해 주세요.');
+    const token = await credential.user.getIdToken();
+    const { profile } = await accountRequest('/api/auth/profile', { headers: { authorization: `Bearer ${token}` } });
+    $('#auth-password').value = '';
+    $('#auth-confirm').value = '';
+    await enterAccount(credential.user.uid, profile);
+  } catch (cause) {
+    error.textContent = cause.message || '연결이 불안정해요. 잠시 뒤 다시 시도해 주세요.';
+    error.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadAccountClient() {
+  const config = await accountRequest('/api/firebase-config');
+  const version = '13.1.0';
+  const [appSdk, authSdk] = await Promise.all([
+    import(`https://www.gstatic.com/firebasejs/${version}/firebase-app.js`),
+    import(`https://www.gstatic.com/firebasejs/${version}/firebase-auth.js`),
+  ]);
+  const app = appSdk.getApps().length ? appSdk.getApp() : appSdk.initializeApp(config.firebaseConfig);
+  const auth = authSdk.getAuth(app);
+  if (config.emulator?.auth) authSdk.connectAuthEmulator(auth, config.emulator.auth, { disableWarnings: true });
+  await authSdk.setPersistence(auth, authSdk.browserLocalPersistence);
+  S.account = { app, auth, authSdk };
+  await auth.authStateReady();
+  return auth.currentUser;
+}
+
+async function enterAccount(uid, profile) {
+  if (!profile || profile.uid !== uid) throw new Error('계정 정보를 확인할 수 없어요. 다시 로그인해 주세요.');
+  Object.assign(S, {
+    mode: 'account', me: uid, isOwner: false, readOnly: false,
+    accountProfile: profile, event: null, bonus: {}, ledger: null, hintHidden: false,
+  });
+  S.names = { [uid]: profile.nick, p1: '연습용 집 1', p2: '연습용 집 2' };
+  S.players = {
+    [uid]: { ...blankPlayer(), ...profile, nick: profile.nick },
+    p1: { ...blankPlayer(), nick: '연습용 집 1', costume: 'pumpkin', door: 2, joinedAt: 1 },
+    p2: { ...blankPlayer(), nick: '연습용 집 2', costume: 'mummy', door: 5, joinedAt: 2 },
+    'bot-test': { ...blankPlayer(), name: '테스트친구', costume: 'dracula', door: 3, joinedAt: 3 },
+  };
+  $('#auth').hidden = true;
+  render();
+  if (!profile.introSeen) { startIntro(); return; }
+  if (!myCostume()) { $('#wr-title').firstChild.textContent = `${profile.nick}, 오늘 뭐 입고 나가지`; openModal('wardrobe'); return; }
+  if (!profile.guideSeen) { welcomeTips(); return; }
+  canvas.focus({ preventScroll: true });
+}
+
+async function logoutAccount() {
+  if (S.mode !== 'account') return;
+  if (S.busy) { toast('진행 중인 안내를 마친 뒤 로그아웃할 수 있어요.'); return; }
+  try {
+    await S.account.authSdk.signOut(S.account.auth);
+    for (const id of MODALS) if (id !== 'auth') $(`#${id}`).hidden = true;
+    S.me = null;
+    S.players = {};
+    S.names = {};
+    S.accountProfile = null;
+    S.event = null;
+    S.mode = 'loading';
+    render();
+    showAuthGate();
+  } catch {
+    toast('로그아웃하지 못했어요. 잠시 뒤 다시 해 주세요.');
+  }
+}
+
 async function boot() {
   buildMap();
   resize();
   renderHud();
   requestAnimationFrame(frame);
   const claude = window.claude;
-  if (!claude?.use) return startPractice();
-  const [db, user, room] = await Promise.all([claude.use('db'), claude.use('user'), claude.use('room')]);
-  const id = user ? await user.id() : null;
-  if (!db || !id) return startPractice();
-  Object.assign(S, { db, user, room, me: id, mode: 'live' });
-  if ((await user.can('data.write')) === false) S.readOnly = true;
-  S.isOwner = await user.isOwner();
-  room?.on('bonk', onBonk, () => {});
-  room?.on('chat', onChat, () => {});
-  render();
-  loadNames();
-  let eventSeen = false;
-  db.doc('game/event').onSnapshot((d) => {
-    const ev = d.exists ? d.data() : null;
-    if (eventSeen && ev?.startedAt && ev.startedAt !== S.event?.startedAt) toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.');
-    eventSeen = true;
-    S.event = ev;
+  if (claude?.use) {
+    const [db, user, room] = await Promise.all([claude.use('db'), claude.use('user'), claude.use('room')]);
+    const id = user ? await user.id() : null;
+    if (!db || !id) return startPractice();
+    Object.assign(S, { db, user, room, me: id, mode: 'live' });
+    if ((await user.can('data.write')) === false) S.readOnly = true;
+    S.isOwner = await user.isOwner();
+    room?.on('bonk', onBonk, () => {});
+    room?.on('chat', onChat, () => {});
     render();
-  }, () => toast('이벤트 소식을 더 받지 못해요. 새로고침해 주세요.'));
-  db.doc('game/bonus').onSnapshot((d) => {
-    S.bonus = (d.exists && d.data()) || {};
-    render();
-  }, () => {});
-  let first = true;
-  db.collection('players').onSnapshot((snap) => {
-    const next = {};
-    for (const d of snap.docs) if (d.exists) next[d.id] = d.data();
-    const known = Object.keys(S.players).join();
-    S.players = next;
-    S.ledger = null;
-    notifyKnocks();
-    render();
-    if (Object.keys(next).join() !== known) loadNames();
-    if (first) {
-      first = false;
-      if (!S.readOnly) {
-        if (!S.players[S.me]?.nick) startIntro();
-        else if (!myCostume()) openModal('wardrobe');
-        else if (!S.players[S.me].guideSeen) welcomeTips();
+    loadNames();
+    let eventSeen = false;
+    db.doc('game/event').onSnapshot((d) => {
+      const ev = d.exists ? d.data() : null;
+      if (eventSeen && ev?.startedAt && ev.startedAt !== S.event?.startedAt) toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.');
+      eventSeen = true;
+      S.event = ev;
+      render();
+    }, () => toast('이벤트 소식을 더 받지 못해요. 새로고침해 주세요.'));
+    db.doc('game/bonus').onSnapshot((d) => {
+      S.bonus = (d.exists && d.data()) || {};
+      render();
+    }, () => {});
+    let first = true;
+    db.collection('players').onSnapshot((snap) => {
+      const next = {};
+      for (const d of snap.docs) if (d.exists) next[d.id] = d.data();
+      const known = Object.keys(S.players).join();
+      S.players = next;
+      S.ledger = null;
+      notifyKnocks();
+      render();
+      if (Object.keys(next).join() !== known) loadNames();
+      if (first) {
+        first = false;
+        if (!S.readOnly) {
+          if (!S.players[S.me]?.nick) startIntro();
+          else if (!myCostume()) openModal('wardrobe');
+          else if (!S.players[S.me].guideSeen) welcomeTips();
+        }
       }
-    }
-  }, () => toast('마을 소식을 더 받지 못해요. 새로고침해 주세요.'));
+    }, () => toast('마을 소식을 더 받지 못해요. 새로고침해 주세요.'));
+    return;
+  }
+  if (!window.location || window.location.protocol === 'file:') return startPractice();
+  try {
+    const user = await loadAccountClient();
+    if (user) {
+      const token = await user.getIdToken();
+      const { profile } = await accountRequest('/api/auth/profile', { headers: { authorization: `Bearer ${token}` } });
+      await enterAccount(user.uid, profile);
+    } else showAuthGate();
+  } catch {
+    showAuthGate('계정 연결을 불러오지 못했어요. 잠시 뒤 새로고침해 주세요.');
+    $('#auth-submit').disabled = true;
+  }
 }
 
 document.fonts?.load(`16px ${FONT}`).catch(() => {});

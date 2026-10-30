@@ -94,12 +94,12 @@ test('outside Claude, boot still opens practice and the name intro', async () =>
   assert.equal(g.elements.get('quest').hidden, true);
 });
 
-test('tutorial introduces prizes and unlocks the persistent quest after three messages', async () => {
+test('tutorial explains practice limits and unlocks the persistent quest after three messages', async () => {
   const g = game(); g.players();
   g.run('S.players.me.guideSeen = false');
   const welcome = g.run('welcomeTips()');
   await tick();
-  assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+  assert.match(g.elements.get('dlg-text').textContent, /연습 결과는 저장되거나/);
   assert.equal(g.run('S.busy'), true);
   assert.equal(g.elements.get('quest').hidden, true);
   for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
@@ -203,6 +203,7 @@ test('empty giver never creates negative candy; decor reduces rank balance', () 
 
 test('HUD explains rank and prizes before, during and after event', () => {
   const g = game(); g.players();
+  g.run("S.mode = 'live'");
   for (const event of ['null', '{startedAt: Date.now() - 1000, endsAt: Date.now() + 60000}', '{startedAt: 1, endsAt: 2}']) {
     g.run(`S.event = ${event}; S.ledger = null; renderHud()`);
     const hud = g.elements.get('me').innerHTML;
@@ -316,7 +317,7 @@ test('creation, tutorial, quest notice and movement guide appear in sequence', a
   g.fire(4000); await tick();
   assert.equal(g.elements.get('toast').hidden, true);
   assert.equal(g.elements.get('dialog').hidden, false);
-  assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+  assert.match(g.elements.get('dlg-text').textContent, /연습 결과는 저장되거나/);
   for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
   assert.equal(g.elements.get('dialog').hidden, true);
   assert.equal(g.elements.get('quest').hidden, false);
@@ -395,6 +396,50 @@ test('intro still completes normally when skip is not used', async () => {
   assert.equal(g.timers.size, 0);
 });
 
+test('new account intro uses its registered nickname and opens the costume chooser', async () => {
+  const g = game();
+  g.run(`S.mode = 'account'; S.me = 'fixed-uid'; S.names['fixed-uid'] = '호박도둑';
+    S.players = {'fixed-uid': {...blankPlayer(), nick: '호박도둑', introSeen: false}};
+    saveAccountProfile = () => {}`);
+  await g.finish(g.run('startIntro()'));
+  assert.equal(g.elements.get('intro').hidden, true);
+  assert.equal(g.elements.get('in-form').hidden, true);
+  assert.equal(g.elements.get('wardrobe').hidden, false);
+  assert.equal(g.elements.get('wr-name-row').hidden, true);
+  assert.match(g.elements.get('wr-title').firstChild.textContent, /호박도둑/);
+  assert.equal(g.run("S.players['fixed-uid'].nick"), '호박도둑');
+});
+
+test('new account can skip the story and keep its registered nickname', async () => {
+  const g = game({ reducedMotion: false });
+  g.run(`S.mode = 'account'; S.me = 'fixed-uid'; S.names['fixed-uid'] = '호박도둑';
+    S.players = {'fixed-uid': {...blankPlayer(), nick: '호박도둑', introSeen: false}};
+    saveAccountProfile = () => {}`);
+  const intro = g.run('startIntro()');
+  await tick();
+  g.run('skipIntro()');
+  await intro;
+  assert.equal(g.elements.get('intro').hidden, true);
+  assert.equal(g.elements.get('in-form').hidden, true);
+  assert.equal(g.elements.get('wardrobe').hidden, false);
+  assert.equal(g.run("S.players['fixed-uid'].nick"), '호박도둑');
+});
+
+test('account gate switches between login and unique nickname signup fields', () => {
+  const g = game();
+  g.run("S.account = {}; showAuthGate();");
+  assert.equal(g.elements.get('auth').hidden, false);
+  assert.equal(g.elements.get('auth-nickname').id, 'auth-nickname');
+  assert.equal(g.elements.get('auth-confirm-wrap').hidden, true);
+  g.run("toggleAuthMode('signup')");
+  assert.equal(g.elements.get('auth-confirm-wrap').hidden, false);
+  assert.equal(g.elements.get('auth-confirm').required, true);
+  assert.match(g.elements.get('auth-title').firstChild.textContent, /계정 만들기/);
+  g.run("toggleAuthMode('login')");
+  assert.equal(g.elements.get('auth-confirm-wrap').hidden, true);
+  assert.equal(g.elements.get('auth-password').value, '');
+});
+
 for (const composition of [{ isComposing: true, keyCode: 13 }, { isComposing: false, keyCode: 229 }]) {
   test(`IME Enter does not confirm name or prevent composition (${JSON.stringify(composition)})`, () => {
     const g = game();
@@ -436,7 +481,7 @@ test('click dismisses creation notice early without advancing the first tutorial
   assert.equal(prevented, 1); assert.equal(stopped, 1);
   assert.equal(g.elements.get('toast').hidden, true);
   assert.equal(g.elements.get('dialog').hidden, false);
-  assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+  assert.match(g.elements.get('dlg-text').textContent, /연습 결과는 저장되거나/);
   assert.equal(g.run('document.captureListeners.click'), undefined);
   assert.equal([...g.timers.values()].some((t) => t.delay === 4000), false);
   for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
@@ -466,11 +511,11 @@ for (const code of ['Space', 'ArrowRight']) {
     assert.equal(g.run('keys.size'), 0);
     assert.equal(g.run('document.captureListeners.keydown'), undefined);
     assert.equal(g.run('document.captureListeners.click'), undefined);
-    assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+    assert.match(g.elements.get('dlg-text').textContent, /연습 결과는 저장되거나/);
     // 키를 누르고 있어도 자동 반복으로 다음 설명까지 넘기지 않는다.
     g.run(`document.listeners.keydown({target: null, key: ' ', code: 'Space', repeat: true, preventDefault() {}})`);
     await tick();
-    assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+    assert.match(g.elements.get('dlg-text').textContent, /연습 결과는 저장되거나/);
     for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
     await g.finish(welcome);
   });
