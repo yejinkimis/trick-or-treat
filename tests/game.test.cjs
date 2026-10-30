@@ -810,3 +810,33 @@ test('brewing spends thirty pumpkins, adds rolled candy, keeps the basket and co
   assert.equal(g.run('candiesOf("me")'), 12);
   assert.match(g.elements.get('toast').textContent, /식는 중/);
 });
+
+test('dialog text cannot be selected and any later click, Space, → or ↓ moves to the next line', async () => {
+  assert.match(html, /\.dialog\{[^}]*user-select:none/);
+  const g = game(); g.players();
+  const click = (timeStamp, button = null) => g.run(`document.listeners.click({ timeStamp: ${timeStamp}, preventDefault() {},
+    target: { classList: { contains: () => false }, closest: () => (${JSON.stringify(button)}) } })`);
+  const key = (code, repeat = false) => g.run(`document.listeners.keydown({ code: '${code}', key: '${code}', repeat: ${repeat}, target: null, preventDefault() {} })`);
+  g.setNow(100);
+  g.run(`globalThis.lines = []; (async () => { for (const line of ['하나', '둘', '셋', '넷']) { await say('안내', line); lines.push(line); } })();`);
+  await tick();
+  click(50);
+  await tick();
+  assert.equal(g.run('lines.length'), 0, 'the click that opened the dialog does not skip it');
+  g.elements.get('world').listeners.pointerdown({ clientX: 500, clientY: 500 });
+  assert.equal(g.run('S.target'), null, 'clicking the map while talking does not walk');
+  click(150, { id: 'open-rank', dataset: {} });
+  await tick();
+  assert.equal(g.run('lines.length'), 1, 'a click anywhere, even on a HUD button, moves on');
+  assert.equal(g.elements.get('rank').hidden, true);
+  key('ArrowRight'); await tick();
+  assert.equal(g.run('lines.length'), 2);
+  assert.equal(g.run('keys.has("r")'), false, '→ only turns the page');
+  key('ArrowDown', true); await tick();
+  assert.equal(g.run('lines.length'), 2, 'a held key turns only one page');
+  key('ArrowDown'); await tick();
+  assert.equal(g.run('lines.length'), 3);
+  key('Space'); await tick();
+  assert.equal(g.run('lines.length'), 4);
+  assert.equal(g.run('dialogWaiting()'), true, 'the last line still waits until the caller closes it');
+});
