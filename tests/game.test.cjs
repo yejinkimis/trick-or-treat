@@ -659,3 +659,42 @@ test('own costume survives until the village snapshot arrives', () => {
   run(`S.firebasePlayers = { u1: { ...blankPlayer(), nick: '나', costume: 'witch' } }; applyFirebasePlayers();`);
   assert.equal(run('myCostume()'), 'witch');
 });
+
+test('basket stays after harvesting more, alchemy tip explains the cauldron, and the bag caps at 100', async () => {
+  const g = game(); g.players();
+  g.run(`globalThis.messages = []; say = async (who, text) => messages.push(text);`);
+  for (let i = 0; i < 3; i++) g.run('S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])');
+  await g.finish(g.run('alchemyTips()'));
+  assert.equal(g.run('S.players.me.basket'), true);
+  assert.match(g.run('messages.join(" ")'), /50개를 모아 광장 가운데 마녀 솥/);
+  assert.equal(g.run('S.busy'), false);
+  const told = g.run('messages.length');
+  g.run('S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])');
+  await g.finish(g.run('waitForToasts()'));
+  assert.equal(g.run('S.players.me.pumpkins'), 4);
+  assert.equal(g.run('messages.length'), told);
+  g.run('S.players.me.pumpkins = 100; S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])');
+  assert.equal(g.run('S.players.me.pumpkins'), 100);
+  assert.match(g.elements.get('toast').textContent, /꽉 찼어요/);
+});
+
+test('brewing spends fifty pumpkins, adds rolled candy, keeps the basket and cools down', async () => {
+  const g = game(); g.players();
+  g.run(`globalThis.messages = []; say = async (who, text) => messages.push(text); Math.random = () => 0.5;
+    S.players.me.pumpkins = 40; S.players.me.basket = true; S.nearCauldron = true; renderAction();`);
+  assert.equal(g.elements.get('act-btn').disabled, true);
+  g.run('S.players.me.pumpkins = 60; renderAction()');
+  assert.equal(g.elements.get('act-btn').disabled, false);
+  assert.match(g.elements.get('act-title').textContent, /마녀 솥 · 호박 60\/50/);
+  await g.finish(g.run('brew()'));
+  assert.equal(g.run('candiesOf("me")'), 12);
+  assert.equal(g.run('S.players.me.pumpkins'), 10);
+  assert.equal(g.run('hasBasket("me")'), true);
+  assert.match(g.run('messages.join(" ")'), /사탕 2개가 떠올랐어요/);
+  g.run('S.players.me.pumpkins = 60; S.nearCauldron = true; renderAction()');
+  assert.equal(g.elements.get('act-btn').disabled, true);
+  assert.match(g.elements.get('act-sub').textContent, /식는 중 · 10분 뒤/);
+  await g.finish(g.run('brew()'));
+  assert.equal(g.run('candiesOf("me")'), 12);
+  assert.match(g.elements.get('toast').textContent, /식는 중/);
+});

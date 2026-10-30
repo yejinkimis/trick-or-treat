@@ -444,6 +444,15 @@ const DECOR = {
   bats: { name: '박쥐 떼', price: 5, icon: 'batA', line: '지붕 위를 맴도는 박쥐 두 마리' },
 };
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
+// 호박 연금술: 서버(server/game-service.cjs)와 같은 값이어야 한다.
+const PUMPKIN_HOLD_MAX = 100, BREW_COST = 50, BREW_COOLDOWN_MS = 10 * 60 * 1000;
+const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 25 }, { n: 10, weight: 5 }];
+const BREW_LINES = {
+  0: '펑! 연기만 자욱해요… 호박이 전부 재가 됐어요.',
+  2: '보글보글… 사탕 2개가 떠올랐어요!',
+  5: '부글부글! 사탕 5개가 솟아올랐어요!',
+  10: '솥이 번쩍! 사탕 10개가 쏟아졌어요!',
+};
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
 const MODALS = ['wardrobe', 'house', 'rank', 'note', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
@@ -548,7 +557,7 @@ const S = {
   candyControl: null, localKnockStreak: { host: null, round: null, count: 0 },
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
-  pumpkins: [], nearPumpkin: null, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
+  pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
   myPeer: null, nearPeer: null, stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [],
 };
 const MAP = { canvas: document.createElement('canvas'), tiles: [], rows: 0, slots: [], grass: [], sig: '' };
@@ -576,10 +585,12 @@ function computeLedger() {
     if (p.costume) bal[vid] = START_CANDIES + Math.max(0, Math.floor(Number(S.bonus[vid]) || 0));
     for (const k of p.knocks || []) if ((k.r === 'win' || k.r === 'lose') && inWindow(k.at)) entries.push({ at: k.at, v: vid, k });
     for (const [item, at] of Object.entries(p.decor || {})) if (DECOR[item] && inWindow(at)) entries.push({ at, v: vid, item });
+    for (const b of p.brews || []) if (inWindow(b.at)) entries.push({ at: b.at, v: vid, brew: Number(b.n) || 0 });
   }
   entries.sort((a, b) => a.at - b.at || a.v.localeCompare(b.v));
-  for (const { k, v, item } of entries) {
+  for (const { k, v, item, brew } of entries) {
     if (bal[v] === undefined) continue;
+    if (brew !== undefined) { bal[v] += brew; continue; }
     if (item) { bal[v] = Math.max(0, bal[v] - DECOR[item].price); continue; }
     if (k.r !== 'win' && !(k.r === 'lose' && k.k)) continue;
     if (bal[k.h] === undefined) continue;
@@ -1227,13 +1238,15 @@ function updateNear() {
       if (Math.hypot(S.pos.x - d.x, S.pos.y - d.y) < 15) { near = s; break; }
     }
   }
+  const cauldron = !S.busy && !near && Boolean(myCostume()) && Math.hypot(S.pos.x - CAUL.x, S.pos.y - (CAUL.y + 6)) < 20;
   let pumpkin = null;
-  if (!S.busy && !near) {
+  if (!S.busy && !near && !cauldron) {
     pumpkin = S.pumpkins.find((p) => Math.hypot(S.pos.x - p.x, S.pos.y - p.y) < 14) || null;
   }
   const key = near ? `${near.i}:${near.owner}` : null;
-  const changed = key !== (S.near?.key ?? null) || pumpkin !== S.nearPumpkin;
+  const changed = key !== (S.near?.key ?? null) || pumpkin !== S.nearPumpkin || cauldron !== S.nearCauldron;
   S.nearPumpkin = pumpkin;
+  S.nearCauldron = cauldron;
   if (changed) { S.near = near ? { ...near, key } : null; renderAction(); }
 }
 
@@ -1255,26 +1268,101 @@ function growPumpkins(dt) {
     return;
   }
 }
-const hasBasket = (id) => Boolean(id) && (S.players[id]?.pumpkins || 0) >= BASKET_PUMPKINS;
+const hasBasket = (id) => Boolean(id) && (S.players[id]?.basket === true || (S.players[id]?.pumpkins || 0) >= BASKET_PUMPKINS);
+const brewWait = (id) => Math.max(0, (S.players[id]?.brewAt || 0) + BREW_COOLDOWN_MS - Date.now());
+function rollBrew() {
+  let roll = Math.floor(Math.random() * 100);
+  for (const { n, weight } of BREW_TABLE) {
+    if (roll < weight) return n;
+    roll -= weight;
+  }
+  return 0;
+}
 
 async function harvest(p) {
   if (S.busy || S.readOnly || !myCostume() || S.harvesting) return;
+  if ((S.players[S.me]?.pumpkins || 0) >= PUMPKIN_HOLD_MAX) { toast(`바구니가 꽉 찼어요. 호박은 ${PUMPKIN_HOLD_MAX}개까지 들 수 있어요.`); return; }
+  const hadBasket = hasBasket(S.me);
   let have;
   if (S.mode === 'firebase') {
     S.harvesting = true;
-    try { have = (await gameRequest({ type: 'harvest' })).pumpkins; }
+    let saved;
+    try { saved = await gameRequest({ type: 'harvest' }); }
     catch (error) { toast(error.message); return; }
     finally { S.harvesting = false; }
-    S.players[S.me] = { ...S.players[S.me], pumpkins: have }; render();
+    have = saved.pumpkins;
+    S.players[S.me] = { ...S.players[S.me], pumpkins: have, basket: saved.basket }; render();
   } else {
     have = (S.players[S.me]?.pumpkins || 0) + 1;
-    saveMe({ pumpkins: have });
+    saveMe({ pumpkins: have, basket: hadBasket || have >= BASKET_PUMPKINS });
   }
   S.pumpkins = S.pumpkins.filter((q) => q !== p);
   S.floats.push({ text: '호박 +1', x: p.x, y: p.y - 12, t: 0, life: 0.9 });
-  if (have === BASKET_PUMPKINS) toast('퀘스트 완료! 바구니 완성! 이제 친구 집에서 사탕을 가져올 수 있어요.');
-  else if (have < BASKET_PUMPKINS) toast(`호박 ${have}개. 바구니까지 ${BASKET_PUMPKINS - have}개 남았어요.`);
+  if (!hadBasket && hasBasket(S.me)) { toast('퀘스트 완료! 바구니 완성! 이제 친구 집에서 사탕을 가져올 수 있어요.'); alchemyTips(); }
+  else if (!hadBasket) toast(`호박 ${have}개. 바구니까지 ${BASKET_PUMPKINS - have}개 남았어요.`);
+  else if (have === BREW_COST) toast(`호박 ${BREW_COST}개! 광장의 마녀 솥에서 연금술을 해 보세요.`);
+  else if (have === PUMPKIN_HOLD_MAX) toast('바구니가 꽉 찼어요. 솥에 넣어 비워 보세요.');
   updateNear();
+}
+
+async function alchemyTips() {
+  await waitForToasts();
+  if (S.busy) return;
+  S.busy = true;
+  keys.clear();
+  S.target = null;
+  renderAction();
+  await say('', `호박은 바구니에 계속 모을 수 있어요. 최대 ${PUMPKIN_HOLD_MAX}개까지 들어가요.`, 'sys');
+  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 꽝일 수도, 사탕 10개일 수도 있어요!`, 'sys');
+  await say('', '솥은 한 번 끓이면 10분 동안 식혀야 해요. 노크 사이사이에 한 방을 노려 보세요.', 'sys');
+  $('#dialog').hidden = true;
+  S.busy = false;
+  updateNear();
+  renderAction();
+}
+
+async function brew() {
+  if (S.busy || S.readOnly || !myCostume()) return;
+  if (eventState() === 'ended') { toast('이벤트가 끝나서 솥이 식었어요.'); return; }
+  if (!hasBasket(S.me)) { toast('호박 바구니부터 만들어요.'); return; }
+  if ((S.players[S.me]?.pumpkins || 0) < BREW_COST) { toast(`호박이 ${BREW_COST}개 있어야 솥에 넣을 수 있어요.`); return; }
+  if (brewWait(S.me) > 0) { toast(`솥이 아직 식는 중이에요. ${Math.ceil(brewWait(S.me) / 60000)}분 뒤 다시 끓일 수 있어요.`); return; }
+  S.busy = true;
+  S.target = null;
+  renderAction();
+  for (const text of ['풍덩!', '보글', '보글보글']) {
+    S.floats.push({ text, x: CAUL.x + (Math.random() * 12 - 6), y: CAUL.y - 16, t: 0, life: 0.8 });
+    await wait(reduceMotion() ? 80 : 420);
+  }
+  let gain;
+  try {
+    if (S.mode === 'firebase') {
+      const result = await gameRequest({ type: 'brew' });
+      gain = result.gain;
+      S.players[S.me] = { ...S.players[S.me], pumpkins: result.pumpkins, basket: true, brewAt: result.brewAt, candies: result.candies, round: S.event?.id || 'practice' };
+      render();
+    } else {
+      gain = rollBrew();
+      const me = S.players[S.me], now = Date.now();
+      saveMe({ pumpkins: me.pumpkins - BREW_COST, basket: true, brewAt: now, brews: [...(me.brews || []), { at: now, n: gain }].slice(-20) });
+      S.ledger = null;
+      render();
+    }
+  } catch (error) {
+    S.busy = false; renderAction(); toast(error.message); return;
+  }
+  if (gain) {
+    const head = { x: S.pos.x, y: S.pos.y - 26 };
+    for (let i = 0; i < Math.min(gain, 5); i++) S.floats.push({ sprite: TILE_SPR.candy, x: CAUL.x + (i - 2) * 4, y: CAUL.y - 10 - i * 3, t: 0, life: 1.1, to: head });
+  } else {
+    S.floats.push({ text: '펑!', x: CAUL.x, y: CAUL.y - 18, t: 0, life: 1 });
+  }
+  await say('마녀 솥', BREW_LINES[gain] || BREW_LINES[0], gain ? 'sys' : 'trick');
+  await say('', gain ? `사탕 +${gain} · 지금 ${candiesOf(S.me)}개. 솥은 10분 뒤에 다시 끓일 수 있어요.` : '솥은 10분 뒤에 다시 끓일 수 있어요. 호박을 다시 모아 봐요.', 'sys');
+  $('#dialog').hidden = true;
+  S.busy = false;
+  updateNear();
+  renderAction();
 }
 
 function renderAction() {
@@ -1282,12 +1370,27 @@ function renderAction() {
   const n = S.near;
   const btn = $('#act-btn');
   $('#act-note').hidden = !(n && !S.busy && n.owner !== S.me && myCostume() && !S.readOnly);
+  if (!n && S.nearCauldron && !S.busy) {
+    const have = S.players[S.me]?.pumpkins || 0, left = brewWait(S.me), ended = eventState() === 'ended';
+    $('#act-title').textContent = `마녀 솥 · 호박 ${have}/${BREW_COST}`;
+    $('#act-sub').textContent = ended ? '이벤트가 끝나서 솥이 식었어요'
+      : !hasBasket(S.me) ? '호박 바구니부터 만들어요'
+      : left > 0 ? `솥이 식는 중 · ${Math.ceil(left / 60000)}분 뒤 다시 끓일 수 있어요`
+      : have < BREW_COST ? `호박 ${BREW_COST}개를 넣으면 꽝 · 사탕 +2 · +5 · +10 중 하나`
+      : '호박을 넣으면 꽝 · 사탕 +2 · +5 · +10 중 하나 · 10분에 한 번';
+    btn.textContent = `호박 ${BREW_COST}개 넣기`;
+    btn.disabled = S.readOnly || !myCostume() || ended || !hasBasket(S.me) || have < BREW_COST || left > 0;
+    box.hidden = false;
+    return;
+  }
   if (!n && S.nearPumpkin && !S.busy) {
     const have = S.players[S.me]?.pumpkins || 0;
     $('#act-title').textContent = '잘 익은 호박';
-    $('#act-sub').textContent = have >= BASKET_PUMPKINS ? `지금까지 호박 ${have}개 · 바구니는 이미 들고 있어요` : `바구니까지 ${BASKET_PUMPKINS - have}개 남음`;
+    $('#act-sub').textContent = have >= PUMPKIN_HOLD_MAX ? `바구니가 꽉 찼어요 · 호박 ${have}/${PUMPKIN_HOLD_MAX}`
+      : hasBasket(S.me) ? `바구니에 호박 ${have}개 · 솥 연금술까지 ${Math.max(0, BREW_COST - have)}개`
+      : `바구니까지 ${BASKET_PUMPKINS - have}개 남음`;
     btn.textContent = '호박 따기';
-    btn.disabled = S.readOnly || !myCostume();
+    btn.disabled = S.readOnly || !myCostume() || have >= PUMPKIN_HOLD_MAX;
     box.hidden = false;
     return;
   }
@@ -1343,7 +1446,7 @@ function renderQuest() {
   const el = $('#quest'), p = S.players[S.me];
   el.hidden = !p?.costume || !p.guideSeen || S.guideRunning || S.readOnly;
   if (el.hidden) return;
-  const have = Math.min(BASKET_PUMPKINS, p.pumpkins || 0);
+  const have = hasBasket(S.me) ? BASKET_PUMPKINS : Math.min(BASKET_PUMPKINS, p.pumpkins || 0);
   const ended = eventState() === 'ended';
   const knocked = Boolean(p.knockAt) || (p.knocks || []).some((k) => k.r === 'win' || k.r === 'lose');
   const step = ended ? 'ended' : have < BASKET_PUMPKINS ? 'pumpkins' : !knocked ? 'knock' : 'compete';
@@ -1351,7 +1454,7 @@ function renderQuest() {
   const content = {
     pumpkins: ['진행 중인 퀘스트', `호박 바구니 만들기 · ${have}/${BASKET_PUMPKINS}`, '주황색 호박 근처에서 ‘호박 따기’ 또는 Space를 누르세요.'],
     knock: ['퀘스트 완료! 다음 목표', '친구 집 문을 처음 두드려 보세요', '바구니 완성! 친구 집 문 앞에서 버튼이나 Space로 도전하세요.'],
-    compete: ['다음 목표', '사탕을 모아 순위를 올리세요', '사탕 잡기에 성공하면 상대에게서 1개 가져와요. 실패해도 사탕은 그대로예요. 최종 순위에 따라 선물을 드려요.'],
+    compete: ['다음 목표', '사탕을 모아 순위를 올리세요', `사탕 잡기에 성공하면 상대에게서 1개 가져와요. 호박 ${BREW_COST}개를 모으면 광장 솥에서 연금술도 할 수 있어요 (지금 ${p.pumpkins || 0}개).`],
     ended: ['이벤트 종료', '최종 사탕 순위를 확인하세요', '순위 버튼에서 결과를 볼 수 있어요. 최종 순위에 따라 선물을 드려요.'],
   }[step];
   for (const [id, value] of [['quest-label', content[0]], ['quest-title', content[1]], ['quest-detail', content[2]]]) {
@@ -1379,7 +1482,7 @@ function renderHud() {
   const shown = fx ? `장난 당하는 중 · ${TRICKS[fx.kind].status} ${Math.ceil(fx.left / 1000)}초` : status;
   $('#me').innerHTML = `<img class="px-img" src="${spriteUrl(fx?.kind === 'poop' ? 'poop' : c || 'plain', 3)}" alt="">
     <b>${esc(nameOf(S.me))} · ${c ? COSTUMES[c].name : '분장 전'}</b>
-    <span class="bag"><img class="px-img" src="${spriteUrl('candy', 2)}" alt="" style="width:22px;height:12px">보유 사탕 ${candiesOf(S.me)}개</span>
+    <span class="bag"><img class="px-img" src="${spriteUrl('candy', 2)}" alt="" style="width:22px;height:12px">보유 사탕 ${candiesOf(S.me)}개${hasBasket(S.me) ? ` · 호박 ${S.players[S.me]?.pumpkins || 0}` : ''}</span>
     <span class="status" ${fx ? 'style="color:var(--candy)"' : ''}>${esc(shown)}</span>
     <span class="status ev">${esc(eventLine())}</span>
     <span class="status reward">${sharedGame() ? '최종 사탕 순위에 따라 실제 선물 지급' : '연습 중 · 선물 순위에 포함되지 않아요'}</span>`;
@@ -2048,7 +2151,7 @@ async function welcomeTips(creationMessage) {
 function act() {
   const n = S.near;
   if (S.busy) return;
-  if (!n) { if (S.nearPumpkin) harvest(S.nearPumpkin); return; }
+  if (!n) { if (S.nearCauldron) brew(); else if (S.nearPumpkin) harvest(S.nearPumpkin); return; }
   if (n.owner === S.me) openModal('house');
   else knock(n);
 }
@@ -2094,7 +2197,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'Enter' && $('#dialog').hidden) { e.preventDefault(); openChat(); return; }
   if (e.code === 'Space' || e.code === 'Enter') {
     if (!$('#dialog').hidden && $('#dlg-choices').hidden) { e.preventDefault(); if (!e.repeat) advance(); }
-    else if ($('#dialog').hidden && (S.near || S.nearPumpkin) && !$('#act-btn').disabled && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); act(); }
+    else if ($('#dialog').hidden && (S.near || S.nearPumpkin || S.nearCauldron) && !$('#act-btn').disabled && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); act(); }
   }
 });
 document.addEventListener('keyup', (e) => {
@@ -2462,7 +2565,7 @@ async function enterAccount(uid, profile) {
     mode: 'account', me: uid, isOwner: false, readOnly: false,
     accountProfile: profile, event: null, bonus: {}, ledger: null, hintHidden: false,
     pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false },
-    target: null, near: null, nearPumpkin: null, nearPeer: null, floats: [],
+    target: null, near: null, nearPumpkin: null, nearCauldron: false, nearPeer: null, floats: [],
     stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [], stuck: 0,
   });
   S.names = { [uid]: profile.nick, p1: '연습용 집 1', p2: '연습용 집 2' };

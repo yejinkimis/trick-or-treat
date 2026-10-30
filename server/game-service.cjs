@@ -1,10 +1,20 @@
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomInt } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
 const { DURATION_MS, MAX_LEVEL, createCandyPath, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
+const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 50, BREW_COOLDOWN_MS = 10 * 60 * 1000;
+const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 25 }, { n: 10, weight: 5 }];
+const hasBasket = (player) => player.basket === true || (player.pumpkins || 0) >= BASKET_PUMPKINS;
+function brewGain(roll = randomInt(100)) {
+  for (const { n, weight } of BREW_TABLE) {
+    if (roll < weight) return n;
+    roll -= weight;
+  }
+  return 0;
+}
 const roundOf = (event) => event?.id || 'practice';
 const balance = (player, event) => player.round === roundOf(event) ? player.candies : 10;
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
@@ -69,9 +79,21 @@ async function action(authorization, input) {
       if (event && event.endsAt <= now) fail('이벤트가 끝났어요. 결과가 보존됩니다.');
       if (type === 'harvest') {
         if (now - (player.harvestAt || 0) < 1500) fail('조금 뒤 다른 호박을 따 주세요.', 429);
-        const pumpkins = Math.min(3, (player.pumpkins || 0) + 1);
-        tx.update(playerRef, { pumpkins, harvestAt: now });
-        result = { pumpkins };
+        if ((player.pumpkins || 0) >= PUMPKIN_HOLD_MAX) fail(`바구니가 꽉 찼어요. 호박은 ${PUMPKIN_HOLD_MAX}개까지 들 수 있어요.`);
+        const pumpkins = (player.pumpkins || 0) + 1;
+        const basket = hasBasket({ ...player, pumpkins });
+        tx.update(playerRef, { pumpkins, basket, harvestAt: now });
+        result = { pumpkins, basket };
+      } else if (type === 'brew') {
+        if (!hasBasket(player)) fail('호박 바구니부터 만들어요.');
+        if ((player.pumpkins || 0) < BREW_COST) fail(`호박이 ${BREW_COST}개 있어야 솥에 넣을 수 있어요.`);
+        const wait = (player.brewAt || 0) + BREW_COOLDOWN_MS - now;
+        if (wait > 0) fail(`솥이 아직 식는 중이에요. ${Math.ceil(wait / 60000)}분 뒤 다시 끓일 수 있어요.`, 429);
+        const gain = brewGain();
+        const pumpkins = player.pumpkins - BREW_COST;
+        tx.update(playerRef, { round, candies: count + gain, pumpkins, basket: true, brewAt: now,
+          brews: [...(player.brews || []), { at: now, n: gain, round }].slice(-20) });
+        result = { gain, candies: count + gain, pumpkins, brewAt: now };
       } else if (type === 'decor') {
         const price = PRICES[input.item];
         if (!price) fail('장식을 확인해 주세요.');
@@ -91,7 +113,7 @@ async function action(authorization, input) {
         tx.update(playerRef, { noteAt: now, notes: [...(player.notes || []), { h: input.host, text, at: now }].slice(-100) });
       } else if (type === 'knock-start') {
         if (input.host === uid || !/^[a-f0-9]{32}$/.test(input.host || '')) fail('노크할 집을 확인해 주세요.');
-        if ((player.pumpkins || 0) < 3) fail('호박 3개로 바구니를 먼저 만드세요.');
+        if (!hasBasket(player)) fail('호박 3개로 바구니를 먼저 만드세요.');
         const [host, pending] = await Promise.all([
           tx.get(db.collection('gamePlayers').doc(input.host)), tx.get(challengeRef),
         ]);
@@ -138,4 +160,4 @@ async function action(authorization, input) {
   }, { maxAttempts: 20 });
 }
 
-module.exports = { session, action, balance, roundOf, evaluateCandyChallenge };
+module.exports = { session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
