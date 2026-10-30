@@ -21,9 +21,9 @@ const saved = async (p) => (await services().db.collection('gamePlayers').doc(p.
 
 async function winningChallenge(visitor, host) {
   const { challenge } = await act(visitor, { type: 'knock-start', host: host.uid });
-  const path = [{ t: 0, y: .05 }, { t: challenge.duration, y: .05 }];
+  const path = [{ t: 0, y: .05 }, { t: 6000, y: .05 }];
   await services().db.collection('gameChallenges').doc(visitor.uid).update({ createdAt: Date.now() - 6000, path });
-  return { challengeId: challenge.id, inputs: [{ t: 20, down: true }], elapsedMs: 6000, level: challenge.level };
+  return { challengeId: challenge.id, inputs: [1, 1], elapsedMs: 6000, level: challenge.level };
 }
 
 test('server stores atomic candy transfers, deduplicates retries, resets rounds and freezes final results', async () => {
@@ -43,11 +43,11 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   assert.equal(balance(await saved(first), start.event) + balance(await saved(second), start.event) + balance(await saved(host), start.event), 21);
   assert.equal(balance(await saved(host), start.event), 0);
   assert.deepEqual(await act(first, { type: 'knock-finish', ...one, requestId }), a);
-  await assert.rejects(act(first, { type: 'knock-finish', ...one }), /만료/);
+  await assert.rejects(act(first, { type: 'knock-finish', ...one }), /끝났거나/);
   await services().db.collection('gamePlayers').doc(second.uid).update({ knockAt: 0 });
   await act(second, { type: 'knock-start', host: host.uid });
   await services().db.collection('gamePlayers').doc(second.uid).update({ knockAt: 0 });
-  await assert.rejects(act(second, { type: 'knock-start', host: host.uid }), (error) => error.status === 429 && /\d+초 뒤 다시/.test(error.message));
+  await assert.rejects(act(second, { type: 'knock-start', host: host.uid }), (error) => error.status === 429 && /진행 중인 도전/.test(error.message));
   await services().db.collection('gameChallenges').doc(second.uid).update({ used: true });
   await assert.rejects(act(first, { type: 'candies', candies: 999 }), /지원하지/);
   const before = balance(await saved(first), start.event);
@@ -72,15 +72,15 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   const failed = (await act(first, { type: 'knock-start', host: host.uid })).challenge;
   assert.equal(failed.level, 1, 'a new event resets the challenger streak');
   await services().db.collection('gameChallenges').doc(first.uid).update({ createdAt: Date.now() - 4000,
-    path: [{ t: 0, y: .05 }, { t: failed.duration, y: .05 }] });
+    path: [{ t: 0, y: .05 }, { t: 3000, y: .05 }] });
   const lost = await act(first, { type: 'knock-finish', challengeId: failed.id, inputs: [], elapsedMs: 2800 });
   assert.equal(lost.candies, 8);
   assert.equal(lost.hostCandies, 10);
   await services().db.collection('gamePlayers').doc(first.uid).update({ knockAt: 0, candies: 0 });
   const empty = (await act(first, { type: 'knock-start', host: host.uid })).challenge;
-  assert.equal(empty.level, 2, 'a repeat challenge to the same house is harder');
+  assert.equal(empty.level, 1, 'failure resets that house difficulty');
   await services().db.collection('gameChallenges').doc(first.uid).update({ createdAt: Date.now() - 4000,
-    path: [{ t: 0, y: .05 }, { t: empty.duration, y: .05 }] });
+    path: [{ t: 0, y: .05 }, { t: 3000, y: .05 }] });
   const noCandy = await act(first, { type: 'knock-finish', challengeId: empty.id, inputs: [], elapsedMs: 2800 });
   assert.equal(noCandy.candies, 0);
   assert.equal(noCandy.hostCandies, 10);
@@ -171,4 +171,31 @@ test('a player gets a village when picking a costume after joining', async () =>
   const placed = (await services().db.collection('gamePlayers').doc(account.uid).get()).data();
   assert.ok(placed.village >= waiting.village);
   assert.ok(placed.readyAt > 0);
+});
+
+test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforces the cooldown', async () => {
+  await services().db.doc('game/event').delete();
+  const [brewer, host] = await Promise.all(['솥', '이웃'].map(player));
+  const ref = services().db.collection('gamePlayers').doc(brewer.uid);
+  for (let i = 0; i < 3; i++) {
+    await act(brewer, { type: 'harvest' });
+    await ref.update({ harvestAt: 0 });
+  }
+  assert.equal((await saved(brewer)).basket, true);
+  await ref.update({ pumpkins: 100 });
+  await assert.rejects(act(brewer, { type: 'harvest' }), /꽉 찼어요/);
+  await ref.update({ pumpkins: 29 });
+  await assert.rejects(act(brewer, { type: 'brew' }), /30개/);
+  await ref.update({ pumpkins: 55 });
+  const result = await act(brewer, { type: 'brew' });
+  assert.ok([0, 2, 5, 10].includes(result.gain));
+  assert.equal(result.candies, 10 + result.gain);
+  const after = await saved(brewer);
+  assert.equal(after.pumpkins, 25);
+  assert.equal(after.basket, true);
+  assert.equal(after.brews.at(-1).n, result.gain);
+  await ref.update({ pumpkins: 60 });
+  await assert.rejects(act(brewer, { type: 'brew' }), (error) => error.status === 429 && /분 뒤/.test(error.message));
+  const { challenge } = await act(brewer, { type: 'knock-start', host: host.uid });
+  assert.ok(challenge.id);
 });

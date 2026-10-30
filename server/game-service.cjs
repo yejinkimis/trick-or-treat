@@ -1,11 +1,21 @@
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomInt } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
-const { DURATION_MS, MAX_LEVEL, createCandyPath, evaluateCandyChallenge } = require('./candy-challenge.cjs');
+const { MAX_LEVEL, STALE_CHALLENGE_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 const { readVillagePlan } = require('./village.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
+const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
+const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 25 }, { n: 10, weight: 5 }];
+const hasBasket = (player) => player.basket === true || (player.pumpkins || 0) >= BASKET_PUMPKINS;
+function brewGain(roll = randomInt(100)) {
+  for (const { n, weight } of BREW_TABLE) {
+    if (roll < weight) return n;
+    roll -= weight;
+  }
+  return 0;
+}
 const roundOf = (event) => event?.id || 'practice';
 const balance = (player, event) => player.round === roundOf(event) ? player.candies : 10;
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
@@ -80,9 +90,21 @@ async function action(authorization, input) {
       if (event && event.endsAt <= now) fail('이벤트가 끝났어요. 결과가 보존됩니다.');
       if (type === 'harvest') {
         if (now - (player.harvestAt || 0) < 1500) fail('조금 뒤 다른 호박을 따 주세요.', 429);
-        const pumpkins = Math.min(3, (player.pumpkins || 0) + 1);
-        tx.update(playerRef, { pumpkins, harvestAt: now });
-        result = { pumpkins };
+        if ((player.pumpkins || 0) >= PUMPKIN_HOLD_MAX) fail(`바구니가 꽉 찼어요. 호박은 ${PUMPKIN_HOLD_MAX}개까지 들 수 있어요.`);
+        const pumpkins = (player.pumpkins || 0) + 1;
+        const basket = hasBasket({ ...player, pumpkins });
+        tx.update(playerRef, { pumpkins, basket, harvestAt: now });
+        result = { pumpkins, basket };
+      } else if (type === 'brew') {
+        if (!hasBasket(player)) fail('호박 바구니부터 만들어요.');
+        if ((player.pumpkins || 0) < BREW_COST) fail(`호박이 ${BREW_COST}개 있어야 솥에 넣을 수 있어요.`);
+        const wait = (player.brewAt || 0) + BREW_COOLDOWN_MS - now;
+        if (wait > 0) fail(`솥이 아직 식는 중이에요. ${Math.ceil(wait / 60000)}분 뒤 다시 끓일 수 있어요.`, 429);
+        const gain = brewGain();
+        const pumpkins = player.pumpkins - BREW_COST;
+        tx.update(playerRef, { round, candies: count + gain, pumpkins, basket: true, brewAt: now,
+          brews: [...(player.brews || []), { at: now, n: gain, round }].slice(-20) });
+        result = { gain, candies: count + gain, pumpkins, brewAt: now };
       } else if (type === 'decor') {
         const price = PRICES[input.item];
         if (!price) fail('장식을 확인해 주세요.');
@@ -103,30 +125,31 @@ async function action(authorization, input) {
         tx.update(host.ref, { guests: withGuest(host.data(), { v: uid, nick: player.nick, c: player.costume, text, at: now }) });
       } else if (type === 'knock-start') {
         if (input.host === uid || !/^[a-f0-9]{32}$/.test(input.host || '')) fail('노크할 집을 확인해 주세요.');
-        if ((player.pumpkins || 0) < 3) fail('호박 3개로 바구니를 먼저 만드세요.');
+        if (!hasBasket(player)) fail('호박 3개로 바구니를 먼저 만드세요.');
         const [host, pending] = await Promise.all([
           tx.get(db.collection('gamePlayers').doc(input.host)), tx.get(challengeRef),
         ]);
         if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
-        if (prior.round === round && !prior.used && prior.expiresAt > now) {
-          fail(`아까 노크가 아직 정리 중이에요. ${Math.ceil((prior.expiresAt - now) / 1000)}초 뒤 다시 두드릴 수 있어요.`, 429);
+        const priorAge = now - (prior.createdAt || 0);
+        const priorIsActive = prior.expiresAt ? prior.expiresAt > now : priorAge < STALE_CHALLENGE_MS;
+        if (prior.round === round && !prior.used && priorIsActive) {
+          fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
         }
-        const sameTarget = prior.streakHost === input.host && prior.streakRound === round;
-        const level = sameTarget ? Math.min(MAX_LEVEL, (prior.streakCount || 1) + 1) : 1;
+        const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
+          ? { ...prior.nextLevelByHost } : {};
+        const level = Math.min(MAX_LEVEL, Math.max(1, Number(nextLevelByHost[input.host]) || 1));
         const challenge = {
-          id: randomUUID(), host: input.host, round, createdAt: now, expiresAt: now + 30000, used: false,
-          duration: DURATION_MS, level, path: createCandyPath(level),
-          streakHost: input.host, streakRound: round, streakCount: level,
+          id: randomUUID(), host: input.host, round, createdAt: now, used: false,
+          level, seed: createCandySeed(), nextLevelByHost, streakRound: round,
         };
         tx.set(challengeRef, challenge);
-        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, expiresAt: challenge.expiresAt,
-          duration: challenge.duration, level, path: challenge.path } };
+        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed } };
       } else if (type === 'knock-finish') {
         const challengeDoc = await tx.get(challengeRef);
         const challenge = challengeDoc.exists ? challengeDoc.data() : null;
-        if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round || now > challenge.expiresAt) fail('노크가 만료됐어요. 다시 시도해 주세요.');
+        if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round) fail('도전이 끝났거나 다시 시작됐어요. 다시 시도해 주세요.');
         const hostRef = db.collection('gamePlayers').doc(challenge.host);
         const hostDoc = await tx.get(hostRef);
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
@@ -136,13 +159,17 @@ async function action(authorization, input) {
         const win = outcome.won;
         const hostCount = balance(hostDoc.data(), event);
         const moved = win && hostCount > 0;
+        const nextLevelByHost = challenge.streakRound === round && challenge.nextLevelByHost
+          ? { ...challenge.nextLevelByHost } : {};
+        if (win) nextLevelByHost[challenge.host] = Math.min(MAX_LEVEL, challenge.level + 1);
+        else delete nextLevelByHost[challenge.host];
         const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level };
         const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now };
         if (win) playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
         tx.update(playerRef, playerUpdate);
         if (win) tx.update(hostRef, { ...(moved ? { round, candies: hostCount - 1 } : {}),
           guests: withGuest(hostDoc.data(), { ...entry, v: uid, nick: player.nick }) });
-        tx.update(challengeRef, { used: true });
+        tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
       } else fail('지원하지 않는 행동이에요.');
     }
@@ -151,4 +178,4 @@ async function action(authorization, input) {
   }, { maxAttempts: 20 });
 }
 
-module.exports = { session, action, balance, roundOf, evaluateCandyChallenge };
+module.exports = { session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
