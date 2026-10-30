@@ -1,9 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>똑똑 할로윈</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Silkscreen:wght@400;700&display=swap">
 <style>
-/* 레이아웃: 화면 전체가 위에서 내려다본 픽셀 마을. HUD는 위 두 모서리, 문 앞 행동과 대화창은 아래 가운데 */
+/* 화면 전체는 픽셀 마을. 행동·대화·노크는 캐릭터를 따라가는 말풍선으로 표시한다. */
 :root{
   --night:#140f1c; --panel:#2a1f3d; --panel-2:#3b2d55; --text:#fff4e2; --muted:#c3b4da; --edge:#0b0810;
   --pumpkin:#f28a2e; --candy:#ff6fa8; --slime:#8bd450; --gold:#ffd166;
@@ -126,6 +129,18 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .marker{position:absolute;top:-9px;bottom:-9px;width:6px;margin-left:-3px;background:var(--gold);box-shadow:0 0 0 2px var(--edge)}
 
 
+/* 캔버스의 월드 좌표를 CSS 좌표로 바꿔 캐릭터 위에 배치한다. */
+.actor-bubble{box-sizing:border-box;left:0;top:0;bottom:auto;transform:none;max-width:calc(100vw - 40px);max-height:calc(100dvh - 140px);overflow:visible}
+.actor-bubble::after{content:"";position:absolute;left:var(--tail-x,50%);bottom:-14px;width:16px;height:16px;background:var(--panel);border-right:4px solid var(--text);border-bottom:4px solid var(--text);transform:translateX(-50%) rotate(45deg);pointer-events:none}
+.actor-bubble.below::after{top:-14px;bottom:auto;transform:translateX(-50%) rotate(225deg)}
+.bc.actor-bubble{width:min(390px,calc(100vw - 40px));flex-wrap:wrap;gap:12px;padding:12px 14px}
+.bc.actor-bubble>div{flex:1 1 100%}
+.bc.actor-bubble .pbtn{flex:1}
+.dialog.actor-bubble{width:min(440px,calc(100vw - 40px))}
+.dialog.actor-bubble .choices{gap:10px;justify-content:flex-start}
+.dialog.actor-bubble .choices .pbtn{white-space:normal;line-height:1.3}
+.timing.actor-bubble{width:min(400px,calc(100vw - 40px))}
+
 .toast{position:fixed;z-index:12;left:50%;transform:translateX(-50%);top:calc(90px + env(safe-area-inset-top,0px));padding:8px 14px;max-width:calc(100vw - 40px);font-size:.95rem;text-align:center}
 
 @media (max-width:560px){
@@ -148,14 +163,14 @@ textarea:focus{outline:none;border-color:var(--gold)}
 </div>
 
 <button class="hud pbtn hot bonk" id="bonk-btn" type="button" hidden>뿅망치 (F)</button>
-<div class="hud bc px" id="action" hidden>
+<div class="hud bc px actor-bubble" id="action" hidden>
   <div><b id="act-title"></b><span id="act-sub"></span></div>
   <button class="pbtn hot" id="act-btn" type="button"></button>
   <button class="pbtn" id="act-note" type="button" hidden>방명록</button>
 </div>
 <p class="hint" id="hint">방향키·WASD로 걷거나 땅을 눌러 이동해요. 호박 3개로 바구니를 만들면 친구 집 문을 두드릴 수 있어요</p>
 
-<div class="dialog px" id="dialog" role="dialog" aria-live="polite" hidden>
+<div class="dialog px actor-bubble" id="dialog" role="dialog" aria-live="polite" hidden>
   <span class="who" id="dlg-who"></span>
   <p id="dlg-text"></p>
   <div class="choices" id="dlg-choices" hidden></div>
@@ -268,7 +283,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   </div>
 </div>
 
-<div class="timing px" id="timing" hidden>
+<div class="timing px actor-bubble" id="timing" hidden>
   <p class="t-title">박자 맞춰서 <b>똑똑똑</b> <span class="dots" id="t-dots"></span> <span id="t-say"></span></p>
   <div class="track"><div class="zone" id="t-zone"></div><div class="marker" id="t-marker"></div></div>
   <p class="note">초록 칸에서 Space나 터치, 세 번 연속. 맞출 때마다 칸이 옮겨가고 빨라져요</p>
@@ -830,6 +845,32 @@ function syncPeers() {
 }
 
 function w2s(wx, wy) { return [wx * Z - camX, wy * Z - camY]; }
+// 캔버스는 기기 픽셀, DOM은 CSS 픽셀을 쓰므로 dpr로 나눠 위치를 맞춘다.
+function positionActorBubbles() {
+  const bounds = canvas.getBoundingClientRect();
+  const [worldX, worldY] = w2s(S.pos.x, S.pos.y - 28);
+  const anchorX = bounds.left + worldX / dpr;
+  const anchorY = bounds.top + worldY / dpr;
+  const actorBottom = bounds.top + w2s(S.pos.x, S.pos.y + 4)[1] / dpr;
+  const margin = 20, safeBottom = window.innerHeight - 96;
+  const covered = modalOpen();
+  for (const id of ['action', 'dialog', 'timing']) {
+    const el = $(`#${id}`);
+    el.style.visibility = covered ? 'hidden' : '';
+    if (covered || el.hidden) continue;
+    const { width, height } = el.getBoundingClientRect();
+    const left = clamp(anchorX - width / 2, margin, Math.max(margin, window.innerWidth - width - margin));
+    let top = anchorY - height - 14;
+    const below = top < margin + 18 && actorBottom + 26 + height <= safeBottom;
+    if (below) top = actorBottom + 26;
+    top = clamp(top, margin + 18, Math.max(margin + 18, safeBottom - height));
+    el.classList.toggle('below', below);
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+    el.style.setProperty('--tail-x', `${clamp(anchorX - left, 24, width - 24)}px`);
+  }
+}
+
 function drawSpr(img, wx, wy) {
   const [sx, sy] = w2s(Math.round(wx), Math.round(wy));
   ctx.drawImage(img, sx, sy, img.width * Z, img.height * Z);
@@ -1004,6 +1045,7 @@ function frame(now) {
   syncPeers();
   update(dt);
   draw();
+  positionActorBubbles();
   const sec = Math.floor(Date.now() / 1000);
   if (sec !== hudSecond) {
     hudSecond = sec;
@@ -1461,7 +1503,7 @@ function timingGame(zone, speed, phase) {
       placeZone();
       arm();
     }
-    box.className = 'timing px';
+    box.className = 'timing px actor-bubble';
     $('#t-say').textContent = '';
     placeZone();
     box.hidden = false;
