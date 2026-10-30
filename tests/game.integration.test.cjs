@@ -94,6 +94,7 @@ test('public scores are readable but direct client edits and private challenge r
   for (const [path, method, expected] of [
     [`gamePlayers/${p.uid}`, 'GET', 200], [`gamePlayers/${p.uid}`, 'DELETE', 403],
     [`gameChallenges/${p.uid}`, 'GET', 403], [`gameRequests/anything`, 'GET', 403],
+    [`villages/${(await saved(p)).village}`, 'GET', 200], ['villages/1', 'DELETE', 403], ['game/villages', 'GET', 403],
   ]) {
     const result = await fetch(`${base}/${path}`, { method, headers: { authorization: `Bearer ${p.token}` } });
     assert.equal(result.status, expected);
@@ -107,15 +108,69 @@ test('Realtime Database enforces identity, payload validation and per-session cl
     method, headers: { 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const position = { x: 208, y: 72, f: 1, m: false, at: { '.sv': 'timestamp' } };
-  assert.equal((await request(`presence/${a.uid}/tab1`, a.token, 'PUT', position)).status, 200);
-  assert.equal((await request('presence', b.token)).status, 200);
-  assert.equal((await request(`presence/${a.uid}/tab2`, b.token, 'PUT', position)).status, 401);
-  assert.equal((await request(`presence/${a.uid}/tab2`, a.token, 'PUT', { ...position, candies: 999 })).status, 401);
-  assert.equal((await request('presence', null)).status, 401);
-  assert.equal((await request(`events/${a.uid}`, a.token, 'PUT', { id: randomUUID(), kind: 'chat', text: '안녕', at: { '.sv': 'timestamp' } })).status, 200);
-  assert.equal((await request(`events/${a.uid}`, b.token, 'PUT', { id: randomUUID(), kind: 'chat', text: '사칭', at: { '.sv': 'timestamp' } })).status, 401);
-  assert.equal((await request(`presence/${a.uid}/tab1`, a.token, 'DELETE')).status, 200);
-  assert.equal(await (await request(`presence/${a.uid}`, b.token)).json(), null);
+  assert.equal((await request(`presence/1/${a.uid}/tab1`, a.token, 'PUT', position)).status, 200);
+  assert.equal((await request('presence/1', b.token)).status, 200);
+  assert.equal((await request('presence', b.token)).status, 401, 'nobody downloads every village at once');
+  assert.equal((await request(`presence/1/${a.uid}/tab2`, b.token, 'PUT', position)).status, 401);
+  assert.equal((await request(`presence/1/${a.uid}/tab2`, a.token, 'PUT', { ...position, candies: 999 })).status, 401);
+  assert.equal((await request(`presence/${a.uid}/tab2`, a.token, 'PUT', position)).status, 401, 'the old path without a village is closed');
+  assert.equal((await request('presence/1', null)).status, 401);
+  const now = { '.sv': 'timestamp' };
+  assert.equal((await request(`events/2/${a.uid}`, a.token, 'PUT', { id: randomUUID(), kind: 'bonk', to: 'peer', at: now })).status, 200);
+  assert.equal((await request(`events/2/${b.uid}`, a.token, 'PUT', { id: randomUUID(), kind: 'bonk', to: 'peer', at: now })).status, 401);
+  assert.equal((await request(`events/x/${b.uid}`, b.token, 'PUT', { id: randomUUID(), kind: 'bonk', to: 'peer', at: now })).status, 401);
+  assert.equal((await request(`events/2/${b.uid}`, b.token, 'PUT', { id: randomUUID(), kind: 'chat', text: '마을 채팅', at: now })).status, 401, 'chat lives on the shared channel');
+  assert.equal((await request(`chat/${a.uid}`, a.token, 'PUT', { id: randomUUID(), kind: 'chat', text: '안녕', v: 2, at: now })).status, 200);
+  assert.equal((await request(`chat/${a.uid}`, b.token, 'PUT', { id: randomUUID(), kind: 'chat', text: '사칭', v: 2, at: now })).status, 401);
+  assert.equal((await request(`chat/${b.uid}`, b.token, 'PUT', { id: randomUUID(), kind: 'chat', text: '마을 없음', at: now })).status, 401);
+  assert.equal((await request('chat', b.token)).status, 200);
+  assert.equal((await request(`online/${a.uid}/tab1`, a.token, 'PUT', { v: 3, at: now })).status, 200);
+  assert.equal((await request(`online/${a.uid}/tab2`, b.token, 'PUT', { v: 3, at: now })).status, 401);
+  assert.equal((await request(`online/${a.uid}/tab2`, a.token, 'PUT', { v: 3, x: 1, at: now })).status, 401);
+  assert.equal((await request('online', b.token)).status, 200);
+  assert.equal((await request('online', null)).status, 401);
+  assert.equal((await request(`presence/1/${a.uid}/tab1`, a.token, 'DELETE')).status, 200);
+  assert.equal(await (await request(`presence/1/${a.uid}`, b.token)).json(), null);
+});
+
+test('costumed players fill villages of eight in order and visits across villages reach the host', async () => {
+  const made = [];
+  for (let i = 0; i < 9; i++) made.push(await player('마'));
+  const villages = await Promise.all(made.map(async (p) => (await saved(p)).village));
+  for (let i = 1; i < villages.length; i++) assert.ok(villages[i] >= villages[i - 1], 'later costumes never move to an earlier village');
+  assert.ok(villages.at(-1) > villages[0], 'nine costumes cannot all fit in one village');
+  const members = await services().db.collection('gamePlayers').where('village', '==', villages.at(-1)).get();
+  assert.ok(members.size <= 8);
+  const named = await services().db.collection('villages').doc(String(villages.at(-1))).get();
+  assert.match(named.data().name, /^(뽀롱뽀롱마을|둠바족|태초마을|구리마을|안드로이드 제국|프론트마을)(\d+)?$/);
+  assert.equal((await session(made[0].authorization)).village, villages[0], 'logging in again keeps the same village');
+
+  const visitor = made.at(-1), host = made[0];
+  process.env.GAME_ADMIN_UIDS = host.uid;
+  await act(host, { type: 'event-start' });
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await act(visitor, { type: 'note', host: host.uid, text: '옆 마을에서 왔어요' });
+  const finish = await act(visitor, { type: 'knock-finish', ...await winningChallenge(visitor, host) });
+  assert.equal(finish.entry.r, 'win');
+  const guests = (await saved(host)).guests;
+  assert.deepEqual(guests.map((g) => [g.v, g.text ? 'note' : g.r]), [[visitor.uid, 'note'], [visitor.uid, 'win']]);
+  assert.equal(guests[0].nick, visitor.profile.nick);
+  await act(host, { type: 'event-stop' });
+});
+
+test('a player gets a village when picking a costume after joining', async () => {
+  const account = await signup({ nickname: `늦${randomUUID().slice(0, 8)}`, password: 'game-password-8' });
+  const response = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-api-key', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: account.customToken, returnSecureToken: true }),
+  });
+  const authorization = `Bearer ${(await response.json()).idToken}`;
+  const waiting = await session(authorization);
+  assert.ok(waiting.village >= 1, 'the lobby shows the newest village before a costume is chosen');
+  assert.equal((await services().db.collection('gamePlayers').doc(account.uid).get()).data().village, undefined);
+  await updateProfile(authorization, { costume: 'mummy' });
+  const placed = (await services().db.collection('gamePlayers').doc(account.uid).get()).data();
+  assert.ok(placed.village >= waiting.village);
+  assert.ok(placed.readyAt > 0);
 });
 
 test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforces the cooldown', async () => {

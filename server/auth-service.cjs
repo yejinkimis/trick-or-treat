@@ -2,6 +2,7 @@ const { randomBytes, randomUUID, scrypt, timingSafeEqual, createHash } = require
 const { promisify } = require('node:util');
 const { services } = require('./firebase-admin.cjs');
 const { AuthError } = require('./errors.cjs');
+const { readVillagePlan } = require('./village.cjs');
 
 const scryptAsync = promisify(scrypt);
 const SCRYPT = Object.freeze({ N: 32768, r: 8, p: 1, keyLength: 64 });
@@ -230,11 +231,16 @@ async function updateProfile(authorization, value) {
     const player = await transaction.get(playerRef);
     if (!snapshot.exists) throw new AuthError(404, 'profile-not-found', '계정 정보를 찾을 수 없어요.');
     if (patch.costume === null && player.exists && player.data().costume) throw new AuthError(400, 'invalid-profile', '다른 분장으로 갈아입어 주세요.');
+    const prior = player.exists ? player.data() : null;
+    const readyAt = prior?.readyAt || Date.now();
+    const plan = prior && patch.costume && !prior.village ? await readVillagePlan(transaction, firebase.db, { id: uid, readyAt }) : null;
     transaction.update(ref, patch);
+    plan?.write(uid);
     if (player.exists) transaction.update(playerRef, { ...patch,
-      ...(patch.costume && !player.data().readyAt ? { readyAt: Date.now() } : {}),
+      ...(patch.costume && !prior.readyAt ? { readyAt } : {}),
+      ...(plan ? { village: plan.villageOf.get(uid) } : {}),
     });
-  });
+  }, { maxAttempts: 20 });
   const snapshot = await ref.get();
   return publicProfile(uid, snapshot.data());
 }

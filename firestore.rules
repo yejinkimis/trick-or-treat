@@ -9,6 +9,10 @@ service cloud.firestore {
       allow read: if request.auth != null;
       allow write: if false;
     }
+    match /villages/{village} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
     match /gameRounds/{round} {
       allow read: if request.auth != null;
       allow write: if false;
