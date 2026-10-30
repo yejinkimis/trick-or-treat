@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { signup, updateProfile } = require('../server/auth-service.cjs');
-const { session, action, balance } = require('../server/game-service.cjs');
+const { LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
 
 async function player(prefix) {
@@ -198,4 +198,34 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   await assert.rejects(act(brewer, { type: 'brew' }), (error) => error.status === 429 && /분 뒤/.test(error.message));
   const { challenge } = await act(brewer, { type: 'knock-start', host: host.uid });
   assert.ok(challenge.id);
+});
+
+test('the leaderboard is computed once per three minutes, shared through the CDN, and refuses cache-busting', async () => {
+  const handler = require('../api/game/leaderboard.js');
+  const call = async (url) => {
+    const res = { headers: {}, setHeader(key, value) { this.headers[key] = value; }, end(body) { this.body = JSON.parse(body); } };
+    await handler({ method: 'GET', url, headers: {} }, res);
+    return res;
+  };
+  const p = await player('순');
+  process.env.GAME_ADMIN_UIDS = p.uid;
+  await act(p, { type: 'event-start' });
+  const first = await leaderboard(Date.now() + 10 * LEADERBOARD_MS);
+  const mine = first.players.find((r) => r.id === p.uid);
+  assert.equal(mine.village, (await saved(p)).village);
+  assert.ok(first.players.every((r, i, all) => !i || all[i - 1].n >= r.n), 'sorted by candies');
+
+  await services().db.collection('gamePlayers').doc(p.uid).update({ round: first.round, candies: 999 });
+  const memo = await leaderboard(first.at + LEADERBOARD_MS - 1);
+  assert.equal(memo, first, 'within three minutes nothing is read again');
+  const fresh = await leaderboard(first.at + LEADERBOARD_MS);
+  assert.equal(fresh.players[0].id, p.uid);
+
+  const ok = await call('/api/game/leaderboard');
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.headers['cache-control'], 'public, max-age=0, s-maxage=180');
+  const busted = await call('/api/game/leaderboard?t=1');
+  assert.equal(busted.statusCode, 400);
+  assert.equal(busted.headers['cache-control'], 'no-store, max-age=0');
+  await act(p, { type: 'event-stop' });
 });

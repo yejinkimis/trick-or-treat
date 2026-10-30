@@ -718,20 +718,22 @@ test('visits from another village are read from the host document without double
   assert.match(g.run('guestbookHtml(S.me)'), /또 올게/);
 });
 
-test('online rankings come from one full read when the rank window opens', async () => {
+test('online rankings come from the shared server list and are not refetched within thirty seconds', async () => {
   const g = game(); village(g);
-  g.run(`var reads = 0; S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() + 60000 };
-    S.account = { firestore: {}, firestoreSdk: { collection: (db, name) => name, getDocs: async (name) => { reads += 1; return { docs: [
-      { id: 'me', data: () => ({ nick: '나', costume: 'ghost', round: 'r1', candies: 9 }) },
-      { id: 'far', data: () => ({ nick: '먼집', costume: 'cat', round: 'r1', candies: 12 }) },
-    ] }; } } };`);
+  g.run(`var calls = []; S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() + 60000 };
+    accountRequest = async (url) => { calls.push(url); return { players: [
+      { id: 'far', nick: '먼집', costume: 'cat', n: 12, village: 2 }, { id: 'me', nick: '나', costume: 'ghost', n: 9, village: 1 },
+    ] }; };`);
   assert.equal(g.run('ranking().length'), 0);
   g.run(`openModal('rank')`);
   await tick(); await tick();
-  assert.equal(g.run('reads'), 1);
+  assert.equal(g.run('JSON.stringify(calls)'), '["/api/game/leaderboard"]');
   assert.equal(g.run('ranking()[0].id'), 'far');
   assert.match(g.run('eventLine()'), /내 순위 2등/);
   assert.match(g.elements.get('rk-list').innerHTML, /먼집/);
+  g.run(`closeModal('rank'); openModal('rank')`);
+  await tick();
+  assert.equal(g.run('calls.length'), 1, 'reopening right away reuses the list');
 });
 
 test('chat reaches every village but shows a bubble only for people in the same village', () => {

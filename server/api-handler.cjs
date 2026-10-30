@@ -35,10 +35,10 @@ async function requestBody(req) {
   catch { throw new AuthError(400, 'invalid-json', '요청을 확인해 주세요.'); }
 }
 
-function send(res, status, value) {
+function send(res, status, value, cacheControl = 'no-store, max-age=0') {
   res.statusCode = status;
   res.setHeader('content-type', 'application/json; charset=utf-8');
-  res.setHeader('cache-control', 'no-store, max-age=0');
+  res.setHeader('cache-control', cacheControl);
   res.setHeader('x-content-type-options', 'nosniff');
   res.end(JSON.stringify(value));
 }
@@ -51,7 +51,7 @@ function apiHandler(methods, run) {
     }
     try {
       const result = await run(req);
-      return send(res, result.status || 200, result.body);
+      return send(res, result.status || 200, result.body, result.cacheControl);
     } catch (error) {
       if (error instanceof AuthError) return send(res, error.status, { error: error.code, message: error.message });
       console.error('[auth API]', error?.code || error?.name || 'unknown error');
