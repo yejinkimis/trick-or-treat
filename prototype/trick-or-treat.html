@@ -473,12 +473,11 @@ const DECOR = {
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
 // 호박 연금술: 서버(server/game-service.cjs)와 같은 값이어야 한다.
 const PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
-const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 25 }, { n: 10, weight: 5 }];
+const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
 const BREW_LINES = {
   0: '펑! 연기만 자욱해요… 호박이 전부 재가 됐어요.',
   2: '보글보글… 사탕 2개가 떠올랐어요!',
   5: '부글부글! 사탕 5개가 솟아올랐어요!',
-  10: '솥이 번쩍! 사탕 10개가 쏟아졌어요!',
 };
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
 const MODALS = ['wardrobe', 'house', 'rank', 'online', 'note', 'auth', 'intro'];
@@ -635,7 +634,7 @@ const candiesOf = (id) => S.mode === 'firebase'
 const wasMoved = (k) => S.mode === 'firebase' ? k.moved === true : ledger().moved.has(k);
 function ranking() {
   if (S.mode === 'firebase' && eventState() === 'ended' && S.event.results) return S.event.results;
-  // 온라인 순위는 마을 구독에 없는 사람까지 필요하므로 순위 창을 열 때 한 번 읽은 목록을 쓴다.
+  // 온라인 순위는 마을 구독에 없는 사람까지 필요하므로 서버가 3분마다 모아 주는 목록을 쓴다.
   if (S.mode === 'firebase') return S.rankList || [];
   return rankingOf(S.players);
 }
@@ -647,15 +646,15 @@ function rankingOf(players) {
     .map(([id, p]) => ({ id, n: count(id, p), costume: p.costume }))
     .sort((a, b) => b.n - a.n || nameOf(a.id).localeCompare(nameOf(b.id), 'ko'));
 }
+const RANK_REFRESH_MS = 3 * 60 * 1000;
 async function loadRanking() {
-  if (S.mode !== 'firebase' || S.rankLoading) return;
+  if (S.mode !== 'firebase' || S.rankLoading || Date.now() - (S.rankAt || 0) < 30000) return;
   S.rankLoading = true;
   try {
-    const { firestoreSdk: fs, firestore } = S.account;
-    const snapshot = await fs.getDocs(fs.collection(firestore, 'gamePlayers'));
-    const players = Object.fromEntries(snapshot.docs.map((doc) => [doc.id, doc.data()]));
-    for (const [id, p] of Object.entries(players)) if (p.nick) S.names[id] = cleanNick(p.nick);
-    S.rankList = rankingOf(players);
+    const { players } = await accountRequest('/api/game/leaderboard');
+    for (const p of players) if (p.nick) S.names[p.id] = cleanNick(p.nick);
+    S.rankList = players;
+    S.rankAt = Date.now();
     renderHud();
     if (!$('#rank').hidden) renderRanking();
   } catch { toast('순위를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.'); }
@@ -1403,7 +1402,7 @@ async function alchemyTips() {
   S.target = null;
   renderAction();
   await say('', `호박은 바구니에 계속 모을 수 있어요. 최대 ${PUMPKIN_HOLD_MAX}개까지 들어가요.`, 'sys');
-  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 꽝일 수도, 사탕 10개일 수도 있어요!`, 'sys');
+  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 꽝일 수도, 사탕 5개일 수도 있어요!`, 'sys');
   await say('', '솥은 한 번 끓이면 10분 동안 식혀야 해요. 노크 사이사이에 한 방을 노려 보세요.', 'sys');
   $('#dialog').hidden = true;
   S.busy = false;
@@ -1995,6 +1994,11 @@ function candyGame(challenge) {
     let held = false, wantedHeld = false, inputIndex = 0, simAt = 0, raf = 0, finished = false;
     const inputs = [];
     const start = performance.now();
+    const heartbeatTimer = challenge?.id && S.mode === 'firebase'
+      ? setInterval(() => {
+        gameRequest({ type: 'knock-heartbeat', challengeId: challenge.id }).catch(() => {});
+      }, 15000)
+      : null;
 
     function setHeld(next) {
       if (finished || next === wantedHeld) return;
@@ -2038,6 +2042,7 @@ function candyGame(challenge) {
       if (finished) return;
       finished = true;
       cancelAnimationFrame(raf);
+      if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
       S.candyControl = null;
       const trace = encodeCandyInputs(inputs.filter((input) => input.t <= simAt));
       box.classList.add(won ? 'hit' : 'miss');
@@ -2152,9 +2157,16 @@ async function knock(slot) {
   $('#dlg-choices').hidden = true;
   S.openDoor = null;
   S.npc = null;
-  S.busy = false;
   canvas.focus({ preventScroll: true });
-  if (next === 'again') { await wait(150); knock(slot); return; }
+  if (next === 'again') {
+    const retryUid = S.me, retryRound = S.event?.id || 'practice';
+    await wait(1000);
+    S.busy = false;
+    if (S.me === retryUid && (S.event?.id || 'practice') === retryRound) return knock(slot);
+    renderAction();
+    return;
+  }
+  S.busy = false;
   S.near = null;
   updateNear();
   if (next === 'note') openNote(id);
@@ -2541,7 +2553,7 @@ async function connectFirebaseGame(uid) {
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
-  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null, online: [] });
+  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [] });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
   const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
@@ -2682,7 +2694,7 @@ async function connectFirebaseGame(uid) {
         if (snapshot.metadata.fromCache) return;
         const previous = S.event?.id;
         S.event = snapshot.exists() ? snapshot.data() : null;
-        if (previous && previous !== S.event?.id) { S.rankList = null; toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.'); }
+        if (previous && previous !== S.event?.id) { S.rankList = null; S.rankAt = 0; toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.'); }
         applyFirebasePlayers(); resolve();
       }, (error) => { S.readOnly = true; toast('이벤트 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
     ]));

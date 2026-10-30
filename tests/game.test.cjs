@@ -288,6 +288,31 @@ for (const won of [true, false]) {
   });
 }
 
+for (const changeRound of [false, true]) {
+  test(`retry grace blocks extra actions and ${changeRound ? 'cancels across rounds' : 'continues after the wait'}`, async () => {
+    const g = game(); g.players();
+    g.run(`S.players.me.pumpkins = 3; globalThis.attempts = 0;
+      say = async () => {}; choose = async () => attempts === 1 ? 'again' : 'bye';
+      candyGame = async () => { attempts++; return { won: false, inputs: [], elapsedMs: 4200 }; };`);
+    const flow = g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`);
+    for (let i = 0; i < 20; i++) {
+      await tick();
+      if ([...g.timers.values()].some((timer) => timer.delay === 1000)) break;
+      const timer = [...g.timers.values()].sort((a, b) => a.at - b.at)[0];
+      assert.ok(timer);
+      g.fire(timer.delay);
+    }
+    assert.equal(g.run('S.busy'), true);
+    await g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`);
+    assert.equal(g.run('attempts'), 1);
+    if (changeRound) g.run(`S.event = { id: 'another-round' }`);
+    g.fire(1000);
+    await g.finish(flow);
+    assert.equal(g.run('attempts'), changeRound ? 1 : 2);
+    assert.equal(g.run('S.busy'), false);
+  });
+}
+
 test('a miss leaves candy unchanged; decor reduces rank balance', () => {
   const g = game(); g.players();
   g.run(`S.players.me.knocks = Array.from({length: 15}, (_, i) => ({h: 'host', r: 'lose', at: i + 1})); S.ledger = null`);
@@ -718,20 +743,22 @@ test('visits from another village are read from the host document without double
   assert.match(g.run('guestbookHtml(S.me)'), /또 올게/);
 });
 
-test('online rankings come from one full read when the rank window opens', async () => {
+test('online rankings come from the shared server list and are not refetched within thirty seconds', async () => {
   const g = game(); village(g);
-  g.run(`var reads = 0; S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() + 60000 };
-    S.account = { firestore: {}, firestoreSdk: { collection: (db, name) => name, getDocs: async (name) => { reads += 1; return { docs: [
-      { id: 'me', data: () => ({ nick: '나', costume: 'ghost', round: 'r1', candies: 9 }) },
-      { id: 'far', data: () => ({ nick: '먼집', costume: 'cat', round: 'r1', candies: 12 }) },
-    ] }; } } };`);
+  g.run(`var calls = []; S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() + 60000 };
+    accountRequest = async (url) => { calls.push(url); return { players: [
+      { id: 'far', nick: '먼집', costume: 'cat', n: 12, village: 2 }, { id: 'me', nick: '나', costume: 'ghost', n: 9, village: 1 },
+    ] }; };`);
   assert.equal(g.run('ranking().length'), 0);
   g.run(`openModal('rank')`);
   await tick(); await tick();
-  assert.equal(g.run('reads'), 1);
+  assert.equal(g.run('JSON.stringify(calls)'), '["/api/game/leaderboard"]');
   assert.equal(g.run('ranking()[0].id'), 'far');
   assert.match(g.run('eventLine()'), /내 순위 2등/);
   assert.match(g.elements.get('rk-list').innerHTML, /먼집/);
+  g.run(`closeModal('rank'); openModal('rank')`);
+  await tick();
+  assert.equal(g.run('calls.length'), 1, 'reopening right away reuses the list');
 });
 
 test('chat reaches every village but shows a bubble only for people in the same village', () => {
