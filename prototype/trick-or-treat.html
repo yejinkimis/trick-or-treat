@@ -436,6 +436,7 @@ const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
 const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000;
 const CANDY_GAME_MS = 18000, CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5;
+const CANDY_BAR_UP_SPEED = .72, CANDY_BAR_DOWN_SPEED = .82, CANDY_BAR_ACCELERATION = 2.6, CANDY_BAR_BRAKING = 8;
 const DECOR = {
   lantern: { name: '호박등', price: 2, icon: 'lantern', line: '문 옆에서 빛나는 호박' },
   web: { name: '거미줄', price: 2, icon: 'web', line: '지붕 모서리에 거미줄' },
@@ -1744,7 +1745,11 @@ function candyGame(challenge) {
         held = inputs[inputIndex].down;
         inputIndex++;
       }
-      velocity = clamp(velocity + (held ? -3.8 : 4.6) * stepSeconds, -1.7, 1.7);
+      const targetVelocity = held ? -CANDY_BAR_UP_SPEED : CANDY_BAR_DOWN_SPEED;
+      const reversing = velocity !== 0 && Math.sign(velocity) !== Math.sign(targetVelocity);
+      const acceleration = reversing ? CANDY_BAR_BRAKING : CANDY_BAR_ACCELERATION;
+      const velocityChange = acceleration * stepSeconds;
+      velocity += clamp(targetVelocity - velocity, -velocityChange, velocityChange);
       barY += velocity * stepSeconds;
       if (barY < 0) { barY = 0; velocity = Math.max(0, velocity); }
       if (barY > 1 - barHeight) { barY = 1 - barHeight; velocity = Math.min(0, velocity); }
