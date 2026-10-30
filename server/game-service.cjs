@@ -95,8 +95,8 @@ async function action(authorization, input) {
           brews: [...(player.brews || []), { at: now, n: gain, round }].slice(-20) });
         result = { gain, candies: count + gain, pumpkins, brewAt: now };
       } else if (type === 'decor') {
+        if (typeof input.item !== 'string' || !Object.hasOwn(PRICES, input.item)) fail('장식을 확인해 주세요.');
         const price = PRICES[input.item];
-        if (!price) fail('장식을 확인해 주세요.');
         if (player.decor?.[input.item]?.round === round) fail('이미 설치한 장식이에요.');
         if (count < price) fail('사탕이 부족해요.');
         tx.update(playerRef, { round, candies: count - price, decor: { ...(player.decor || {}), [input.item]: { at: now, round } } });

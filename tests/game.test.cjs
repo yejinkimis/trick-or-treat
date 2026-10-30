@@ -288,6 +288,31 @@ for (const won of [true, false]) {
   });
 }
 
+for (const changeRound of [false, true]) {
+  test(`retry grace blocks extra actions and ${changeRound ? 'cancels across rounds' : 'continues after the wait'}`, async () => {
+    const g = game(); g.players();
+    g.run(`S.players.me.pumpkins = 3; globalThis.attempts = 0;
+      say = async () => {}; choose = async () => attempts === 1 ? 'again' : 'bye';
+      candyGame = async () => { attempts++; return { won: false, inputs: [], elapsedMs: 4200 }; };`);
+    const flow = g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`);
+    for (let i = 0; i < 20; i++) {
+      await tick();
+      if ([...g.timers.values()].some((timer) => timer.delay === 1000)) break;
+      const timer = [...g.timers.values()].sort((a, b) => a.at - b.at)[0];
+      assert.ok(timer);
+      g.fire(timer.delay);
+    }
+    assert.equal(g.run('S.busy'), true);
+    await g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`);
+    assert.equal(g.run('attempts'), 1);
+    if (changeRound) g.run(`S.event = { id: 'another-round' }`);
+    g.fire(1000);
+    await g.finish(flow);
+    assert.equal(g.run('attempts'), changeRound ? 1 : 2);
+    assert.equal(g.run('S.busy'), false);
+  });
+}
+
 test('a miss leaves candy unchanged; decor reduces rank balance', () => {
   const g = game(); g.players();
   g.run(`S.players.me.knocks = Array.from({length: 15}, (_, i) => ({h: 'host', r: 'lose', at: i + 1})); S.ledger = null`);

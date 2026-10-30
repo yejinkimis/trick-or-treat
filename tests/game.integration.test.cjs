@@ -69,6 +69,10 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   assert.equal(secondLoss.hostCandies, 0);
   await assert.rejects(act(first, { type: 'candies', candies: 999 }), /지원하지/);
   const before = balance(await saved(first), start.event);
+  for (const item of ['__proto__', 'constructor', 'toString', ['lantern'], null]) {
+    await assert.rejects(act(first, { type: 'decor', item }), /장식을 확인/);
+    assert.equal(balance(await saved(first), start.event), before);
+  }
   await act(first, { type: 'decor', item: 'lantern' });
   assert.equal(balance(await saved(first), start.event), before - 2);
   await assert.rejects(act(first, { type: 'decor', item: 'lantern' }), /이미 설치/);
@@ -135,6 +139,27 @@ test('event stop and a winning candy transfer are serialized at the round bounda
 
   assert.deepEqual((await services().db.collection('gameRounds').doc(started.event.id).get()).data().results, final);
   await assert.rejects(act(visitor, { type: 'knock-finish', ...attempt }), /이벤트가 끝났|도전이 끝났/);
+});
+
+test('a replaced or previous-round challenge cannot release another challenger house lock', async () => {
+  const [owner, first, second, host] = await Promise.all(['관리', '이전', '다음', '대상'].map(player));
+  process.env.GAME_ADMIN_UIDS = owner.uid;
+  await act(owner, { type: 'event-start' });
+  for (const p of [first, second]) await services().db.collection('gamePlayers').doc(p.uid).update({ pumpkins: 3 });
+  const prior = await winningChallenge(first, host);
+  const lockRef = services().db.collection('gameHouseLocks').doc(host.uid);
+  await lockRef.update({ createdAt: Date.now() - 60 * 60 * 1000 - 1 });
+  const next = (await act(second, { type: 'knock-start', host: host.uid })).challenge;
+  await assert.rejects(act(first, { type: 'knock-finish', ...prior }), /유효하지/);
+  assert.equal((await lockRef.get()).data().challengeId, next.id);
+  await act(owner, { type: 'event-stop' });
+  await act(owner, { type: 'event-start' });
+  await assert.rejects(act(second, { type: 'knock-finish', challengeId: next.id, inputs: [], elapsedMs: 2800 }), /끝났거나/);
+  const fresh = await winningChallenge(second, host);
+  assert.equal(fresh.level, 1);
+  await act(second, { type: 'knock-finish', ...fresh });
+  assert.equal((await lockRef.get()).exists, false);
+  await act(owner, { type: 'event-stop' });
 });
 
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {

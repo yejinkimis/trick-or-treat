@@ -2020,9 +2020,16 @@ async function knock(slot) {
   $('#dlg-choices').hidden = true;
   S.openDoor = null;
   S.npc = null;
-  S.busy = false;
   canvas.focus({ preventScroll: true });
-  if (next === 'again') { await wait(1000); knock(slot); return; }
+  if (next === 'again') {
+    const retryUid = S.me, retryRound = S.event?.id || 'practice';
+    await wait(1000);
+    S.busy = false;
+    if (S.me === retryUid && (S.event?.id || 'practice') === retryRound) return knock(slot);
+    renderAction();
+    return;
+  }
+  S.busy = false;
   S.near = null;
   updateNear();
   if (next === 'note') openNote(id);
