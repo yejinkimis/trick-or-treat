@@ -867,3 +867,32 @@ test('dialog text cannot be selected and any later click, Space, → or ↓ move
   assert.equal(g.run('lines.length'), 4);
   assert.equal(g.run('dialogWaiting()'), true, 'the last line still waits until the caller closes it');
 });
+
+test('choices start on the first option, move with ← →, pick with Space or Enter, and Esc closes only when allowed', async () => {
+  const g = game(); g.players();
+  const key = (code, extra = '') => g.run(`document.listeners.keydown({ code: '${code}', key: '${code === 'Escape' ? 'Escape' : code}', repeat: false, target: null, preventDefault() {} ${extra} })`);
+  const options = `[['again', '한 번 더'], ['note', '방명록'], ['bye', '그만']]`;
+  g.run(`$('#dialog').hidden = false; var picked = choose(${options}, { cancel: 'bye' });`);
+  assert.equal(g.run('choice.index'), 0, 'the first option is chosen by default');
+  key('ArrowRight'); key('ArrowRight'); key('ArrowRight');
+  assert.equal(g.run('choice.index'), 2, 'stops at the last option');
+  key('ArrowLeft');
+  key('Enter');
+  assert.equal(await g.run('picked'), 'note');
+  assert.equal(g.run('choice'), null);
+
+  g.run(`var spaced = choose(${options}, { cancel: 'bye' });`);
+  key('Space');
+  assert.equal(await g.run('spaced'), 'again');
+
+  g.run(`var escaped = choose(${options}, { cancel: 'bye' });`);
+  key('Escape');
+  assert.equal(await g.run('escaped'), 'bye', 'Esc closes with the cancel option');
+
+  g.run(`var settled = false; var required = choose([['a', '가'], ['b', '나']]).then((v) => { settled = true; return v; });`);
+  key('Escape');
+  await tick();
+  assert.equal(g.run('settled'), false, 'a required choice ignores Esc');
+  key('KeyD'); key('Space');
+  assert.equal(await g.run('required'), 'b');
+});

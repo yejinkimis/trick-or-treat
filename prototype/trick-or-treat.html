@@ -1904,13 +1904,27 @@ async function say(who, text, kind = '') {
   $('#dlg-next').hidden = false;
   await new Promise((res) => { advanceFn = res; });
 }
-async function choose(options) {
+// 선택지는 첫 번째가 골라진 채로 뜨고 ←→로 옮겨 스페이스·엔터로 고른다.
+// cancel을 준 선택지만 Esc로 닫을 수 있고, 꼭 골라야 하는 선택지는 Esc를 무시한다.
+let choice = null;
+async function choose(options, { cancel = null } = {}) {
   $('#dlg-next').hidden = true;
   const box = $('#dlg-choices');
-  box.innerHTML = options.map(([key, text], i) => `<button class="pbtn ${i ? '' : 'hot'}" type="button" data-choice="${key}">${text}</button>`).join('');
+  box.innerHTML = options.map(([key, text]) => `<button class="pbtn" type="button" data-choice="${key}">${text}</button>`).join('');
   box.hidden = false;
-  box.querySelector('button').focus();
-  return new Promise((res) => { advanceFn = null; box.onclick = (e) => { const b = e.target.closest('[data-choice]'); if (b) res(b.dataset.choice); }; });
+  return new Promise((res) => {
+    advanceFn = null;
+    const pick = (key) => { if (choice?.pick === pick) choice = null; res(key); };
+    choice = { keys: options.map(([key]) => key), index: 0, cancel, pick };
+    markChoice();
+    box.onclick = (e) => { const b = e.target.closest('[data-choice]'); if (b) pick(b.dataset.choice); };
+  });
+}
+function markChoice() {
+  [...$('#dlg-choices').querySelectorAll('button')].forEach((button, i) => {
+    button.classList.toggle('hot', i === choice.index);
+    if (i === choice.index) button.focus();
+  });
 }
 function advance() {
   if (typing) { typing.finish(); return; }
@@ -2152,7 +2166,7 @@ async function knock(slot) {
   } else {
     await say(hostName, '아쉽다! 이번에는 사탕을 놓쳤어. 사탕은 그대로야.');
   }
-  const next = await choose([['again', '한 번 더 똑똑'], ['note', '방명록 쓰기'], ['bye', '그만 갈래']]);
+  const next = await choose([['again', '한 번 더 똑똑'], ['note', '방명록 쓰기'], ['bye', '그만 갈래']], { cancel: 'bye' });
   $('#dialog').hidden = true;
   $('#dlg-choices').hidden = true;
   S.openDoor = null;
@@ -2350,17 +2364,20 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   if (e.key === 'Escape') {
-    for (const id of MODALS) if (!['intro', 'auth'].includes(id) && !$(`#${id}`).hidden) closeModal(id);
+    if (modalOpen()) { for (const id of MODALS) if (!['intro', 'auth'].includes(id) && !$(`#${id}`).hidden) closeModal(id); }
+    else if (choice?.cancel && !$('#dialog').hidden) { e.preventDefault(); choice.pick(choice.cancel); }
     return;
   }
   if (modalOpen()) return;
-  if (!$('#dialog').hidden && !$('#dlg-choices').hidden && ['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(e.code)) {
-    e.preventDefault();
-    const btns = [...$('#dlg-choices').querySelectorAll('button')];
-    const at = btns.indexOf(document.activeElement);
-    const step = e.code === 'ArrowLeft' || e.code === 'KeyA' ? -1 : 1;
-    btns[clamp(at + step, 0, btns.length - 1)]?.focus();
-    return;
+  if (choice && !$('#dialog').hidden) {
+    if (['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD'].includes(e.code)) {
+      e.preventDefault();
+      const step = e.code === 'ArrowLeft' || e.code === 'KeyA' ? -1 : 1;
+      choice.index = clamp(choice.index + step, 0, choice.keys.length - 1);
+      markChoice();
+      return;
+    }
+    if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); if (!e.repeat) choice.pick(choice.keys[choice.index]); return; }
   }
   if (dialogWaiting() && ['ArrowRight', 'ArrowDown'].includes(e.code)) { e.preventDefault(); if (!e.repeat) advance(); return; }
   if (e.code === 'KeyF') { e.preventDefault(); bonk(); return; }
