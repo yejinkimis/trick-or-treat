@@ -1088,6 +1088,15 @@ test('sound starts with music off and effects on, and the sound window saves eac
   assert.equal(again.run('sound.sfx'), false);
 });
 
+test('the speaker button shows a crossed-out speaker only when music and effects are both off', () => {
+  const g = game();
+  g.run(`var icons = []; const realSprite = spriteUrl; spriteUrl = (key, scale) => (icons.push(key), realSprite(key, scale));`);
+  g.run(`setSound('sfx', false)`);
+  g.run(`setSound('bgm', true)`);
+  g.run(`setSound('bgm', false)`);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(icons)')), ['speakerOff', 'speaker', 'speakerOff']);
+});
+
 test('broken or missing sound storage falls back to the defaults', () => {
   for (const storage of [memoryStorage({ 'trick-or-treat:sound': '{broken' }), memoryStorage({ 'trick-or-treat:sound': '{"bgm":"yes"}' }), undefined]) {
     const g = game({ storage });

@@ -161,6 +161,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .crew small{color:var(--muted);margin-left:6px}
 .auth .sheet{width:min(480px,100%)}
 .modal.small .sheet{width:min(420px,100%)}
+.pbtn.icon-btn{padding:8px 10px 7px}
 .auth form{display:grid;gap:12px}
 .auth-error{margin:0;padding:8px 10px;border:2px solid var(--candy);color:var(--text)}
 .auth-note{padding:10px 12px;border:2px solid var(--panel-2);color:var(--muted)}
@@ -232,7 +233,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-crew" type="button">크루 찾기</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
   <button class="pbtn" id="open-online" type="button" hidden>마을 지도</button>
-  <button class="pbtn" id="open-sound" type="button">소리</button>
+  <button class="pbtn icon-btn" id="open-sound" type="button" aria-label="소리" title="소리"><img class="px-img" id="sound-icon" alt=""></button>
   <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
 </div>
 
@@ -615,10 +616,13 @@ const WEB = ['gggggggggg', '.g...g..g.', '..gg.g.g..', '....ggg...', '...g.g.g..
 const BAT_A = ['k.......k', 'kk.kkk.kk', '.kkkkkkk.', '...k.k...'];
 const BAT_B = ['.........', '...kkk...', 'kkkkkkkkk', 'k..k.k..k'];
 const STAR = ['..y..', '.yyy.', 'yyyyy', '.yyy.', '..y..'];
+const SPEAKER = ['.....w......', '....ww...y..', 'wwwwww.y..y.', 'wwwwww..y.y.', 'wwwwww..y.y.', 'wwwwww..y.y.', 'wwwwww.y..y.', '....ww...y..', '.....w......'];
+const SPEAKER_OFF = ['.....w......', '....ww......', 'wwwwww.r...r', 'wwwwww..r.r.', 'wwwwww...r..', 'wwwwww..r.r.', 'wwwwww.r...r', '....ww......', '.....w......'];
 const TILE_SPR = {
   tree: makeSprite(TREE), pumpkin: makeSprite(PUMPKIN), grave: makeSprite(GRAVE), cauldron: makeSprite(CAULDRON),
   candy: makeSprite(CANDY), doodle: makeSprite(DOODLE), hammer: makeSprite(HAMMER), star: makeSprite(STAR), basket: makeSprite(BASKET),
   lantern: makeSprite(LANTERN), web: makeSprite(WEB), batA: makeSprite(BAT_A), batB: makeSprite(BAT_B),
+  speaker: makeSprite(SPEAKER), speakerOff: makeSprite(SPEAKER_OFF),
 };
 
 const urlCache = {};
@@ -2372,7 +2376,9 @@ function setSound(key, on) {
   syncBgm();
   renderSound();
 }
+// 음악이나 효과음 중 하나라도 켜져 있으면 소리 나는 스피커, 둘 다 꺼지면 X 표시 스피커를 보여 준다.
 function renderSound() {
+  $('#sound-icon').src = spriteUrl(sound.bgm || sound.sfx ? 'speaker' : 'speakerOff', 2);
   for (const key of ['bgm', 'sfx']) {
     const btn = $(`#sd-${key}`);
     btn.textContent = sound[key] ? '켜짐' : '꺼짐';
@@ -2399,6 +2405,7 @@ function unlockSound() {
 }
 window.addEventListener('pointerdown', unlockSound, true);
 window.addEventListener('keydown', unlockSound, true);
+renderSound();
 document.addEventListener('visibilitychange', () => {
   if (!sound.audio) return;
   if (document.visibilityState === 'hidden') sound.audio.ctx.suspend().catch(() => {});
