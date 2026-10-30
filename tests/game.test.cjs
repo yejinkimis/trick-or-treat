@@ -453,3 +453,41 @@ test('replacing a dismissible notice removes its click handler', async () => {
   assert.equal([...g.timers.values()].some((t) => t.delay === 4000), false);
   g.fire(3000); await nextNotice;
 });
+
+for (const code of ['Space', 'ArrowRight']) {
+  test(`${code} dismisses creation notice without moving or skipping tutorial`, async () => {
+    const g = game(); g.players();
+    const welcome = g.run('welcomeTips("분장 완료")'); await tick();
+    assert.equal(g.elements.get('toast').textContent, '분장 완료');
+    let prevented = 0, stopped = 0;
+    g.run('document.captureListeners.keydown')({ code, repeat: false, target: null, isComposing: false, preventDefault() { prevented++; }, stopImmediatePropagation() { stopped++; } });
+    await tick();
+    assert.equal(prevented, 1); assert.equal(stopped, 1);
+    assert.equal(g.run('keys.size'), 0);
+    assert.equal(g.run('document.captureListeners.keydown'), undefined);
+    assert.equal(g.run('document.captureListeners.click'), undefined);
+    assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+    // 키를 누르고 있어도 자동 반복으로 다음 설명까지 넘기지 않는다.
+    g.run(`document.listeners.keydown({target: null, key: ' ', code: 'Space', repeat: true, preventDefault() {}})`);
+    await tick();
+    assert.match(g.elements.get('dlg-text').textContent, /실제 선물/);
+    for (let i = 0; i < 3; i++) { g.run('advance()'); await tick(); }
+    await g.finish(welcome);
+  });
+}
+
+test('held keys and composing keys leave the creation notice visible', async () => {
+  const g = game();
+  const notice = g.run('toast("분장 완료", {duration: 4000, dismissOnClick: true})');
+  const keydown = g.run('document.captureListeners.keydown');
+  for (const event of [
+    { code: 'Space', repeat: true },
+    { code: 'ArrowRight', isComposing: true },
+    { code: 'Space', keyCode: 229 },
+    { code: 'KeyA' },
+  ]) keydown({ target: null, preventDefault() {}, stopImmediatePropagation() {}, ...event });
+  assert.equal(g.elements.get('toast').hidden, false);
+  g.fire(4000); await notice;
+  assert.equal(g.run('document.captureListeners.keydown'), undefined);
+  assert.equal(g.run('document.captureListeners.click'), undefined);
+});

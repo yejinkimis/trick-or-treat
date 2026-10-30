@@ -1468,12 +1468,13 @@ function toast(msg, { duration = 3000, dismissOnClick = false } = {}) {
   // 새 알림으로 교체될 때도 기존 대기자는 풀어 주고 현재 알림을 기다릴 수 있게 한다.
   finishToast?.();
   const t = $('#toast');
-  t.textContent = dismissOnClick ? `${msg} · 화면을 클릭·터치하면 바로 시작` : msg;
+  t.textContent = msg;
   t.hidden = false;
   toastDone = new Promise((resolve) => {
     const finish = () => {
       clearTimeout(toastTimer);
       document.removeEventListener('click', dismiss, true);
+      document.removeEventListener('keydown', dismissKey, true);
       t.hidden = true;
       finishToast = null;
       resolve();
@@ -1484,8 +1485,17 @@ function toast(msg, { duration = 3000, dismissOnClick = false } = {}) {
       e.stopImmediatePropagation();
       finish();
     };
+    const dismissKey = (e) => {
+      if (!['Space', 'ArrowRight'].includes(e.code) || isImeComposing(e) || typingInField(e)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!e.repeat) finish();
+    };
     finishToast = finish;
-    if (dismissOnClick) document.addEventListener('click', dismiss, true);
+    if (dismissOnClick) {
+      document.addEventListener('click', dismiss, true);
+      document.addEventListener('keydown', dismissKey, true);
+    }
     toastTimer = setTimeout(finish, duration);
   });
   return toastDone;
@@ -1865,7 +1875,7 @@ document.addEventListener('keydown', (e) => {
   if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); return; }
   if (e.code === 'Enter' && $('#dialog').hidden) { e.preventDefault(); openChat(); return; }
   if (e.code === 'Space' || e.code === 'Enter') {
-    if (!$('#dialog').hidden && $('#dlg-choices').hidden) { e.preventDefault(); advance(); }
+    if (!$('#dialog').hidden && $('#dlg-choices').hidden) { e.preventDefault(); if (!e.repeat) advance(); }
     else if ($('#dialog').hidden && (S.near || S.nearPumpkin) && !$('#act-btn').disabled && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); act(); }
   }
 });
