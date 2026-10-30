@@ -812,3 +812,27 @@ test('brewing spends thirty pumpkins, adds rolled candy, keeps the basket and co
   assert.equal(g.run('candiesOf("me")'), 12);
   assert.match(g.elements.get('toast').textContent, /식는 중/);
 });
+
+test('an online harvest shows at once while the server answers, and rolls back if the server refuses', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; crypto = { randomUUID: () => 'harvest-request' };
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } } };
+    var answer; accountRequest = () => new Promise((resolve, reject) => { answer = { resolve, reject }; });
+    S.pumpkins = [{ x: 32, y: 32 }]; var first = harvest(S.pumpkins[0]);`);
+  await tick();
+  assert.equal(g.run('S.pumpkins.length'), 0, 'the pumpkin disappears before the server answers');
+  assert.equal(g.run('S.players.me.pumpkins'), 1);
+  assert.equal(g.run('S.floats.some((f) => f.text === "호박 +1")'), true);
+  g.run('answer.resolve({ pumpkins: 1, basket: false })');
+  await g.run('first');
+  assert.equal(g.run('S.players.me.pumpkins'), 1);
+
+  g.run(`S.pumpkins = [{ x: 48, y: 48 }]; var second = harvest(S.pumpkins[0]);`);
+  await tick();
+  assert.equal(g.run('S.players.me.pumpkins'), 2);
+  g.run(`const refused = new Error('조금 뒤 다른 호박을 따 주세요.'); refused.status = 429; answer.reject(refused);`);
+  await g.run('second');
+  assert.equal(g.run('S.players.me.pumpkins'), 1, 'a refused harvest is taken back');
+  assert.equal(g.run('S.pumpkins.length'), 1, 'and the pumpkin returns');
+  assert.match(g.elements.get('toast').textContent, /조금 뒤 다른 호박/);
+});

@@ -1372,22 +1372,30 @@ function rollBrew() {
 async function harvest(p) {
   if (S.busy || S.readOnly || !myCostume() || S.harvesting) return;
   if ((S.players[S.me]?.pumpkins || 0) >= PUMPKIN_HOLD_MAX) { toast(`바구니가 꽉 찼어요. 호박은 ${PUMPKIN_HOLD_MAX}개까지 들 수 있어요.`); return; }
-  const hadBasket = hasBasket(S.me);
-  let have;
+  const hadBasket = hasBasket(S.me), before = S.players[S.me]?.pumpkins || 0;
+  let have = before + 1;
+  // 서버가 멀어 응답이 늦어도 바로 딴 것처럼 보여 주고, 서버가 거절하면 호박과 개수를 되돌린다.
+  S.pumpkins = S.pumpkins.filter((q) => q !== p);
+  S.floats.push({ text: '호박 +1', x: p.x, y: p.y - 12, t: 0, life: 0.9 });
   if (S.mode === 'firebase') {
     S.harvesting = true;
+    const prior = { pumpkins: before, basket: S.players[S.me]?.basket };
+    S.players[S.me] = { ...S.players[S.me], pumpkins: have, basket: hadBasket || have >= BASKET_PUMPKINS };
+    render();
     let saved;
     try { saved = await gameRequest({ type: 'harvest' }); }
-    catch (error) { toast(error.message); return; }
-    finally { S.harvesting = false; }
+    catch (error) {
+      S.players[S.me] = { ...S.players[S.me], ...prior };
+      S.pumpkins.push(p);
+      render();
+      toast(error.message);
+      return;
+    } finally { S.harvesting = false; }
     have = saved.pumpkins;
     S.players[S.me] = { ...S.players[S.me], pumpkins: have, basket: saved.basket }; render();
   } else {
-    have = (S.players[S.me]?.pumpkins || 0) + 1;
     saveMe({ pumpkins: have, basket: hadBasket || have >= BASKET_PUMPKINS });
   }
-  S.pumpkins = S.pumpkins.filter((q) => q !== p);
-  S.floats.push({ text: '호박 +1', x: p.x, y: p.y - 12, t: 0, life: 0.9 });
   if (!hadBasket && hasBasket(S.me)) { toast('퀘스트 완료! 바구니 완성! 이제 친구 집에서 사탕을 가져올 수 있어요.'); alchemyTips(); }
   else if (!hadBasket) toast(`호박 ${have}개. 바구니까지 ${BASKET_PUMPKINS - have}개 남았어요.`);
   else if (have === BREW_COST) toast(`호박 ${BREW_COST}개! 광장의 마녀 솥에서 연금술을 해 보세요.`);
