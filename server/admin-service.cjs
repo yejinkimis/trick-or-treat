@@ -2,6 +2,8 @@ const { randomUUID } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
+const { PRICES } = require('./game-service.cjs');
+const { watchList } = require('./watch.cjs');
 
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
 const reject = (status, code, message) => { throw new AuthError(status, code, message); };
@@ -43,6 +45,12 @@ async function searchUsers(authorization, query) {
       notes: (p.notes || []).slice(-50).reverse().map((note) => ({ host: note.h, at: note.at, text: note.text })),
     };
   })) };
+}
+
+async function watchAccounts(authorization) {
+  await requireAdmin(authorization);
+  const snap = await services().db.collection('gamePlayers').get();
+  return { users: watchList(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })), { now: Date.now(), prices: PRICES }) };
 }
 
 async function moderate(authorization, input) {
@@ -116,4 +124,4 @@ async function moderate(authorization, input) {
   return { ok: true };
 }
 
-module.exports = { searchUsers, moderate };
+module.exports = { searchUsers, watchAccounts, moderate };

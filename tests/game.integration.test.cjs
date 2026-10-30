@@ -5,7 +5,7 @@ const { signup, updateProfile } = require('../server/auth-service.cjs');
 const { FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
 const { FieldValue } = require('firebase-admin/firestore');
-const { searchUsers, moderate } = require('../server/admin-service.cjs');
+const { searchUsers, watchAccounts, moderate } = require('../server/admin-service.cjs');
 after(() => services().database.goOffline());
 
 test('admin moderation enforces permissions, bans existing sessions, hides houses and removes matching content', async (t) => {
@@ -434,4 +434,23 @@ test('players from before the planted field get one on their next session', asyn
   await ref.update({ field: FieldValue.delete() });
   await session(old.authorization);
   assert.equal((await saved(old)).field.length, FIELD_SIZE);
+});
+
+test('the admin watch list shows who won from whom, how fast, and stays admin-only', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, visitor, host] = await Promise.all(['감', '봇', '부'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await harvest(visitor);
+  await act(visitor, { type: 'knock-finish', ...(await winningChallenge(visitor, host)) });
+  await assert.rejects(watchAccounts(visitor.authorization), (e) => e.status === 403);
+  const row = (await watchAccounts(admin.authorization)).users.find((u) => u.id === visitor.uid);
+  assert.equal(row.tries, 1);
+  assert.equal(row.wins, 1);
+  assert.ok(row.fastestWinMs > 0 && row.fastestWinMs <= 6000);
+  assert.equal(row.candy.knocks, 1);
+  assert.equal(row.harvests, 1);
+  assert.deepEqual(row.topSource && [row.topSource.id, row.topSource.wins], [host.uid, 1]);
+  const hostRow = (await watchAccounts(admin.authorization)).users.find((u) => u.id === host.uid);
+  assert.equal(hostRow, undefined, 'a host who only lost candy has no activity of their own');
 });

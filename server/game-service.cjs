@@ -4,12 +4,14 @@ const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
 const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 const { readVillagePlan } = require('./village.cjs');
+const { hourOf } = require('./watch.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
 const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
 const hasBasket = (player) => player.basket === true || (player.pumpkins || 0) >= BASKET_PUMPKINS;
 // 호박은 서버가 밭에 심어 둔 것만 딸 수 있다. 화면은 자리 번호(s)를 마을 풀밭 칸으로 바꿔 그린다.
+const MAX_CHALLENGE_LOG = 50, HARVEST_HOURS_KEPT = 25;
 const FIELD_SIZE = 6, REGROW_MIN_MS = 6000, REGROW_MAX_MS = 12000, FIELD_CLOCK_SLACK_MS = 1000;
 const plantPumpkin = (at) => ({ id: randomUUID().replace(/-/g, '').slice(0, 12), s: randomInt(0, 0x7fffffff), at });
 const freshField = (now) => Array.from({ length: FIELD_SIZE }, () => plantPumpkin(now));
@@ -121,7 +123,11 @@ async function action(authorization, input) {
         const field = [...planted.filter((p) => p !== picked), plantPumpkin(now + randomInt(REGROW_MIN_MS, REGROW_MAX_MS + 1))];
         const pumpkins = (player.pumpkins || 0) + 1;
         const basket = hasBasket({ ...player, pumpkins });
-        tx.update(playerRef, { pumpkins, basket, harvestAt: now, field });
+        // 운영자 화면에서 오래 쉬지 않고 따는 계정을 볼 수 있게 시간대별 수확 수를 남긴다.
+        const hour = String(hourOf(now));
+        const harvestHours = Object.fromEntries(Object.entries({ ...(player.harvestHours || {}), [hour]: (player.harvestHours?.[hour] || 0) + 1 })
+          .sort((a, b) => Number(b[0]) - Number(a[0])).slice(0, HARVEST_HOURS_KEPT));
+        tx.update(playerRef, { pumpkins, basket, harvestAt: now, field, harvestHours });
         result = { pumpkins, basket, field };
       } else if (type === 'brew') {
         if (!hasBasket(player)) fail('호박 바구니부터 만들어요.');
@@ -228,7 +234,8 @@ async function action(authorization, input) {
         if (win) nextLevelByHost[challenge.host] = Math.min(MAX_LEVEL, challenge.level + 1);
         else delete nextLevelByHost[challenge.host];
         const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level };
-        const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now };
+        const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now,
+          challenges: [...(player.challenges || []), { at: now, h: challenge.host, w: win, ms: outcome.at, lv: challenge.level, m: moved }].slice(-MAX_CHALLENGE_LOG) };
         if (win) playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
         tx.update(playerRef, playerUpdate);
         if (win) tx.update(hostRef, { ...(moved ? { round, candies: hostCount - 1 } : {}),
@@ -249,4 +256,4 @@ async function action(authorization, input) {
   }, { maxAttempts: 20 });
 }
 
-module.exports = { FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { PRICES, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };

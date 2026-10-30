@@ -122,6 +122,7 @@ input[type=password]{flex:1 1 180px}
 .book li div{flex:1;min-width:0;overflow-wrap:anywhere;font-size:.92rem}
 .book .guest-name{color:var(--pumpkin)}
 .book .guest-message{color:var(--text)}
+.book .flag{color:var(--candy);font-size:.78rem}
 .book time{font-size:.78rem;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
 .tag{font-family:var(--f-px);font-weight:700;font-size:.8rem}
 .tag.treat{color:var(--slime)} .tag.trick{color:var(--candy)}
@@ -356,7 +357,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <h2 id="ad-title">관리자 도구<small>사용자 활동과 운영 조치</small></h2>
       <button class="pbtn" type="button" data-close="admin">닫기</button>
     </div>
-    <div class="row"><input id="ad-query" type="text" maxlength="40" placeholder="닉네임 또는 사용자 ID"><button class="pbtn hot" id="ad-search" type="button">검색</button></div>
+    <div class="row"><input id="ad-query" type="text" maxlength="40" placeholder="닉네임 또는 사용자 ID"><button class="pbtn hot" id="ad-search" type="button">검색</button><button class="pbtn" id="ad-watch" type="button">특이 계정</button></div>
     <ol class="book" id="ad-results"></ol>
     <div id="ad-detail" hidden></div>
   </div>
@@ -1960,9 +1961,19 @@ function renderCrew() {
 }
 
 const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
+const adminSeconds = (ms) => ms == null ? '-' : `${(ms / 1000).toFixed(1)}초`;
+const signed = (n) => (n > 0 ? `+${n}` : String(n));
+// 특이 계정은 참고 표시일 뿐이라, 숫자를 보고 운영자가 자세히 확인한 뒤 조치한다.
+function adminWatchHtml() {
+  return S.adminWatch.length ? S.adminWatch.map((u) => `<li><div><b>${esc(u.nick)}</b>${u.banned ? ' · 밴' : ''}${u.flags.map((f) => ` <small class="flag">${esc(f)}</small>`).join('')}<br>
+    <span class="note">24시간 도전 ${u.tries}번 · 성공률 ${Math.round(u.winRate * 100)}% · 성공 평균 ${adminSeconds(u.avgWinMs)} · 최단 ${adminSeconds(u.fastestWinMs)}</span><br>
+    <span class="note">사탕 ${signed(u.candy.net)} (노크 ${signed(u.candy.knocks)}, 연금술 ${signed(u.candy.brews)}, 장식 ${signed(u.candy.decor)}, 털림 ${signed(u.candy.lost)}) · 수확 ${u.harvests}개 · 활동 ${u.activeHours}개 시간대${u.topSource ? ` · ${esc(u.topSource.nick)}에게서 ${u.topSource.wins}번` : ''}</span></div>
+    <button class="pbtn" type="button" data-watch-target="${u.id}">자세히</button></li>`).join('')
+    : '<li><div>최근 24시간 동안 활동한 계정이 없어요.</div></li>';
+}
 function renderAdmin() {
   const results = $('#ad-results'), detail = $('#ad-detail');
-  results.innerHTML = S.adminUsers.map((user) => `<li><button class="pbtn" type="button" data-admin-target="${user.id}">${esc(user.nick)} · ${user.id.slice(0, 8)}${user.banned ? ' · 밴' : ''}</button></li>`).join('');
+  results.innerHTML = S.adminView === 'watch' ? adminWatchHtml() : S.adminUsers.map((user) => `<li><button class="pbtn" type="button" data-admin-target="${user.id}">${esc(user.nick)} · ${user.id.slice(0, 8)}${user.banned ? ' · 밴' : ''}</button></li>`).join('');
   const user = S.adminUsers.find((item) => item.id === S.adminSelected);
   detail.hidden = !user;
   if (!user) { detail.innerHTML = ''; return; }
@@ -1982,7 +1993,21 @@ async function loadAdminUsers() {
   const q = encodeURIComponent($('#ad-query').value.trim());
   const data = await accountRequest(`/api/game/admin?q=${q}`, { headers: { authorization: `Bearer ${token}` } });
   S.adminUsers = data.users;
+  S.adminView = 'search';
   if (!S.adminUsers.some((user) => user.id === S.adminSelected)) S.adminSelected = null;
+  renderAdmin();
+}
+async function loadAdminWatch() {
+  if (!S.isOwner || S.mode !== 'firebase') return;
+  const token = await S.account.auth.currentUser.getIdToken();
+  const data = await accountRequest('/api/game/admin?view=watch', { headers: { authorization: `Bearer ${token}` } });
+  Object.assign(S, { adminWatch: data.users, adminView: 'watch', adminSelected: null });
+  renderAdmin();
+}
+async function inspectAdminTarget(id) {
+  $('#ad-query').value = id;
+  await loadAdminUsers();
+  S.adminSelected = id;
   renderAdmin();
 }
 async function adminAction(type, extra = {}) {
@@ -2708,7 +2733,7 @@ function openModal(id) {
   if (id === 'rank') { void loadRanking(); renderRanking(); }
   if (id === 'crew') { void loadRanking(); renderCrew(); }
   if (id === 'online') renderOnline();
-  if (id === 'admin') { S.adminUsers = []; S.adminSelected = null; renderAdmin(); }
+  if (id === 'admin') { Object.assign(S, { adminUsers: [], adminWatch: [], adminView: 'search', adminSelected: null }); renderAdmin(); }
   if (id === 'note') renderNote();
   if (id === 'sound') renderSound();
   $(`#${id}`).hidden = false;
@@ -2905,6 +2930,8 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'sd-sfx') setSound('sfx', !sound.sfx);
   else if (t.dataset.visit) void visitHouse(t.dataset.visit);
   else if (t.id === 'ad-search') loadAdminUsers().catch((error) => toast(error.message));
+  else if (t.id === 'ad-watch') loadAdminWatch().catch((error) => toast(error.message));
+  else if (t.dataset.watchTarget) inspectAdminTarget(t.dataset.watchTarget).catch((error) => toast(error.message));
   else if (t.dataset.adminTarget) { S.adminSelected = t.dataset.adminTarget; renderAdmin(); }
   else if (t.dataset.adminAction) {
     const action = t.dataset.adminAction;

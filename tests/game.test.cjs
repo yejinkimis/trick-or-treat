@@ -1155,3 +1155,27 @@ test('the cauldron bubbles while brewing', async () => {
   await g.finish(g.run('brew()'));
   assert.deepEqual(JSON.parse(g.run('JSON.stringify(played)')), ['bubble', 'bubble', 'bubble']);
 });
+
+test('the admin special-accounts view lists the numbers and flags and opens the account on request', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.isOwner = true; openModal('admin');
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } } };
+    var urls = []; accountRequest = async (url) => { urls.push(url); return url.includes('view=watch')
+      ? { users: [{ id: 'b'.repeat(32), nick: '<봇>', banned: false, tries: 24, wins: 23, winRate: 23 / 24, avgWinMs: 4550, fastestWinMs: 4000,
+          candy: { knocks: 23, brews: 5, decor: -2, lost: -1, net: 25 }, harvests: 30, activeHours: 24,
+          topSource: { id: 'a'.repeat(32), nick: '부계정', wins: 12, share: .5 }, flags: ['성공률 높음', '오래 쉬지 않음'] }] }
+      : { users: [] }; };
+    var watched = loadAdminWatch();`);
+  await g.run('watched');
+  const html = g.elements.get('ad-results').innerHTML;
+  assert.equal(g.run('urls[0]'), '/api/game/admin?view=watch');
+  assert.match(html, /&lt;봇&gt;/);
+  assert.match(html, /성공률 96%/);
+  assert.match(html, /최단 4\.0초/);
+  assert.match(html, /사탕 \+25 \(노크 \+23, 연금술 \+5, 장식 -2, 털림 -1\)/);
+  assert.match(html, /부계정에게서 12번/);
+  assert.match(html, /<small class="flag">성공률 높음<\/small>/);
+  g.run(`var opened = inspectAdminTarget('${'b'.repeat(32)}')`);
+  await g.run('opened');
+  assert.equal(g.run('urls[1]'), `/api/game/admin?q=${'b'.repeat(32)}`);
+});
