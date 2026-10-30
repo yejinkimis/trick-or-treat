@@ -5,6 +5,8 @@ const MAX_LEVEL = 5;
 const MAX_INPUTS = 1000;
 const STALE_CHALLENGE_MS = 60 * 60 * 1000;
 const CHALLENGE_LOCK_TTL_MS = 60 * 1000;
+// 신호만 보내며 집을 계속 잠가 두지 못하게, 도전은 90초가 지나면 실패로 끝난다.
+const CHALLENGE_MAX_MS = 90 * 1000;
 const BAR_UP_SPEED = .72;
 const BAR_DOWN_SPEED = .82;
 const BAR_ACCELERATION = 2.6;
@@ -111,7 +113,7 @@ function evaluateCandyChallenge(challenge, inputs, elapsedMs, now = Date.now()) 
   const seconds = STEP_MS / 1000;
   const gain = .12 - (level - 1) * .004;
 
-  for (let time = STEP_MS; time <= elapsedMs; time += STEP_MS) {
+  for (let time = STEP_MS; time <= Math.min(elapsedMs, CHALLENGE_MAX_MS); time += STEP_MS) {
     while (inputIndex < transitions.length && transitions[inputIndex].t <= time) {
       held = transitions[inputIndex].down;
       inputIndex++;
@@ -133,6 +135,7 @@ function evaluateCandyChallenge(challenge, inputs, elapsedMs, now = Date.now()) 
     if (progress <= 0) return { valid: true, won: false, finished: true, progress, at: time };
   }
 
+  if (elapsedMs >= CHALLENGE_MAX_MS) return { valid: true, won: false, finished: true, timedOut: true, progress, at: CHALLENGE_MAX_MS };
   return { valid: true, won: false, finished: false, progress, at: elapsedMs };
 }
 
@@ -142,6 +145,7 @@ module.exports = {
   MAX_INPUTS,
   STALE_CHALLENGE_MS,
   CHALLENGE_LOCK_TTL_MS,
+  CHALLENGE_MAX_MS,
   createCandySeed,
   createCandyPathLookup,
   evaluateCandyChallenge,

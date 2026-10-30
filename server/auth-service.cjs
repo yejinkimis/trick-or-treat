@@ -194,11 +194,11 @@ async function rejectBanned(uid) {
   }
 }
 
-async function authenticatedUid(authorization) {
+async function authenticatedUid(authorization, { checkBan = true } = {}) {
   let decoded;
   try { decoded = await services().auth.verifyIdToken(readBearer(authorization)); }
   catch { throw new AuthError(401, 'unauthorized', '다시 로그인해 주세요.'); }
-  await rejectBanned(decoded.uid);
+  if (checkBan) await rejectBanned(decoded.uid);
   return decoded.uid;
 }
 

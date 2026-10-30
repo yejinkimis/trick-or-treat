@@ -2,7 +2,7 @@ const { randomUUID, randomInt } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
-const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
+const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, CHALLENGE_MAX_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 const { readVillagePlan } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 
@@ -16,6 +16,13 @@ const FIELD_SIZE = 6, REGROW_MIN_MS = 6000, REGROW_MAX_MS = 12000, FIELD_CLOCK_S
 const plantPumpkin = (at) => ({ id: randomUUID().replace(/-/g, '').slice(0, 12), s: randomInt(0, 0x7fffffff), at });
 const freshField = (now) => Array.from({ length: FIELD_SIZE }, () => plantPumpkin(now));
 const fieldOf = (player, now) => (Array.isArray(player.field) && player.field.length ? player.field : freshField(now));
+// 자주 바뀌는 호박·영수증·활동 기록은 본인만 읽는 비공개 문서에 둔다.
+// 마을 사람 모두가 구독하는 공개 문서를 덜 바꿔야 호박 하나에 마을 인원만큼 읽기가 생기지 않는다.
+const MAX_RECEIPTS = 20, MAX_ACTIVITY = 30;
+const privateState = (doc, player, now) => (doc.exists ? doc.data() : {
+  pumpkins: Number(player?.pumpkins) || 0, harvestAt: player?.harvestAt || 0, field: fieldOf(player || {}, now),
+  harvestHours: player?.harvestHours || {}, receipts: [], activity: [],
+});
 function brewGain(roll = randomInt(100)) {
   for (const { n, weight } of BREW_TABLE) {
     if (roll < weight) return n;
@@ -24,6 +31,10 @@ function brewGain(roll = randomInt(100)) {
   return 0;
 }
 const roundOf = (event) => event?.id || 'practice';
+// 잠금은 신호가 끊기거나 도전 시작 후 90초가 지나면 풀린다. 끝나는 순간의 요청이 늦게 와도 받도록 정산에는 여유를 둔다.
+const FINISH_SLACK_MS = 10 * 1000;
+const lockAlive = (lock, now, slack = 0) => Boolean(lock?.createdAt)
+  && now - (lock.heartbeatAt || lock.createdAt) < CHALLENGE_LOCK_TTL_MS && now - lock.createdAt < CHALLENGE_MAX_MS + slack;
 const balance = (player, event) => player.round === roundOf(event) ? player.candies : 10;
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
 const fail = (message, status = 400) => { throw new AuthError(status, 'game-action-rejected', message); };
@@ -59,37 +70,43 @@ async function session(authorization) {
   const profile = await getProfile(authorization);
   const { db } = services();
   const ref = db.collection('gamePlayers').doc(profile.uid);
+  const privateRef = db.collection('gamePrivate').doc(profile.uid);
   const village = await db.runTransaction(async (tx) => {
-    const existing = await tx.get(ref);
+    const [existing, privateDoc] = await Promise.all([tx.get(ref), tx.get(privateRef)]);
     const prior = existing.exists ? existing.data() : null;
     const readyAt = prior?.readyAt || (profile.costume ? Date.now() : 0);
     const plan = await readVillagePlan(tx, db, profile.costume && !prior?.village ? { id: profile.uid, readyAt } : null);
     const home = prior?.village || plan.villageOf.get(profile.uid);
     plan.write(profile.uid);
     const placed = home && !prior?.village ? { village: home } : {};
-    const field = Array.isArray(prior?.field) && prior.field.length ? {} : { field: freshField(Date.now()) };
-    if (!existing.exists) tx.create(ref, { ...profile, readyAt, pumpkins: 0, knocks: [], notes: [], guests: [], decor: {}, candies: 10, round: 'practice', ...placed, ...field });
-    else tx.update(ref, { ...profile, ...(profile.costume && !prior.readyAt ? { readyAt } : {}), ...placed, ...field });
+    if (!privateDoc.exists) tx.set(privateRef, privateState(privateDoc, prior, Date.now()));
+    if (!existing.exists) tx.create(ref, { ...profile, readyAt, knocks: [], notes: [], guests: [], decor: {}, candies: 10, round: 'practice', ...placed });
+    else tx.update(ref, { ...profile, ...(profile.costume && !prior.readyAt ? { readyAt } : {}), ...placed });
     return home || plan.latest;
   }, { maxAttempts: 20 });
   return { isAdmin: isAdmin(profile.uid), uid: profile.uid, village };
 }
 
 async function action(authorization, input) {
-  const uid = await authenticatedUid(authorization);
+  // 밴은 트랜잭션 안에서 읽는 내 문서의 banned로 확인해, 요청마다 밴 문서를 따로 읽지 않는다.
+  const uid = await authenticatedUid(authorization, { checkBan: false });
   if (!input || !/^[a-zA-Z0-9_-]{8,80}$/.test(input.requestId || '')) fail('요청 번호를 확인해 주세요.');
   const { db } = services();
   const playerRef = db.collection('gamePlayers').doc(uid);
   const eventRef = db.doc('game/event');
-  const receiptRef = db.collection('gameRequests').doc(`${uid}_${input.requestId}`);
+  const privateRef = db.collection('gamePrivate').doc(uid);
   const challengeRef = db.collection('gameChallenges').doc(uid);
   return db.runTransaction(async (tx) => {
-    const [receipt, playerDoc, eventDoc] = await Promise.all([tx.get(receiptRef), tx.get(playerRef), tx.get(eventRef)]);
-    if (receipt.exists) return receipt.data().result;
+    const [privateDoc, playerDoc, eventDoc] = await Promise.all([tx.get(privateRef), tx.get(playerRef), tx.get(eventRef)]);
     if (!playerDoc.exists) fail('다시 로그인해 주세요.', 401);
-    const player = playerDoc.data(), event = eventDoc.exists ? eventDoc.data() : null;
+    const now = Date.now();
+    const mine = privateState(privateDoc, playerDoc.data(), now);
+    const receipt = (mine.receipts || []).find((item) => item.id === input.requestId);
+    if (receipt) return receipt.result;
+    const player = { ...playerDoc.data(), pumpkins: mine.pumpkins }, event = eventDoc.exists ? eventDoc.data() : null;
     if (player.banned) fail('이 계정은 게임 이용이 제한됐어요.', 403);
-    const now = Date.now(), round = roundOf(event);
+    const round = roundOf(event);
+    let privateUpdate = {};
     const count = balance(player, event);
     const type = input.type;
     let result = {};
@@ -114,9 +131,9 @@ async function action(authorization, input) {
       if (!player.costume) fail('분장을 먼저 골라 주세요.');
       if (event && event.endsAt <= now) fail('이벤트가 끝났어요. 결과가 보존됩니다.');
       if (type === 'harvest') {
-        if (now - (player.harvestAt || 0) < 1500) fail('조금 뒤 다른 호박을 따 주세요.', 429);
+        if (now - (mine.harvestAt || 0) < 1500) fail('조금 뒤 다른 호박을 따 주세요.', 429);
         if ((player.pumpkins || 0) >= PUMPKIN_HOLD_MAX) fail(`바구니가 꽉 찼어요. 호박은 ${PUMPKIN_HOLD_MAX}개까지 들 수 있어요.`);
-        const planted = fieldOf(player, now);
+        const planted = fieldOf(mine, now);
         const picked = planted.find((p) => p.id === input.pumpkin);
         if (!picked) fail('이미 없어진 호박이에요. 다른 호박을 따 주세요.', 409);
         if (picked.at > now + FIELD_CLOCK_SLACK_MS) fail('아직 자라는 중인 호박이에요.', 409);
@@ -125,9 +142,11 @@ async function action(authorization, input) {
         const basket = hasBasket({ ...player, pumpkins });
         // 운영자 화면에서 오래 쉬지 않고 따는 계정을 볼 수 있게 시간대별 수확 수를 남긴다.
         const hour = String(hourOf(now));
-        const harvestHours = Object.fromEntries(Object.entries({ ...(player.harvestHours || {}), [hour]: (player.harvestHours?.[hour] || 0) + 1 })
+        const harvestHours = Object.fromEntries(Object.entries({ ...(mine.harvestHours || {}), [hour]: (mine.harvestHours?.[hour] || 0) + 1 })
           .sort((a, b) => Number(b[0]) - Number(a[0])).slice(0, HARVEST_HOURS_KEPT));
-        tx.update(playerRef, { pumpkins, basket, harvestAt: now, field, harvestHours });
+        privateUpdate = { pumpkins, harvestAt: now, field, harvestHours };
+        // 공개 문서는 바구니를 처음 만드는 한 번만 바꾼다. 다른 사람 화면에는 바구니 여부만 필요하다.
+        if (basket && player.basket !== true) tx.update(playerRef, { basket: true });
         result = { pumpkins, basket, field };
       } else if (type === 'brew') {
         if (!hasBasket(player)) fail('호박 바구니부터 만들어요.');
@@ -136,8 +155,9 @@ async function action(authorization, input) {
         if (wait > 0) fail(`솥이 아직 식는 중이에요. ${Math.ceil(wait / 60000)}분 뒤 다시 끓일 수 있어요.`, 429);
         const gain = brewGain();
         const pumpkins = player.pumpkins - BREW_COST;
-        tx.update(playerRef, { round, candies: count + gain, pumpkins, basket: true, brewAt: now,
+        tx.update(playerRef, { round, candies: count + gain, basket: true, brewAt: now,
           brews: [...(player.brews || []), { at: now, n: gain, round }].slice(-20) });
+        privateUpdate = { pumpkins };
         result = { gain, candies: count + gain, pumpkins, brewAt: now };
       } else if (type === 'decor') {
         if (typeof input.item !== 'string' || !Object.hasOwn(PRICES, input.item)) fail('장식을 확인해 주세요.');
@@ -176,12 +196,11 @@ async function action(authorization, input) {
           const priorLock = priorLockDoc.exists ? priorLockDoc.data() : null;
           const lastSeen = priorLock?.heartbeatAt || priorLock?.createdAt || 0;
           const priorLockIsActive = priorLock?.challengeId === prior.id && priorLock.challengerUid === uid
-            && priorLock.round === round && now - lastSeen < CHALLENGE_LOCK_TTL_MS;
+            && priorLock.round === round && lockAlive(priorLock, now);
           if (priorLockIsActive) fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
         }
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        const lockIsActive = lock?.round === round
-          && now - (lock.heartbeatAt || lock.createdAt || now) < CHALLENGE_LOCK_TTL_MS;
+        const lockIsActive = lock?.round === round && lockAlive(lock, now);
         if (lockIsActive) fail('이 집은 지금 다른 사람이 도전 중이에요.', 429);
         const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
           ? { ...prior.nextLevelByHost } : {};
@@ -202,9 +221,8 @@ async function action(authorization, input) {
         const lockRef = db.collection('gameHouseLocks').doc(challenge.host);
         const lockDoc = await tx.get(lockRef);
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        const lastSeen = lock?.heartbeatAt || lock?.createdAt || 0;
-        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round
-          || now - lastSeen >= CHALLENGE_LOCK_TTL_MS) {
+        if (now - challenge.createdAt >= CHALLENGE_MAX_MS) fail('도전 시간 90초가 지나 실패로 끝났어요. 다시 노크해 주세요.', 409);
+        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round || !lockAlive(lock, now)) {
           fail('도전이 끝났거나 잠시 자리를 비워 잠금이 풀렸어요. 다시 도전해 주세요.', 409);
         }
         tx.update(lockRef, { heartbeatAt: now });
@@ -218,9 +236,7 @@ async function action(authorization, input) {
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
         if (hostDoc.data().houseHidden || hostDoc.data().banned) fail('운영자가 이 집의 도전을 중단했어요.');
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        const lastSeen = lock?.heartbeatAt || lock?.createdAt || 0;
-        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round
-          || now - lastSeen >= CHALLENGE_LOCK_TTL_MS) {
+        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round || !lockAlive(lock, now, FINISH_SLACK_MS)) {
           fail('이 도전은 더 이상 유효하지 않아요. 다시 노크해 주세요.');
         }
         const outcome = evaluateCandyChallenge(challenge, input.inputs, input.elapsedMs, now);
@@ -246,11 +262,11 @@ async function action(authorization, input) {
       } else fail('지원하지 않는 행동이에요.');
     }
     if (type !== 'knock-heartbeat') {
-      tx.create(receiptRef, { uid, type, result, createdAt: now });
-      tx.create(db.collection('gameActivity').doc(uid).collection('entries').doc(input.requestId), {
-        uid, type, at: now, round, ...(typeof input.host === 'string' && /^[a-f0-9]{32}$/.test(input.host) ? { host: input.host } : {}),
-        ...(type === 'knock-finish' && result.entry ? { host: result.entry.h, outcome: result.entry.r, moved: result.entry.moved, level: result.entry.level } : {}),
-      });
+      const activity = { uid, type, at: now, round, ...(typeof input.host === 'string' && /^[a-f0-9]{32}$/.test(input.host) ? { host: input.host } : {}),
+        ...(type === 'knock-finish' && result.entry ? { host: result.entry.h, outcome: result.entry.r, moved: result.entry.moved, level: result.entry.level } : {}) };
+      tx.set(privateRef, { ...mine, ...privateUpdate,
+        receipts: [...(mine.receipts || []), { id: input.requestId, result }].slice(-MAX_RECEIPTS),
+        activity: [...(mine.activity || []), activity].slice(-MAX_ACTIVITY) });
     }
     return result;
   }, { maxAttempts: 20 });

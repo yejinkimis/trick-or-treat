@@ -174,6 +174,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .timing{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(360px,calc(100vw - 32px));padding:16px 18px;display:grid;gap:10px;text-align:center;user-select:none;box-shadow:0 0 0 100vmax rgba(11,8,16,.68),0 0 0 4px var(--edge),6px 6px 0 4px rgba(0,0,0,.4)}
 .t-title{margin:0;font-size:1.35rem;font-weight:400;color:var(--gold)}
 .t-subtitle{margin:0;color:var(--muted);font-size:.9rem}
+.t-subtitle.hurry{color:var(--candy)}
 .timing-track{position:relative;width:86px;height:min(42dvh,320px);min-height:210px;margin:2px auto;background:var(--night);border:3px solid var(--text);overflow:hidden;touch-action:none;user-select:none;cursor:pointer}
 .timing-bar{position:absolute;left:0;right:0;top:50%;height:30%;box-sizing:border-box;background:var(--slime);border:3px solid var(--text);box-shadow:inset 0 0 0 2px rgba(11,8,16,.25);opacity:.94;will-change:top,height}
 .timing-candy{position:absolute;z-index:1;left:50%;top:50%;width:34px;height:22px;object-fit:contain;transform:translate(-50%,-50%);image-rendering:pixelated;pointer-events:none;will-change:top}
@@ -531,7 +532,7 @@ const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
 const VILLAGE_BLOCKS = 2, GATE_XS = [12, 13];
 const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000;
-const CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5, CANDY_MAX_INPUTS = 1000;
+const CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5, CANDY_MAX_INPUTS = 1000, CANDY_TIME_LIMIT_MS = 90000;
 const CANDY_BAR_UP_SPEED = .72, CANDY_BAR_DOWN_SPEED = .82, CANDY_BAR_ACCELERATION = 2.6, CANDY_BAR_BRAKING = 8;
 const DECOR = {
   lantern: { name: '호박등', price: 2, icon: 'lantern', line: '문 옆에서 빛나는 호박' },
@@ -2553,7 +2554,17 @@ function candyGame(challenge) {
       return progress >= 1 ? true : progress <= 0 ? false : null;
     }
 
+    let shownLeft = null;
+    function showTimeLeft() {
+      const left = Math.max(0, Math.ceil((CANDY_TIME_LIMIT_MS - simAt) / 1000));
+      if (left === shownLeft) return;
+      shownLeft = left;
+      $('#t-level').textContent = `난이도 ${level}단계 · 남은 시간 ${left}초`;
+      $('#t-level').classList.toggle('hurry', left <= 10);
+    }
+
     function draw() {
+      showTimeLeft();
       const candyY = currentCandy(simAt);
       bar.style.top = `${barY * 100}%`;
       bar.style.height = `${barHeight * 100}%`;
@@ -2562,7 +2573,7 @@ function candyGame(challenge) {
       meter.setAttribute('aria-valuenow', String(Math.round(progress * 100)));
     }
 
-    function finish(won) {
+    function finish(won, timedOut = false) {
       if (finished) return;
       finished = true;
       cancelAnimationFrame(raf);
@@ -2571,7 +2582,7 @@ function candyGame(challenge) {
       const trace = encodeCandyInputs(inputs.filter((input) => input.t <= simAt));
       box.classList.add(won ? 'hit' : 'miss');
       result.className = `timing-result ${won ? 'hit' : 'miss'}`;
-      result.textContent = won ? '잡았다!' : '놓쳤어!';
+      result.textContent = won ? '잡았다!' : timedOut ? '시간 초과!' : '놓쳤어!';
       playSfx(won ? 'catch' : 'miss');
       setTimeout(() => {
         box.hidden = true;
@@ -2582,17 +2593,19 @@ function candyGame(challenge) {
     function loop() {
       const target = Math.floor((performance.now() - start) / CANDY_STEP_MS) * CANDY_STEP_MS;
       let outcome = null;
-      while (simAt + CANDY_STEP_MS <= target && outcome === null) {
+      while (simAt + CANDY_STEP_MS <= Math.min(target, CANDY_TIME_LIMIT_MS) && outcome === null) {
         simAt += CANDY_STEP_MS;
         outcome = simulateStep(simAt);
       }
       draw();
       if (outcome !== null) { finish(outcome); return; }
+      // 서버는 90초가 지난 도전을 실패로 정산하므로 화면도 같은 때 끝낸다.
+      if (simAt >= CANDY_TIME_LIMIT_MS) { finish(false, true); return; }
       raf = requestAnimationFrame(loop);
     }
 
     box.className = 'timing px';
-    $('#t-level').textContent = `난이도 ${level}단계`;
+    showTimeLeft();
     candy.src = spriteUrl('candy', 2);
     result.className = 'timing-result';
     result.textContent = '';
@@ -3107,7 +3120,9 @@ async function saveMural() {
 
 function applyFirebasePlayers() {
   const round = S.event?.id || 'practice';
-  const source = { ...S.strangers, ...S.firebasePlayers, ...(S.ownPlayer ? { [S.me]: { ...S.ownPlayer, ...unsavedOwnFields() } } : {}) };
+  // 내 호박 수와 밭은 나만 읽는 비공개 문서에서 온다. 공개 문서의 호박 수는 예전 값일 수 있다.
+  const own = S.ownPlayer && { ...S.ownPlayer, ...(S.ownPrivate ? { pumpkins: S.ownPrivate.pumpkins, field: S.ownPrivate.field } : {}), ...unsavedOwnFields() };
+  const source = { ...S.strangers, ...S.firebasePlayers, ...(own ? { [S.me]: own } : {}) };
   for (const p of Object.values(source)) for (const g of p.guests || []) if (g.nick && !S.names[g.v]) S.names[g.v] = cleanNick(g.nick);
   const next = Object.fromEntries(Object.entries(source).map(([uid, player]) => [uid, {
     ...player, decor: Object.fromEntries(Object.entries(player.decor || {}).filter(([, item]) => item.round === round).map(([key, item]) => [key, item.at])),
@@ -3132,7 +3147,7 @@ async function connectFirebaseGame(uid) {
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
-  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [] });
+  Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [] });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
   const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
@@ -3283,6 +3298,11 @@ async function connectFirebaseGame(uid) {
         if (home && !placed) { placed = true; if (home !== S.village) void travelTo(home); }
         applyFirebasePlayers(); notifyKnocks(); resolve();
       }, (error) => { S.readOnly = true; toast('내 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
+      new Promise((resolve) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'gamePrivate', uid), { includeMetadataChanges: true }, (snapshot) => {
+        if (snapshot.metadata.fromCache) return;
+        S.ownPrivate = snapshot.exists() ? snapshot.data() : null;
+        applyFirebasePlayers(); resolve();
+      }, () => { S.ownPrivate = null; resolve(); }))),
       new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'game/event'), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         const previous = S.event?.id;

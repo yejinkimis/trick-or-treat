@@ -1194,3 +1194,38 @@ test('a ban during play disconnects and returns to the login screen with the rea
   assert.equal(g.elements.get('auth').hidden, false);
   assert.match(g.elements.get('auth-error').textContent, /이용이 제한/);
 });
+
+test('the candy game counts down the remaining time and ends as a timeout at ninety seconds', async () => {
+  const g = game();
+  // 사탕이 막대 안팎을 오가며 게이지가 끝나지 않는 경로
+  const result = g.run(`candyGame({ level: 1, path: [{ t: 0, y: 1 }, ...Array.from({ length: 63 }, (_, i) => ({ t: (i + 1) * 1440, y: i % 2 ? 1 : .47 }))] })`);
+  const level = g.elements.get('t-level');
+  assert.equal(level.textContent, '난이도 1단계 · 남은 시간 90초');
+  for (let now = 1000; now <= 100000 && g.run('S.candyControl !== null'); now += 1000) {
+    g.setNow(now);
+    [...g.frames.values()].at(-1)?.();
+    if (now === 30000) {
+      assert.equal(level.textContent, '난이도 1단계 · 남은 시간 60초');
+      assert.equal(level.classList.contains('hurry'), false);
+    }
+    if (now === 85000) assert.equal(level.classList.contains('hurry'), true, 'the last ten seconds stand out');
+  }
+  assert.equal(level.textContent, '난이도 1단계 · 남은 시간 0초');
+  assert.equal(g.elements.get('t-result').textContent, '시간 초과!');
+  g.fire(0);
+  const attempt = await result;
+  assert.equal(attempt.won, false);
+  assert.equal(attempt.elapsedMs, 90000);
+});
+
+test('my pumpkins and field come from my private document, not the stale public one', () => {
+  const { run } = game();
+  run(`S.me = 'u1'; S.firebasePlayers = {};
+    S.ownPlayer = { ...blankPlayer(), nick: '나', costume: 'cat', pumpkins: 2, basket: true };
+    S.ownPrivate = { pumpkins: 41, field: [{ id: 'p1', s: 3, at: 0 }] };
+    applyFirebasePlayers();`);
+  assert.equal(run('S.players.u1.pumpkins'), 41);
+  assert.equal(run('S.players.u1.field[0].id'), 'p1');
+  run(`S.ownPrivate = null; applyFirebasePlayers();`);
+  assert.equal(run('S.players.u1.pumpkins'), 2, 'before the private document arrives the public value is used');
+});
