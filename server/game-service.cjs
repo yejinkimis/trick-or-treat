@@ -2,7 +2,7 @@ const { randomUUID, randomInt } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
-const { MAX_LEVEL, STALE_CHALLENGE_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
+const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
@@ -123,12 +123,19 @@ async function action(authorization, input) {
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
         const priorAge = now - (prior.createdAt || 0);
-        const priorIsActive = prior.expiresAt ? prior.expiresAt > now : priorAge < STALE_CHALLENGE_MS;
-        if (prior.round === round && !prior.used && priorIsActive) {
-          fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
+        const priorIsUnfinished = prior.expiresAt ? prior.expiresAt > now : priorAge < STALE_CHALLENGE_MS;
+        if (prior.round === round && !prior.used && priorIsUnfinished) {
+          const priorLockRef = db.collection('gameHouseLocks').doc(prior.host);
+          const priorLockDoc = prior.host === input.host ? lockDoc : await tx.get(priorLockRef);
+          const priorLock = priorLockDoc.exists ? priorLockDoc.data() : null;
+          const lastSeen = priorLock?.heartbeatAt || priorLock?.createdAt || 0;
+          const priorLockIsActive = priorLock?.challengeId === prior.id && priorLock.challengerUid === uid
+            && priorLock.round === round && now - lastSeen < CHALLENGE_LOCK_TTL_MS;
+          if (priorLockIsActive) fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
         }
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        const lockIsActive = lock?.round === round && now - (lock.createdAt || now) < STALE_CHALLENGE_MS;
+        const lockIsActive = lock?.round === round
+          && now - (lock.heartbeatAt || lock.createdAt || now) < CHALLENGE_LOCK_TTL_MS;
         if (lockIsActive) fail('이 집은 지금 다른 사람이 도전 중이에요.', 429);
         const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
           ? { ...prior.nextLevelByHost } : {};
@@ -138,8 +145,23 @@ async function action(authorization, input) {
           level, seed: createCandySeed(), nextLevelByHost, streakRound: round,
         };
         tx.set(challengeRef, challenge);
-        tx.set(lockRef, { challengeId: challenge.id, challengerUid: uid, round, createdAt: now });
+        tx.set(lockRef, { challengeId: challenge.id, challengerUid: uid, round, createdAt: now, heartbeatAt: now });
         result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed } };
+      } else if (type === 'knock-heartbeat') {
+        const challengeDoc = await tx.get(challengeRef);
+        const challenge = challengeDoc.exists ? challengeDoc.data() : null;
+        if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round) {
+          fail('도전이 끝났거나 다시 시작됐어요. 다시 시도해 주세요.');
+        }
+        const lockRef = db.collection('gameHouseLocks').doc(challenge.host);
+        const lockDoc = await tx.get(lockRef);
+        const lock = lockDoc.exists ? lockDoc.data() : null;
+        const lastSeen = lock?.heartbeatAt || lock?.createdAt || 0;
+        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round
+          || now - lastSeen >= CHALLENGE_LOCK_TTL_MS) {
+          fail('도전이 끝났거나 잠시 자리를 비워 잠금이 풀렸어요. 다시 도전해 주세요.', 409);
+        }
+        tx.update(lockRef, { heartbeatAt: now });
       } else if (type === 'knock-finish') {
         const challengeDoc = await tx.get(challengeRef);
         const challenge = challengeDoc.exists ? challengeDoc.data() : null;
@@ -149,7 +171,9 @@ async function action(authorization, input) {
         const [hostDoc, lockDoc] = await Promise.all([tx.get(hostRef), tx.get(lockRef)]);
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round) {
+        const lastSeen = lock?.heartbeatAt || lock?.createdAt || 0;
+        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round
+          || now - lastSeen >= CHALLENGE_LOCK_TTL_MS) {
           fail('이 도전은 더 이상 유효하지 않아요. 다시 노크해 주세요.');
         }
         const outcome = evaluateCandyChallenge(challenge, input.inputs, input.elapsedMs, now);
@@ -172,7 +196,7 @@ async function action(authorization, input) {
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
       } else fail('지원하지 않는 행동이에요.');
     }
-    tx.create(receiptRef, { uid, type, result, createdAt: now });
+    if (type !== 'knock-heartbeat') tx.create(receiptRef, { uid, type, result, createdAt: now });
     return result;
   }, { maxAttempts: 20 });
 }

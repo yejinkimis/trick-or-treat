@@ -45,6 +45,10 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   const winner = contenders[winnerIndex], waiting = contenders[1 - winnerIndex];
   const challenge = starts[winnerIndex].value.challenge;
   const one = { challengeId: challenge.id, inputs: [1, 1], elapsedMs: 6000, level: challenge.level };
+  const houseLock = services().db.collection('gameHouseLocks').doc(host.uid);
+  const firstHeartbeat = (await houseLock.get()).data().heartbeatAt;
+  await act(winner, { type: 'knock-heartbeat', challengeId: challenge.id });
+  assert.ok((await houseLock.get()).data().heartbeatAt >= firstHeartbeat);
   await services().db.collection('gameChallenges').doc(winner.uid).update({ createdAt: Date.now() - 6000,
     path: [{ t: 0, y: .05 }, { t: 6000, y: .05 }] });
   const requestId = randomUUID();
@@ -148,9 +152,10 @@ test('a replaced or previous-round challenge cannot release another challenger h
   for (const p of [first, second]) await services().db.collection('gamePlayers').doc(p.uid).update({ pumpkins: 3 });
   const prior = await winningChallenge(first, host);
   const lockRef = services().db.collection('gameHouseLocks').doc(host.uid);
-  await lockRef.update({ createdAt: Date.now() - 60 * 60 * 1000 - 1 });
+  await lockRef.update({ createdAt: Date.now() - 60 * 60 * 1000 - 1, heartbeatAt: Date.now() - 60_001 });
   const next = (await act(second, { type: 'knock-start', host: host.uid })).challenge;
   await assert.rejects(act(first, { type: 'knock-finish', ...prior }), /유효하지/);
+  await assert.rejects(act(first, { type: 'knock-heartbeat', challengeId: prior.challengeId }), /잠금이 풀렸/);
   assert.equal((await lockRef.get()).data().challengeId, next.id);
   await act(owner, { type: 'event-stop' });
   await act(owner, { type: 'event-start' });
