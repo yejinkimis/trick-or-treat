@@ -10,6 +10,7 @@
 - 이 변경 배포 후 기본 주소: https://trick-or-treat-gpln.vercel.app/
 - 기존 `/prototype/trick-or-treat.html` 링크는 `/`로 임시 리다이렉트한다.
 - 동료가 설정한 흐름: PR에 Preview 주소 생성 → 확인 → `main` 머지 시 Production 자동 배포.
+- 실제 PR #2에서는 Vercel이 커밋 작성자 `choubung`을 Hobby 운영 계정의 구성원으로 인식하지 못해 Preview를 차단했다. Preview 자동 생성은 현재 보장되지 않으며, 배포 담당자가 운영 계정에서 배포 권한과 진행 방법을 확인해야 한다. GitHub PR: https://github.com/yejinkimis/trick-or-treat/pull/2
 - Firebase 프로젝트 ID: `trick-or-treat-89de3`
 - RTDB: https://trick-or-treat-89de3-default-rtdb.asia-southeast1.firebasedatabase.app/
 - Firebase 구성원: `glow.yejin@gmail.com`을 편집자로 추가 완료. Vercel 초대와 Firebase 권한은 별도로 관리한다.
