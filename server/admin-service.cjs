@@ -76,6 +76,9 @@ async function moderate(authorization, input) {
       await db.collection('gameBans').doc(target).set({ banned: true, reason: reasonText, by: actor, at: now });
       await playerRef.update({ banned: true, rankExcluded: true });
       await database.ref(`bannedUsers/${target}`).set(true);
+      // 규칙이 막은 뒤 남은 접속 표시와 위치를 지워, 다른 사람 화면에서 1분을 기다리지 않고 바로 사라지게 한다.
+      const village = player.data().village;
+      await Promise.all([database.ref(`online/${target}`).remove(), village ? database.ref(`presence/${village}/${target}`).remove() : null]);
       await auth.updateUser(target, { disabled: true });
     } else {
       await auth.updateUser(target, { disabled: false });

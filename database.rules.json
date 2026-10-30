@@ -57,6 +57,9 @@
           "$other": { ".validate": false }
         }
       }
+    },
+    "bannedUsers": {
+      "$uid": { ".read": "auth != null && auth.uid == $uid" }
     }
   }
 }

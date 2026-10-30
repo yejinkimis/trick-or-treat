@@ -1179,3 +1179,18 @@ test('the admin special-accounts view lists the numbers and flags and opens the 
   await g.run('opened');
   assert.equal(g.run('urls[1]'), `/api/game/admin?q=${'b'.repeat(32)}`);
 });
+
+test('a ban during play disconnects and returns to the login screen with the reason', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; var calls = []; crypto = { randomUUID: () => 'banned-request' };
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } }, authSdk: { signOut: async () => { calls.push('signout'); } },
+      dispose: async () => { calls.push('dispose'); } };
+    fetch = async () => ({ ok: false, status: 403, json: async () => ({ error: 'account-banned', message: '이 계정은 게임 이용이 제한됐어요. 운영자에게 문의해 주세요.' }) });
+    var request = gameRequest({ type: 'harvest', pumpkin: 'p1' }).catch((error) => error.status);`);
+  assert.equal(await g.run('request'), 403);
+  for (let i = 0; i < 5; i++) await new Promise(setImmediate);
+  assert.equal(g.run('JSON.stringify(calls)'), '["dispose","signout"]');
+  assert.equal(g.run('S.me'), null);
+  assert.equal(g.elements.get('auth').hidden, false);
+  assert.match(g.elements.get('auth-error').textContent, /이용이 제한/);
+});

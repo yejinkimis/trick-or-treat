@@ -175,6 +175,7 @@ async function login({ nickname: rawNickname, password: rawPassword }) {
   if (!valid || !profileSnapshot?.exists) {
     throw new AuthError(401, 'invalid-credentials', '닉네임이나 비밀번호를 확인해 주세요.');
   }
+  await rejectBanned(uid);
   const token = await customToken(uid, firebase);
   await rateRef.delete();
   return { uid, customToken: token, profile: publicProfile(uid, profileSnapshot.data()) };
@@ -186,14 +187,18 @@ function readBearer(value) {
   return match[1];
 }
 
+async function rejectBanned(uid) {
+  const banned = await services().db.collection('gameBans').doc(uid).get();
+  if (banned.exists && banned.data().banned === true) {
+    throw new AuthError(403, 'account-banned', '이 계정은 게임 이용이 제한됐어요. 운영자에게 문의해 주세요.');
+  }
+}
+
 async function authenticatedUid(authorization) {
   let decoded;
   try { decoded = await services().auth.verifyIdToken(readBearer(authorization)); }
   catch { throw new AuthError(401, 'unauthorized', '다시 로그인해 주세요.'); }
-  const banned = await services().db.collection('gameBans').doc(decoded.uid).get();
-  if (banned.exists && banned.data().banned === true) {
-    throw new AuthError(403, 'account-banned', '이 계정은 게임 이용이 제한됐어요. 운영자에게 문의해 주세요.');
-  }
+  await rejectBanned(decoded.uid);
   return decoded.uid;
 }
 

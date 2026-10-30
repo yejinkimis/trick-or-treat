@@ -1,7 +1,7 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { signup, updateProfile } = require('../server/auth-service.cjs');
+const { signup, login, updateProfile } = require('../server/auth-service.cjs');
 const { FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
 const { FieldValue } = require('firebase-admin/firestore');
@@ -453,4 +453,45 @@ test('the admin watch list shows who won from whom, how fast, and stays admin-on
   assert.deepEqual(row.topSource && [row.topSource.id, row.topSource.wins], [host.uid, 1]);
   const hostRow = (await watchAccounts(admin.authorization)).users.find((u) => u.id === host.uid);
   assert.equal(hostRow, undefined, 'a host who only lost candy has no activity of their own');
+});
+
+test('a ban reaches people already connected: open Realtime Database listeners are cut, their marks disappear and login is refused', async () => {
+  const [admin, banned, other] = await Promise.all(['운', '금', '옆'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const base = `http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}`;
+  const url = (path, token) => `${base}/${path}.json?ns=demo-trick-or-treat-default-rtdb&auth=${token}`;
+  const village = (await saved(banned)).village;
+  const now = { '.sv': 'timestamp' };
+  const put = (path, token, body) => fetch(url(path, token), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await put(`presence/${village}/${banned.uid}/tab1`, banned.token, { x: 208, y: 72, f: 1, m: false, at: now })).status, 200);
+  assert.equal((await put(`online/${banned.uid}/tab1`, banned.token, { v: village, at: now })).status, 200);
+  assert.equal((await fetch(url(`bannedUsers/${banned.uid}`, banned.token))).status, 200, 'a player can watch their own ban mark');
+  assert.equal((await fetch(url(`bannedUsers/${banned.uid}`, other.token))).status, 401, 'but not anyone else\'s');
+
+  // 밴 전에 열어 둔 실시간 구독(브라우저가 계속 붙어 있는 상태)을 그대로 흉내 낸다.
+  const stream = await fetch(url(`presence/${village}`, banned.token), { headers: { accept: 'text/event-stream' } });
+  const reader = stream.body.getReader();
+  const events = [];
+  const pump = (async () => {
+    const decoder = new TextDecoder();
+    for (let text = ''; ;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      text += decoder.decode(value, { stream: true });
+      for (const match of text.matchAll(/^event: (\w+)$/gm)) events.push(match[1]);
+      if (events.includes('cancel')) return;
+    }
+  })();
+  while (!events.includes('put')) await new Promise((resolve) => setTimeout(resolve, 20));
+
+  await moderate(admin.authorization, { type: 'ban', target: banned.uid, reason: '자동 플레이' });
+  await Promise.race([pump, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  await reader.cancel().catch(() => {});
+  assert.ok(events.includes('cancel'), `the rules, not token revocation, cut the open listener (got ${events.join(', ')})`);
+  assert.equal((await put(`presence/${village}/${banned.uid}/tab1`, banned.token, { x: 1, y: 1, f: 1, m: false, at: now })).status, 401);
+  assert.equal(await (await fetch(url(`presence/${village}/${banned.uid}`, other.token))).json(), null, 'their character disappears for others at once');
+  assert.equal(await (await fetch(url(`online/${banned.uid}`, other.token))).json(), null);
+  await assert.rejects(login({ nickname: banned.profile.nick, password: 'game-password-8' }), (e) => e.status === 403 && e.code === 'account-banned');
+  await moderate(admin.authorization, { type: 'unban', target: banned.uid });
+  assert.equal((await login({ nickname: banned.profile.nick, password: 'game-password-8' })).uid, banned.uid);
 });

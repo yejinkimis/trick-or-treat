@@ -3051,8 +3051,30 @@ async function accountRequest(url, options = {}) {
   });
   let payload = {};
   try { payload = await response.json(); } catch { /* 서버 오류는 아래의 공통 문구로 표시 */ }
-  if (!response.ok) { const error = new Error(payload.message || '요청을 처리하지 못했어요.'); error.status = response.status; throw error; }
+  if (!response.ok) {
+    const error = new Error(payload.message || '요청을 처리하지 못했어요.');
+    error.status = response.status;
+    if (payload.error === 'account-banned') void enterBanned(error.message);
+    throw error;
+  }
   return payload;
+}
+
+// 밴은 접속 중에도 바로 적용한다. 서버와 실시간 DB 규칙이 이미 막고 있으므로, 화면은 연결을 끊고 로그인 화면으로 돌아간다.
+let leavingBanned = false;
+async function enterBanned(message = '이 계정은 게임 이용이 제한됐어요. 운영자에게 문의해 주세요.') {
+  if (leavingBanned || !['account', 'firebase'].includes(S.mode)) return;
+  leavingBanned = true;
+  try {
+    await S.account.dispose?.().catch(() => {});
+    await S.account.authSdk.signOut(S.account.auth).catch(() => {});
+    for (const id of MODALS) if (id !== 'auth') $(`#${id}`).hidden = true;
+    $('#dialog').hidden = true;
+    Object.assign(S, { me: null, players: {}, names: {}, accountProfile: null, event: null, mode: 'loading', busy: false, target: null });
+    keys.clear();
+    render();
+    showAuthGate(message);
+  } finally { leavingBanned = false; }
 }
 
 async function gameRequest(action) {
@@ -3244,6 +3266,7 @@ async function connectFirebaseGame(uid) {
     refreshOnline();
   }, () => toast('접속자 목록 권한을 확인해 주세요.')));
   stops.push(rt.onValue(rt.ref(a.database, '.info/serverTimeOffset'), (snapshot) => { serverOffset = S.clockOffset = Number(snapshot.val()) || 0; }));
+  stops.push(rt.onValue(rt.ref(a.database, `bannedUsers/${uid}`), (snapshot) => { if (snapshot.val() === true) void enterBanned(); }, () => {}));
   stops.push(fs.onSnapshot(fs.collection(a.firestore, 'villages'), (snapshot) => {
     S.villages = Object.fromEntries(snapshot.docs.map((doc) => [doc.id, doc.data()]));
     render();
