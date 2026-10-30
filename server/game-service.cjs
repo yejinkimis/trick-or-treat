@@ -3,6 +3,7 @@ const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
 const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
+const { readVillagePlan } = require('./village.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
@@ -19,25 +20,50 @@ const roundOf = (event) => event?.id || 'practice';
 const balance = (player, event) => player.round === roundOf(event) ? player.candies : 10;
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
 const fail = (message, status = 400) => { throw new AuthError(status, 'game-action-rejected', message); };
+const MAX_GUESTS = 100;
+// 다른 마을 방문자의 문서는 집주인이 구독하지 않으므로 집주인 문서에도 방문 기록을 남긴다.
+const withGuest = (host, guest) => [...(host.guests || []), guest].slice(-MAX_GUESTS);
+const rankPlayers = (docs, event, cutoff) => docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+  .filter((p) => p.costume && (p.readyAt || p.joinedAt || 0) <= cutoff)
+  .map((p) => ({ id: p.id, nick: p.nick, costume: p.costume, n: balance(p, event) }))
+  .sort((a, b) => b.n - a.n || a.nick.localeCompare(b.nick, 'ko'));
 async function finalResults(tx, db, event, cutoff) {
   if (event.results) return event.results;
-  const participants = await tx.get(db.collection('gamePlayers'));
-  return participants.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
-    .filter((p) => p.costume && (p.readyAt || p.joinedAt || 0) <= cutoff)
-    .map((p) => ({ id: p.id, nick: p.nick, costume: p.costume, n: balance(p, event) }))
-    .sort((a, b) => b.n - a.n || a.nick.localeCompare(b.nick, 'ko'));
+  return rankPlayers((await tx.get(db.collection('gamePlayers'))).docs, event, cutoff);
+}
+
+const LEADERBOARD_MS = 3 * 60 * 1000;
+let leaderboardMemo = null;
+// 접속자 수와 관계없이 전체 플레이어 읽기가 3분에 한 번을 넘지 않도록 서버와 CDN이 같은 결과를 나눠 준다.
+async function leaderboard(now = Date.now()) {
+  if (leaderboardMemo && now - leaderboardMemo.at < LEADERBOARD_MS) return leaderboardMemo;
+  const { db } = services();
+  const [eventDoc, players] = await Promise.all([db.doc('game/event').get(), db.collection('gamePlayers').get()]);
+  const event = eventDoc.exists ? eventDoc.data() : null;
+  const villageOf = new Map(players.docs.map((doc) => [doc.id, doc.data().village || null]));
+  const ended = event && event.endsAt <= now;
+  const ranked = event?.results || rankPlayers(players.docs, event, ended ? event.endsAt : Infinity);
+  leaderboardMemo = { at: now, round: roundOf(event), players: ranked.map((p) => ({ ...p, village: villageOf.get(p.id) || null })) };
+  return leaderboardMemo;
 }
 
 async function session(authorization) {
   const profile = await getProfile(authorization);
   const { db } = services();
   const ref = db.collection('gamePlayers').doc(profile.uid);
-  await db.runTransaction(async (tx) => {
+  const village = await db.runTransaction(async (tx) => {
     const existing = await tx.get(ref);
-    if (!existing.exists) tx.create(ref, { ...profile, readyAt: profile.costume ? Date.now() : 0, pumpkins: 0, knocks: [], notes: [], decor: {}, candies: 10, round: 'practice' });
-    else tx.update(ref, { ...profile, ...(profile.costume && !existing.data().readyAt ? { readyAt: Date.now() } : {}) });
-  });
-  return { isAdmin: isAdmin(profile.uid), uid: profile.uid };
+    const prior = existing.exists ? existing.data() : null;
+    const readyAt = prior?.readyAt || (profile.costume ? Date.now() : 0);
+    const plan = await readVillagePlan(tx, db, profile.costume && !prior?.village ? { id: profile.uid, readyAt } : null);
+    const home = prior?.village || plan.villageOf.get(profile.uid);
+    plan.write(profile.uid);
+    const placed = home && !prior?.village ? { village: home } : {};
+    if (!existing.exists) tx.create(ref, { ...profile, readyAt, pumpkins: 0, knocks: [], notes: [], guests: [], decor: {}, candies: 10, round: 'practice', ...placed });
+    else tx.update(ref, { ...profile, ...(profile.costume && !prior.readyAt ? { readyAt } : {}), ...placed });
+    return home || plan.latest;
+  }, { maxAttempts: 20 });
+  return { isAdmin: isAdmin(profile.uid), uid: profile.uid, village };
 }
 
 async function action(authorization, input) {
@@ -111,6 +137,7 @@ async function action(authorization, input) {
         if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
         if (now - (player.noteAt || 0) < 2000) fail('잠시 뒤 다시 남겨 주세요.', 429);
         tx.update(playerRef, { noteAt: now, notes: [...(player.notes || []), { h: input.host, text, at: now }].slice(-100) });
+        tx.update(host.ref, { guests: withGuest(host.data(), { v: uid, nick: player.nick, c: player.costume, text, at: now }) });
       } else if (type === 'knock-start') {
         if (input.host === uid || !/^[a-f0-9]{32}$/.test(input.host || '')) fail('노크할 집을 확인해 주세요.');
         if (!hasBasket(player)) fail('호박 3개로 바구니를 먼저 만드세요.');
@@ -190,7 +217,8 @@ async function action(authorization, input) {
         const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now };
         if (win) playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
         tx.update(playerRef, playerUpdate);
-        if (moved) tx.update(hostRef, { round, candies: hostCount - 1 });
+        if (win) tx.update(hostRef, { ...(moved ? { round, candies: hostCount - 1 } : {}),
+          guests: withGuest(hostDoc.data(), { ...entry, v: uid, nick: player.nick }) });
         tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
         tx.delete(lockRef);
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
@@ -201,4 +229,4 @@ async function action(authorization, input) {
   }, { maxAttempts: 20 });
 }
 
-module.exports = { session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };

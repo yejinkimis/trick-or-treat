@@ -95,7 +95,7 @@ test('Firebase rankings use server balances and reset to ten for a new event', (
     S.players.host.round = 'round1'; S.players.host.candies = 13;
     S.players.me.knocks = [{ h: 'host', r: 'win', at: Date.now() }];`);
   assert.equal(g.run('candiesOf(S.me)'), 7);
-  assert.equal(g.run('ranking()[0].id'), 'host');
+  assert.equal(g.run('rankingOf(S.players)[0].id'), 'host');
   g.run(`S.event.id = 'round2'`);
   assert.equal(g.run('candiesOf(S.me)'), 10);
   assert.equal(g.run('candiesOf("host")'), 10);
@@ -320,7 +320,7 @@ test('a miss leaves candy unchanged; decor reduces rank balance', () => {
   assert.equal(g.run('candiesOf("host")'), 10);
   g.run(`S.players.me.knocks = []; S.ledger = null; buyDecor('lantern')`);
   assert.equal(g.run('candiesOf("me")'), 8);
-  assert.equal(g.run('ranking()[0].id'), 'host');
+  assert.equal(g.run('rankingOf(S.players)[0].id'), 'host');
 });
 
 test('HUD explains rank and prizes before, during and after event', () => {
@@ -683,6 +683,120 @@ test('own costume survives until the village snapshot arrives', () => {
   assert.equal(run('myCostume()'), 'cat');
   run(`S.firebasePlayers = { u1: { ...blankPlayer(), nick: '나', costume: 'witch' } }; applyFirebasePlayers();`);
   assert.equal(run('myCostume()'), 'witch');
+});
+
+function village(g) {
+  g.run(`S.mode = 'firebase'; S.me = 'me'; S.village = 1;
+    S.villages = { 1: { n: 1, name: '태초마을' }, 2: { n: 2, name: '구리마을' }, 3: { n: 3, name: '안드로이드 제국' } };
+    S.players = {
+      me: { ...blankPlayer(), nick: '나', costume: 'ghost', village: 1, joinedAt: 1 },
+      near: { ...blankPlayer(), nick: '이웃', costume: 'witch', village: 1, joinedAt: 2 },
+      far: { ...blankPlayer(), nick: '먼집', costume: 'cat', village: 2, joinedAt: 3 },
+    }; render();`);
+}
+
+test('an online village shows only its own eight lots and wraps its gates around', () => {
+  const g = game(); village(g);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(houseOwners())')), ['me', 'near']);
+  assert.equal(g.run('MAP.slots.length'), 8);
+  assert.equal(g.run('MAP.gates'), true);
+  assert.equal(g.run('nextVillage(1)'), 2);
+  assert.equal(g.run('nextVillage(-1)'), 3);
+  g.run('S.village = 3; render();');
+  assert.equal(g.run('nextVillage(1)'), 1);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify(houseOwners())')), []);
+  g.run('S.villages = { 1: { n: 1 } }; S.village = 1; render();');
+  assert.equal(g.run('MAP.gates'), false);
+});
+
+test('walking through the bottom sign moves to the next village and arrives at its top sign', async () => {
+  const g = game(); village(g);
+  g.run(`var entered = []; S.room = { peers: () => [], presence: async () => {},
+    enterVillage: async (n) => { entered.push(n); S.village = n; } };
+    S.pos.x = 13 * T; S.pos.y = (MAP.rows - 2) * T + 14; keys.add('d');`);
+  for (let i = 0; i < 10 && !g.run('S.busy'); i++) g.run('update(0.05)');
+  assert.equal(g.run('S.busy'), true);
+  assert.equal(g.elements.get('veil').classList.contains('on'), true);
+  assert.equal(g.elements.get('veil').textContent, '구리마을');
+  g.fire(300); await tick(); await tick();
+  g.fire(200); await tick();
+  assert.equal(g.run('JSON.stringify(entered)'), '[2]');
+  assert.equal(g.run('S.pos.y'), g.run('T + 10'));
+  assert.equal(g.run('S.busy'), false);
+  assert.equal(g.elements.get('veil').classList.contains('on'), false);
+});
+
+test('visits from another village are read from the host document without double counting', () => {
+  const g = game(); village(g);
+  g.run(`S.seenAt = 0; var toasts = []; toast = (m) => toasts.push(m);
+    S.players.near.knocks = [{ h: 'me', r: 'win', at: 50, c: 'witch', moved: true }];
+    S.players.me.guests = [
+      { v: 'near', r: 'win', at: 50, c: 'witch', moved: true },
+      { v: 'far', nick: '먼집', r: 'win', at: 60, c: 'cat', moved: false },
+      { v: 'far', nick: '먼집', text: '또 올게', at: 70, c: 'cat' },
+    ];
+    delete S.players.far;`);
+  assert.equal(g.run('visitsTo(S.me).length'), 3);
+  g.run(`S.names.far = '먼집'; notifyKnocks();`);
+  assert.equal(g.run('toasts.length'), 3);
+  assert.match(g.run('toasts.at(-1)'), /먼집이 방명록에 글을 남겼어요: 또 올게/);
+  assert.match(g.run('guestbookHtml(S.me)'), /또 올게/);
+});
+
+test('online rankings come from the shared server list and are not refetched within thirty seconds', async () => {
+  const g = game(); village(g);
+  g.run(`var calls = []; S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() + 60000 };
+    accountRequest = async (url) => { calls.push(url); return { players: [
+      { id: 'far', nick: '먼집', costume: 'cat', n: 12, village: 2 }, { id: 'me', nick: '나', costume: 'ghost', n: 9, village: 1 },
+    ] }; };`);
+  assert.equal(g.run('ranking().length'), 0);
+  g.run(`openModal('rank')`);
+  await tick(); await tick();
+  assert.equal(g.run('JSON.stringify(calls)'), '["/api/game/leaderboard"]');
+  assert.equal(g.run('ranking()[0].id'), 'far');
+  assert.match(g.run('eventLine()'), /내 순위 2등/);
+  assert.match(g.elements.get('rk-list').innerHTML, /먼집/);
+  g.run(`closeModal('rank'); openModal('rank')`);
+  await tick();
+  assert.equal(g.run('calls.length'), 1, 'reopening right away reuses the list');
+});
+
+test('chat reaches every village but shows a bubble only for people in the same village', () => {
+  const g = game(); village(g);
+  g.run(`onChat({ data: { text: '옆 마을 안녕', v: 2 }, by: 'far', peer: 'far:tab' });
+    onChat({ data: { text: '여기 안녕', v: 1 }, by: 'near', peer: 'near:tab' });`);
+  assert.equal(g.run(`chatBubbles.has('far:tab')`), false);
+  assert.equal(g.run(`chatBubbles.has('near:tab')`), true);
+  const log = g.elements.get('chatlog').innerHTML;
+  assert.match(log, /\[구리마을\]<\/small> 먼집<\/b>옆 마을 안녕/);
+  assert.match(log, /<b>이웃<\/b>여기 안녕/);
+});
+
+test('the village map lists villages top to bottom in sign order and travels to the chosen one', async () => {
+  const g = game(); village(g);
+  g.run(`S.online = [
+    { by: 'far', presence: { v: 2, at: 1 } }, { by: 'me', presence: { v: 1, at: 1 } }, { by: 'near', presence: { v: 1, at: 1 } },
+  ]; S.networkConnected = true; openModal('online'); renderHud();
+    var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };`);
+  const ring = g.elements.get('on-chain').innerHTML, list = g.elements.get('on-list').innerHTML;
+  assert.ok(ring.indexOf('태초마을') < ring.indexOf('구리마을') && ring.indexOf('구리마을') < ring.indexOf('안드로이드 제국'), 'villages run top to bottom in sign order');
+  assert.match(ring, /aria-current="true">\s*<span class="no">1<\/span><b>태초마을/, 'the current village is marked');
+  assert.match(ring, /안드로이드 제국<\/b><small>접속 0명/);
+  assert.doesNotMatch(ring, /data-go="1"/);
+  assert.match(ring, /data-go="3"/);
+  assert.match(ring, /1번에서 위로 가면 3번/);
+  assert.match(ring, /3번에서 아래로 가면 1번/);
+  assert.ok(list.indexOf('1. 태초마을') < list.indexOf('2. 구리마을'));
+  assert.match(list, /나 \(나\), 이웃/);
+  assert.match(g.elements.get('on-sub').textContent, /마을 3개 · 접속 3명/);
+  assert.match(g.elements.get('me').innerHTML, /전체 3명/);
+  assert.equal(g.elements.get('open-online').hidden, false);
+  g.run(`document.listeners.click({ target: { classList: { contains: () => false }, closest: () => ({ dataset: { go: '3' } }) } })`);
+  assert.equal(g.elements.get('online').hidden, true);
+  g.fire(300); await tick(); await tick();
+  g.fire(200); await tick();
+  assert.equal(g.run('JSON.stringify(entered)'), '[3]');
+  assert.equal(g.run('S.pos.y'), g.run('SPAWN.y'));
 });
 
 test('basket stays after harvesting more, alchemy tip explains the cauldron, and the bag caps at 100', async () => {

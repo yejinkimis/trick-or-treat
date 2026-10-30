@@ -54,6 +54,18 @@ img.px-img{image-rendering:pixelated;display:block}
 .bc>div{min-width:0}
 
 .hint{position:fixed;z-index:4;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(400px,calc(100vw - 40px));margin:0;color:var(--text);background:rgba(11,8,16,.9);border:3px solid var(--gold);padding:16px 20px;text-align:center;pointer-events:none}
+.veil{position:fixed;z-index:30;inset:0;display:grid;place-items:center;margin:0;color:var(--gold);background:#0d0912;font-size:1.6rem;opacity:0;pointer-events:none;transition:opacity .3s}
+.veil.on{opacity:1;pointer-events:auto}
+.chain{display:flex;flex-direction:column;align-items:stretch;margin:4px 0}
+.chain-node{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--panel-2);border:3px solid var(--text);color:var(--text);cursor:pointer}
+.chain-node .no{font-family:var(--f-px);color:var(--gold);min-width:1.6em;text-align:center}
+.chain-node b{flex:1;font-weight:400}
+.chain-node small{color:var(--muted)}
+.chain-node img{width:24px;height:24px}
+.chain-node.here{border-color:var(--gold);background:var(--panel);cursor:default}
+.chain-node:focus-visible{outline:3px dashed var(--gold);outline-offset:3px}
+.chain-link{align-self:center;color:#a67d57;line-height:1;padding:2px 0}
+.chain-end{margin:4px 0;text-align:center;color:var(--muted);font-size:.8rem}
 .hint b{display:block;font-size:1.2rem;font-weight:400;color:var(--gold);margin-bottom:6px}
 .hint span{display:block;font-size:.95rem}
 .hint small{display:block;color:var(--muted);margin-top:8px}
@@ -192,6 +204,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-home" type="button">우리 집</button>
   <button class="pbtn" id="open-rank" type="button">순위</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
+  <button class="pbtn" id="open-online" type="button" hidden>마을 지도</button>
   <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
 </div>
 
@@ -290,6 +303,17 @@ textarea:focus{outline:none;border-color:var(--gold)}
   </div>
 </div>
 
+<div class="modal" id="online" hidden>
+  <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="on-title">
+    <div class="sheet-head">
+      <h2 id="on-title">마을 지도<small id="on-sub"></small></h2>
+      <button class="pbtn" type="button" data-close="online">닫기</button>
+    </div>
+    <p class="note">▼ 아래 표지판은 다음 번호, ▲ 위 표지판은 이전 번호 마을로 가요. 마을을 누르면 바로 이동해요.</p>
+    <div class="chain" id="on-chain"></div>
+    <ol class="book" id="on-list"></ol>
+  </div>
+</div>
 <div class="modal" id="note" hidden>
   <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="nt-title">
     <div class="sheet-head">
@@ -365,6 +389,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 </form>
 
 <div class="toast px" id="toast" role="status" hidden></div>
+<p class="veil" id="veil" aria-live="polite"></p>
 
 <script>
 const PAL = {
@@ -434,6 +459,7 @@ const DOODLE = ['................', '................', '................', '...
 const ROOF = [null, '#f28a2e', '#7a4bb8', '#5fae3c', '#d8343a', '#4a4058'];
 const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
+const VILLAGE_BLOCKS = 2, GATE_XS = [12, 13];
 const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000;
 const CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5, CANDY_MAX_INPUTS = 1000;
 const CANDY_BAR_UP_SPEED = .72, CANDY_BAR_DOWN_SPEED = .82, CANDY_BAR_ACCELERATION = 2.6, CANDY_BAR_BRAKING = 8;
@@ -455,7 +481,7 @@ const BREW_LINES = {
   10: '솥이 번쩍! 사탕 10개가 쏟아졌어요!',
 };
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'note', 'auth', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'online', 'note', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -560,6 +586,7 @@ const S = {
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
   pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
   myPeer: null, nearPeer: null, stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [],
+  village: null, villages: {}, rankList: null, online: [],
 };
 const MAP = { canvas: document.createElement('canvas'), tiles: [], rows: 0, slots: [], grass: [], sig: '' };
 const ghosts = new Map();
@@ -608,10 +635,31 @@ const candiesOf = (id) => S.mode === 'firebase'
 const wasMoved = (k) => S.mode === 'firebase' ? k.moved === true : ledger().moved.has(k);
 function ranking() {
   if (S.mode === 'firebase' && eventState() === 'ended' && S.event.results) return S.event.results;
-  return Object.entries(S.players)
+  // 온라인 순위는 마을 구독에 없는 사람까지 필요하므로 서버가 3분마다 모아 주는 목록을 쓴다.
+  if (S.mode === 'firebase') return S.rankList || [];
+  return rankingOf(S.players);
+}
+function rankingOf(players) {
+  const round = S.event?.id || 'practice';
+  const count = (id, p) => S.mode === 'firebase' ? (p.round === round ? p.candies : START_CANDIES) : candiesOf(id);
+  return Object.entries(players)
     .filter(([, p]) => p.costume && (S.mode !== 'firebase' || eventState() !== 'ended' || (p.readyAt || p.joinedAt || 0) <= S.event.endsAt))
-    .map(([id]) => ({ id, n: candiesOf(id) }))
+    .map(([id, p]) => ({ id, n: count(id, p), costume: p.costume }))
     .sort((a, b) => b.n - a.n || nameOf(a.id).localeCompare(nameOf(b.id), 'ko'));
+}
+const RANK_REFRESH_MS = 3 * 60 * 1000;
+async function loadRanking() {
+  if (S.mode !== 'firebase' || S.rankLoading || Date.now() - (S.rankAt || 0) < 30000) return;
+  S.rankLoading = true;
+  try {
+    const { players } = await accountRequest('/api/game/leaderboard');
+    for (const p of players) if (p.nick) S.names[p.id] = cleanNick(p.nick);
+    S.rankList = players;
+    S.rankAt = Date.now();
+    renderHud();
+    if (!$('#rank').hidden) renderRanking();
+  } catch { toast('순위를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.'); }
+  finally { S.rankLoading = false; }
 }
 function activeFx(id) {
   const ks = S.players[id]?.knocks || [];
@@ -626,10 +674,15 @@ function activeFx(id) {
 
 function houseOwners() {
   return Object.entries(S.players)
-    .filter(([, p]) => p.costume)
+    .filter(([, p]) => p.costume && (S.mode !== 'firebase' || p.village === S.village))
     .sort(([a, pa], [b, pb]) => (pa.joinedAt || 0) - (pb.joinedAt || 0) || a.localeCompare(b))
     .map(([id]) => id);
 }
+
+const villageCount = () => Math.max(0, ...Object.keys(S.villages).map(Number));
+const villageLabel = (n) => S.villages[n]?.name || `${n}번 마을`;
+// 마지막 마을 아래는 첫 마을로, 첫 마을 위는 마지막 마을로 이어진다.
+const nextVillage = (step) => ((S.village - 1 + step + villageCount()) % villageCount()) + 1;
 
 function rect(x, ax, ay, w, h, color) { x.fillStyle = color; x.fillRect(ax, ay, w, h); }
 
@@ -664,10 +717,11 @@ function drawSign(x, sx, sy) {
 function buildMap() {
   const owners = houseOwners();
   const doors = owners.map((id) => S.players[id].door || 1);
-  const sig = `${owners.join(',')}|${doors.join(',')}`;
+  const gates = S.mode === 'firebase' && Boolean(S.village) && villageCount() > 1;
+  const sig = `${owners.join(',')}|${doors.join(',')}|${S.village}|${gates}`;
   if (sig === MAP.sig) return;
   MAP.sig = sig;
-  const blocks = Math.max(2, Math.ceil((owners.length + 1) / HOUSE_XS.length));
+  const blocks = S.mode === 'firebase' ? VILLAGE_BLOCKS : Math.max(2, Math.ceil((owners.length + 1) / HOUSE_XS.length));
   const rows = PLAZA_H + blocks * BLOCK_H + 1;
   const tiles = new Array(rows * COLS).fill(0);
   const set = (tx, ty, v) => { if (tx >= 0 && ty >= 0 && tx < COLS && ty < rows) tiles[ty * COLS + tx] = v; };
@@ -696,6 +750,7 @@ function buildMap() {
   }
   for (let tx = 0; tx < COLS; tx++) { tiles[tx] = 2; tiles[(rows - 1) * COLS + tx] = 2; }
   for (let ty = 0; ty < rows; ty++) { tiles[ty * COLS] = 2; tiles[ty * COLS + COLS - 1] = 2; }
+  if (gates) for (const gx of GATE_XS) { tiles[gx] = 4; tiles[(rows - 1) * COLS + gx] = 4; }
 
   const c = MAP.canvas;
   c.width = COLS * T;
@@ -704,7 +759,7 @@ function buildMap() {
   const paint = rng(77);
   for (let ty = 0; ty < rows; ty++) for (let tx = 0; tx < COLS; tx++) {
     const t = tiles[ty * COLS + tx], px = tx * T, py = ty * T;
-    const path = t === 1;
+    const path = t === 1 || t === 4;
     rect(x, px, py, T, T, path ? '#a67d57' : '#3d6a3a');
     for (let i = 0; i < 7; i++) {
       const dx = Math.floor(paint() * T), dy = Math.floor(paint() * T);
@@ -716,6 +771,7 @@ function buildMap() {
     if (tiles[ty * COLS + tx] === 2) x.drawImage(TILE_SPR.tree, tx * T, ty * T);
   }
   for (const d of deco) if (d.kind !== 'pumpkin') x.drawImage(TILE_SPR[d.kind], d.tx * T, d.ty * T);
+  if (gates) for (const gy of [0, rows - 1]) { rect(x, 14 * T, gy * T, T, T, '#3d6a3a'); drawSign(x, 14 * T, gy * T + 4); }
   x.drawImage(TILE_SPR.cauldron, CAUL.x - 8, 2 * T);
   for (const s of slots) {
     if (s.owner) drawHouse(x, s.hx * T, s.hy * T, S.players[s.owner].door || 1);
@@ -726,7 +782,7 @@ function buildMap() {
   for (let ty = 1; ty < rows - 1; ty++) for (let tx = 1; tx < COLS - 1; tx++) {
     if (tiles[ty * COLS + tx] === 0 && !taken.has(`${tx},${ty}`)) grass.push({ tx, ty });
   }
-  Object.assign(MAP, { tiles, rows, slots, grass });
+  Object.assign(MAP, { tiles, rows, slots, grass, gates });
   S.pumpkins = S.pumpkins.filter((p) => tiles[p.ty * COLS + p.tx] === 0);
   if (blocked(S.pos.x, S.pos.y)) Object.assign(S.pos, { x: SPAWN.x, y: SPAWN.y });
 }
@@ -775,6 +831,31 @@ function livePresence(tree, serverNow) {
   }
   return [...latest.values()];
 }
+// 위쪽 표지판은 이전 마을, 아래쪽 표지판은 다음 마을로 이어지고, 도착하면 반대쪽 표지판 앞에 선다.
+function travel(step) {
+  return travelTo(nextVillage(step), step > 0 ? 1 * T + 10 : (MAP.rows - 2) * T + 10);
+}
+async function travelTo(village, arriveY = SPAWN.y) {
+  if (S.busy || !S.room?.enterVillage) return;
+  S.busy = true; S.target = null; keys.clear();
+  const from = { ...S.pos }, veil = $('#veil');
+  veil.textContent = villageLabel(village);
+  veil.classList.add('on');
+  try {
+    await wait(300);
+    await S.room.enterVillage(village);
+    render();
+    Object.assign(S.pos, { x: arriveY === SPAWN.y ? SPAWN.x : 13 * T, y: arriveY, moving: false });
+    presenceDirty = true;
+  } catch {
+    Object.assign(S.pos, { x: from.x, y: clamp(from.y, 1 * T + 10, (MAP.rows - 2) * T + 10) });
+    toast('이웃 마을로 가지 못했어요. 잠시 뒤 다시 해 보세요.');
+  } finally {
+    await wait(200);
+    veil.classList.remove('on');
+    S.busy = false;
+  }
+}
 function update(dt) {
   const p = S.pos;
   let vx = 0, vy = 0;
@@ -807,6 +888,8 @@ function update(dt) {
   if (moved !== p.moving) presenceDirty = true;
   p.moving = moved;
   if (moved) { p.walk += dt; presenceDirty = true; hideHint(); }
+  const row = Math.floor(p.y / T);
+  if (MAP.gates && moved && !S.busy && (row <= 0 || row >= MAP.rows - 1)) void travel(row <= 0 ? -1 : 1);
   sendPresence();
   updateNear();
   for (const g of ghosts.values()) {
@@ -844,18 +927,20 @@ function sendChat() {
   else onChat({ data: { text }, sameTab: true, by: S.me });
   botReply();
 }
+// 채팅은 모든 마을이 함께 보고, 말풍선은 같은 마을에 있는 사람 머리 위에만 띄운다.
 function onChat(msg) {
   const text = String(msg?.data?.text ?? '').replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX);
   if (!text) return;
-  const key = msg.sameTab ? 'me' : msg.peer;
-  chatBubbles.set(key, { text, until: Date.now() + CHAT_BUBBLE_MS });
-  chatLog.push({ name: msg.sameTab ? nameOf(S.me) : msg.by ? nameOf(msg.by) : '이웃', text });
+  const village = msg.data?.v;
+  const here = village === undefined || village === S.village;
+  if (here) chatBubbles.set(msg.sameTab ? 'me' : msg.peer, { text, until: Date.now() + CHAT_BUBBLE_MS });
+  chatLog.push({ by: msg.sameTab ? S.me : msg.by, village: here ? null : village, text });
   if (chatLog.length > CHAT_LOG) chatLog.shift();
   renderChatLog();
 }
 function renderChatLog() {
   const box = $('#chatlog');
-  box.innerHTML = chatLog.map((c) => `<p><b>${esc(c.name)}</b>${esc(c.text)}</p>`).join('');
+  box.innerHTML = chatLog.map((c) => `<p><b>${c.village ? `<small>[${esc(villageLabel(c.village))}]</small> ` : ''}${esc(c.name || (c.by ? nameOf(c.by) : '이웃'))}</b>${esc(c.text)}</p>`).join('');
   box.hidden = !chatLog.length;
 }
 function bubbleOf(key) {
@@ -1140,6 +1225,10 @@ function draw() {
     } else {
       label('빈 집터', s.hx * T + 32, s.hy * T + 28, '#c3b4da', 0.75);
     }
+  }
+  if (MAP.gates) {
+    label(`▲ ${villageLabel(nextVillage(-1))}`, 13 * T, T + 3, '#ffd166', 0.75);
+    label(`▼ ${villageLabel(nextVillage(1))}`, 13 * T, (MAP.rows - 1) * T - 1, '#ffd166', 0.75);
   }
   for (const f of S.floats) {
     const q = f.t / f.life;
@@ -1476,7 +1565,7 @@ function renderHud() {
     loading: '마을 불러오는 중…',
     practice: '연습 모드 · 허수아비 집으로 연습해요. 저장되지 않아요',
     account: '연습 마을 · 사탕과 순위 기록은 저장되지 않아요',
-    firebase: S.networkConnected ? `지금 마을에 ${online.size + 1}명 · 기록 저장 중` : '마을 연결 중…',
+    firebase: S.networkConnected ? `${villageLabel(S.village)} ${online.size + 1}명 · 전체 ${Math.max(S.online.length, online.size + 1)}명 · 기록 저장 중` : '마을 연결 중…',
   }[S.mode] || (S.readOnly ? '구경만 가능 · 참여자(Contributor) 권한이 있어야 놀 수 있어요'
     : online.size ? `지금 마을에 ${online.size + 1}명` : '지금 마을엔 나 혼자');
   const fx = S.me ? activeFx(S.me) : null;
@@ -1488,6 +1577,32 @@ function renderHud() {
     <span class="status ev">${esc(eventLine())}</span>
     <span class="status reward">${sharedGame() ? '최종 사탕 순위에 따라 실제 선물 지급' : '연습 중 · 선물 순위에 포함되지 않아요'}</span>`;
   $('#account-session').hidden = !['account', 'firebase'].includes(S.mode);
+  $('#open-online').hidden = S.mode !== 'firebase';
+}
+
+// 마을 지도는 이미 받고 있는 마을 이름과 접속자 기록(마을 번호만)으로 그려서 추가 읽기가 없다.
+// 게임 속 표지판 방향 그대로 1번을 맨 위, 마지막 번호를 맨 아래에 세로 길로 놓는다.
+function renderOnline() {
+  const groups = new Map();
+  for (const { by, presence } of S.online) {
+    if (!groups.has(presence.v)) groups.set(presence.v, []);
+    groups.get(presence.v).push(by);
+  }
+  const total = Math.max(villageCount(), ...groups.keys());
+  const nodes = Array.from({ length: total }, (_, i) => {
+    const v = i + 1, here = v === S.village, people = groups.get(v)?.length || 0;
+    return `<button class="chain-node${here ? ' here' : ''}" type="button" ${here ? 'aria-current="true"' : `data-go="${v}"`}>
+      <span class="no">${v}</span><b>${esc(villageLabel(v))}</b>${here ? `<img class="px-img" src="${spriteUrl(myCostume() || 'plain', 2)}" alt="">` : ''}<small>${here ? '지금 여기' : `접속 ${people}명`}</small></button>`;
+  });
+  const chain = !total ? '<p class="note">마을 정보를 불러오는 중…</p>'
+    : total === 1 ? nodes[0]
+      : `<p class="chain-end">▲ 1번에서 위로 가면 ${total}번</p>${nodes.join('<span class="chain-link" aria-hidden="true">▼</span>')}<p class="chain-end">▼ ${total}번에서 아래로 가면 1번</p>`;
+  const list = [...groups.keys()].sort((a, b) => a - b).map((v) => `<li><div><b>${v}. ${esc(villageLabel(v))}</b>${v === S.village ? ' · 지금 여기' : ''}<br>
+    <span class="guest-message">${groups.get(v).map((id) => esc(id === S.me ? `${nameOf(id)} (나)` : nameOf(id))).join(', ')}</span></div><time>${groups.get(v).length}명</time></li>`).join('');
+  $('#on-sub').textContent = `마을 ${total}개 · 접속 ${S.online.length}명`;
+  // 접속 기록은 수시로 갱신되므로 내용이 바뀔 때만 다시 그려 누르려던 마을이 사라지지 않게 한다.
+  if (chain !== renderOnline.chain) $('#on-chain').innerHTML = renderOnline.chain = chain;
+  if (list !== renderOnline.list) $('#on-list').innerHTML = renderOnline.list = list;
 }
 
 function renderWardrobe() {
@@ -1544,12 +1659,25 @@ function renderHouse() {
   $('#book').innerHTML = guestbookHtml(S.me);
 }
 
-function guestbookHtml(host) {
-  const items = [];
-  for (const [vid, v] of Object.entries(S.players)) {
-    for (const k of v.knocks || []) if (k.h === host) items.push({ at: k.at, v: vid, c: k.c, line: bookLine(k) });
-    for (const n of v.notes || []) if (n.h === host) items.push({ at: n.at, v: vid, c: v.costume, line: esc(String(n.text).slice(0, NOTE_MAX)) });
+// 같은 마을 방문자는 자기 문서에, 다른 마을 방문자는 집주인 문서(guests)에도 남으므로 합치고 겹친 건 한 번만 센다.
+function visitsTo(host) {
+  const seen = new Set(), visits = [];
+  const add = (v, at, visit) => {
+    const key = `${v}:${at}:${visit.knock ? 'k' : 'n'}`;
+    if (!seen.has(key)) { seen.add(key); visits.push({ v, at, ...visit }); }
+  };
+  for (const g of S.players[host]?.guests || []) add(g.v, g.at, g.text === undefined ? { knock: g } : { note: g });
+  for (const [vid, p] of Object.entries(S.players)) {
+    for (const k of p.knocks || []) if (k.h === host) add(vid, k.at, { knock: k });
+    for (const n of p.notes || []) if (n.h === host) add(vid, n.at, { note: { ...n, c: p.costume } });
   }
+  return visits;
+}
+
+function guestbookHtml(host) {
+  const items = visitsTo(host).map(({ v, at, knock, note }) => knock
+    ? { at, v, c: knock.c, line: bookLine(knock) }
+    : { at, v, c: note.c, line: esc(String(note.text).slice(0, NOTE_MAX)) });
   items.sort((a, b) => b.at - a.at);
   return items.length
     ? items.slice(0, 40).map((it) => `<li><img class="px-img" src="${spriteUrl(COSTUMES[it.c] ? it.c : 'plain', 2)}" alt="">
@@ -1632,7 +1760,7 @@ function renderRanking() {
     ? list.map((r, i) => `<li class="${r.id === S.me ? 'mine' : ''}"><span class="no">${i + 1}</span>
         <img class="px-img" src="${spriteUrl(r.costume || S.players[r.id]?.costume || 'plain', 2)}" alt="">
         <div><b>${esc(nameOf(r.id))}</b>${r.id === S.me && nameOf(r.id) !== '나' ? ' (나)' : ''}${S.names[r.id] && S.names[r.id] !== nameOf(r.id) ? `<small class="real">${esc(S.names[r.id])}</small>` : ''}</div><span class="cnt">${r.n}개</span></li>`).join('')
-    : '<li class="note">아직 마을에 아무도 없어요.</li>';
+    : `<li class="note">${S.rankLoading ? '순위를 불러오는 중…' : '아직 마을에 아무도 없어요.'}</li>`;
   $('#rk-admin').hidden = !S.isOwner;
   const canFinalize = S.mode === 'firebase' && S.event && !S.event.results && eventState() === 'ended';
   $('#ev-stop').disabled = eventState() !== 'running' && !canFinalize;
@@ -1646,6 +1774,7 @@ function render() {
   if (!$('#wardrobe').hidden) renderWardrobe();
   if (!$('#house').hidden) renderHouse();
   if (!$('#rank').hidden) renderRanking();
+  if (!$('#online').hidden) renderOnline();
   if (!$('#note').hidden) renderNote();
   if (S.near) { S.near = { ...S.near, key: null }; updateNear(); }
 }
@@ -2073,7 +2202,8 @@ function openModal(id) {
   if (S.busy) { toast('진행 중인 대화나 노크를 먼저 마쳐 주세요.'); return; }
   if (id === 'wardrobe') renderWardrobe();
   if (id === 'house') { S.muralDraft = null; renderHouse(); }
-  if (id === 'rank') renderRanking();
+  if (id === 'rank') { void loadRanking(); renderRanking(); }
+  if (id === 'online') renderOnline();
   if (id === 'note') renderNote();
   $(`#${id}`).hidden = false;
   keys.clear();
@@ -2255,6 +2385,8 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'open-wardrobe') openModal('wardrobe');
   else if (t.id === 'open-home') openModal('house');
   else if (t.id === 'open-rank') openModal('rank');
+  else if (t.id === 'open-online') openModal('online');
+  else if (t.dataset.go) { closeModal('online'); void travelTo(Number(t.dataset.go)); }
   else if (t.id === 'open-chat') openChat();
   else if (t.id === 'act-btn') act();
   else if (t.id === 'bonk-btn') bonk();
@@ -2313,18 +2445,11 @@ $('#t-track').addEventListener('lostpointercapture', () => S.candyControl?.(fals
 
 function notifyKnocks() {
   let latest = S.seenAt;
-  for (const [vid, p] of Object.entries(S.players)) {
-    if (vid === S.me) continue;
-    for (const k of p.knocks || []) {
-      if (k.h !== S.me || k.at <= S.seenAt) continue;
-      latest = Math.max(latest, k.at);
-      toast(`똑똑! ${nameOf(vid)}(${COSTUMES[k.c]?.name || '?'})이 우리 집 문을 두드렸어요 · ${knockNews(k)}`);
-    }
-    for (const n of p.notes || []) {
-      if (n.h !== S.me || n.at <= S.seenAt) continue;
-      latest = Math.max(latest, n.at);
-      toast(`${nameOf(vid)}이 방명록에 글을 남겼어요: ${String(n.text).slice(0, NOTE_MAX)}`);
-    }
+  for (const { v, at, knock, note } of visitsTo(S.me)) {
+    if (v === S.me || at <= S.seenAt) continue;
+    latest = Math.max(latest, at);
+    if (knock) toast(`똑똑! ${nameOf(v)}(${COSTUMES[knock.c]?.name || '?'})이 우리 집 문을 두드렸어요 · ${knockNews(knock)}`);
+    else toast(`${nameOf(v)}이 방명록에 글을 남겼어요: ${String(note.text).slice(0, NOTE_MAX)}`);
   }
   S.seenAt = latest;
 }
@@ -2399,7 +2524,9 @@ async function saveMural() {
 
 function applyFirebasePlayers() {
   const round = S.event?.id || 'practice';
-  const next = Object.fromEntries(Object.entries(S.firebasePlayers || {}).map(([uid, player]) => [uid, {
+  const source = { ...S.strangers, ...S.firebasePlayers, ...(S.ownPlayer ? { [S.me]: S.ownPlayer } : {}) };
+  for (const p of Object.values(source)) for (const g of p.guests || []) if (g.nick && !S.names[g.v]) S.names[g.v] = cleanNick(g.nick);
+  const next = Object.fromEntries(Object.entries(source).map(([uid, player]) => [uid, {
     ...player, decor: Object.fromEntries(Object.entries(player.decor || {}).filter(([, item]) => item.round === round).map(([key, item]) => [key, item.at])),
   }]));
   // 마을 정보가 오기 전에도 로그인 때 받은 내 분장을 유지해 기본 캐릭터가 잠깐 보이지 않게 한다.
@@ -2409,99 +2536,165 @@ function applyFirebasePlayers() {
   render();
 }
 
+// 마을 이동처럼 연결을 기다리는 일이 끝없이 멈춰 있지 않게 15초에서 끊는다.
+function withDeadline(promise) {
+  let timer;
+  const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('마을 연결이 지연돼요. 다시 로그인해 주세요.')), 15000); });
+  return Promise.race([deadline, promise]).finally(() => clearTimeout(timer));
+}
+
 async function connectFirebaseGame(uid) {
   await S.account.dispose?.();
   const a = S.account, fs = a.firestoreSdk, rt = a.databaseSdk;
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
+  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [] });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
-  const stops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
+  const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
-  const ownRef = rt.ref(a.database, `presence/${uid}/${sid}`);
+  let ownRef = null, disconnect = null;
   rt.goOnline(a.database);
-  const disconnect = rt.onDisconnect(ownRef);
   S.myPeer = myPeer;
   const handlers = { chat: onChat, bonk: onBonk };
-  let presenceReady, presenceFailed;
-  const firstPresence = new Promise((resolve, reject) => { presenceReady = resolve; presenceFailed = reject; });
-  S.room = {
-    peers: () => peers,
-    presence: async (data) => {
-      currentPresence = { x: data.x, y: data.y, f: data.f, m: data.m };
-      if (S.networkConnected && !disposed) await rt.set(ownRef, { ...currentPresence, at: rt.serverTimestamp() });
-    },
-    emit: async (kind, data) => {
-      if (!S.networkConnected) throw new Error('마을에 다시 연결 중이에요.');
-      await rt.set(rt.ref(a.database, `events/${uid}`), { id: crypto.randomUUID(), kind, ...data, at: rt.serverTimestamp() });
-    },
-  };
-  a.dispose = async () => {
-    disposed = true; stops.forEach((stop) => stop()); S.networkConnected = false;
-    void rt.remove(ownRef).catch(() => {});
-    rt.goOffline(a.database); S.room = null;
-  };
-  stops.push(rt.onValue(rt.ref(a.database, '.info/connected'), async (snapshot) => {
-    S.networkConnected = snapshot.val() === true;
-    renderHud();
-    if (!S.networkConnected || disposed) return;
-    try {
-      await disconnect.remove();
-      if (disposed) return;
-      await rt.set(ownRef, { ...currentPresence, at: rt.serverTimestamp() });
-      presenceDirty = true;
-    } catch { toast('접속 상태를 저장하지 못했어요. 새로고침해 주세요.'); }
-  }));
+  const writePresence = () => rt.set(ownRef, { ...currentPresence, at: rt.serverTimestamp() });
   let presenceTree = {}, serverOffset = 0;
   const serverNow = () => Date.now() + serverOffset;
+  const asked = new Set();
+  // 다른 마을 사람은 이 마을 구독에 없으니 분장과 이름만 처음 한 번 읽어 온다.
+  const know = (by) => {
+    if (S.players[by] || asked.has(by)) return;
+    asked.add(by);
+    fs.getDoc(fs.doc(a.firestore, 'gamePlayers', by)).then((doc) => {
+      if (disposed || !doc.exists()) return;
+      S.strangers[by] = doc.data();
+      applyFirebasePlayers(); renderChatLog();
+    }).catch(() => asked.delete(by));
+  };
   const refreshPeers = () => {
     peers = livePresence(presenceTree, serverNow()).map(({ by, id, presence }) => ({
       by, peer: `${by}:${id}`, sameTab: `${by}:${id}` === myPeer, isMe: by === uid, kind: 'viewer',
       presence: { ...presence, c: S.players[by]?.costume || 'plain' },
     }));
+    for (const { by } of peers) know(by);
     syncPeers();
   };
-  const sweep = setInterval(refreshPeers, 10000);
-  stops.push(() => clearInterval(sweep));
-  stops.push(rt.onValue(rt.ref(a.database, '.info/serverTimeOffset'), (snapshot) => { serverOffset = Number(snapshot.val()) || 0; }));
-  stops.push(rt.onValue(rt.ref(a.database, 'presence'), (snapshot) => {
-    presenceTree = snapshot.val() || {};
-    for (const [id, presence] of Object.entries(presenceTree[uid] || {})) {
-      if (id !== sid && serverNow() - (Number(presence?.at) || 0) > PRESENCE_STALE_MS) void rt.remove(rt.ref(a.database, `presence/${uid}/${id}`)).catch(() => {});
-    }
-    refreshPeers();
-    presenceReady();
-  }, (error) => { toast('실시간 접속 권한을 확인해 주세요.'); presenceFailed(error); }));
+  let onlineTree = {};
+  const onlineRef = rt.ref(a.database, `online/${uid}/${sid}`), onlineGone = rt.onDisconnect(onlineRef);
+  const writeOnline = () => rt.set(onlineRef, { v: S.village, at: rt.serverTimestamp() });
+  const refreshOnline = () => {
+    S.online = livePresence(onlineTree, serverNow());
+    for (const { by } of S.online) know(by);
+    renderHud();
+    if (!$('#online').hidden) renderOnline();
+  };
   const seen = new Set(), joined = Date.now();
   const receive = (snapshot) => {
     const data = snapshot.val();
     if (!data || seen.has(data.id) || data.at < joined - 5000) return;
     seen.add(data.id); if (seen.size > 300) seen.delete(seen.values().next().value);
+    if (data.kind === 'chat') know(snapshot.key);
     handlers[data.kind]?.({ data, by: snapshot.key, peer: peers.find((p) => p.by === snapshot.key)?.peer || snapshot.key, sameTab: snapshot.key === uid });
   };
   const messageError = () => toast('채팅 권한을 확인해 주세요.');
-  stops.push(rt.onChildAdded(rt.ref(a.database, 'events'), receive, messageError));
-  stops.push(rt.onChildChanged(rt.ref(a.database, 'events'), receive, messageError));
-  let readyTimer;
-  const deadline = new Promise((_, reject) => { readyTimer = setTimeout(() => reject(new Error('마을 연결이 지연돼요. 다시 로그인해 주세요.')), 15000); });
+  stops.push(rt.onChildAdded(rt.ref(a.database, 'chat'), receive, messageError));
+  stops.push(rt.onChildChanged(rt.ref(a.database, 'chat'), receive, messageError));
+  // 마을을 옮길 때마다 그 마을의 플레이어·접속 위치·채팅만 새로 구독한다.
+  const joinVillage = (n) => {
+    villageStops.splice(0).forEach((stop) => stop());
+    if (ownRef) { void disconnect.cancel().catch(() => {}); void rt.remove(ownRef).catch(() => {}); }
+    S.village = n; S.firebasePlayers = {}; presenceTree = {}; peers = [];
+    ghosts.clear(); chatBubbles.clear();
+    ownRef = rt.ref(a.database, `presence/${n}/${uid}/${sid}`);
+    disconnect = rt.onDisconnect(ownRef);
+    applyFirebasePlayers();
+    if (S.networkConnected) { void disconnect.remove().then(writePresence).catch(() => {}); void writeOnline().catch(() => {}); }
+    const presenceReady = new Promise((resolve, reject) => villageStops.push(rt.onValue(rt.ref(a.database, `presence/${n}`), (snapshot) => {
+      presenceTree = snapshot.val() || {};
+      for (const [id, presence] of Object.entries(presenceTree[uid] || {})) {
+        if (id !== sid && serverNow() - (Number(presence?.at) || 0) > PRESENCE_STALE_MS) void rt.remove(rt.ref(a.database, `presence/${n}/${uid}/${id}`)).catch(() => {});
+      }
+      refreshPeers();
+      resolve();
+    }, (error) => { toast('실시간 접속 권한을 확인해 주세요.'); reject(error); })));
+    villageStops.push(rt.onChildAdded(rt.ref(a.database, `events/${n}`), receive, messageError));
+    villageStops.push(rt.onChildChanged(rt.ref(a.database, `events/${n}`), receive, messageError));
+    const villagers = fs.query(fs.collection(a.firestore, 'gamePlayers'), fs.where('village', '==', n));
+    const playersReady = new Promise((resolve, reject) => villageStops.push(fs.onSnapshot(villagers, { includeMetadataChanges: true }, (snapshot) => {
+      if (snapshot.metadata.fromCache) return;
+      S.firebasePlayers = Object.fromEntries(snapshot.docs.map((doc) => [doc.id, doc.data()]));
+      applyFirebasePlayers(); notifyKnocks(); resolve();
+    }, (error) => { S.readOnly = true; toast('마을 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); })));
+    return Promise.all([presenceReady, playersReady]);
+  };
+  S.room = {
+    peers: () => peers,
+    presence: async (data) => {
+      currentPresence = { x: data.x, y: data.y, f: data.f, m: data.m };
+      if (S.networkConnected && !disposed && ownRef) await writePresence();
+    },
+    emit: async (kind, data) => {
+      if (!S.networkConnected) throw new Error('마을에 다시 연결 중이에요.');
+      const message = { id: crypto.randomUUID(), kind, ...data, at: rt.serverTimestamp() };
+      if (kind === 'chat') await rt.set(rt.ref(a.database, `chat/${uid}`), { ...message, v: S.village });
+      else await rt.set(rt.ref(a.database, `events/${S.village}/${uid}`), message);
+    },
+    enterVillage: (n) => withDeadline(joinVillage(n)),
+  };
+  a.dispose = async () => {
+    disposed = true; [...stops, ...villageStops].forEach((stop) => stop()); S.networkConnected = false;
+    if (ownRef) void rt.remove(ownRef).catch(() => {});
+    void rt.remove(onlineRef).catch(() => {});
+    rt.goOffline(a.database); S.room = null; S.village = null; S.online = [];
+  };
+  const villageReady = joinVillage(session.village);
+  stops.push(rt.onValue(rt.ref(a.database, '.info/connected'), async (snapshot) => {
+    S.networkConnected = snapshot.val() === true;
+    renderHud();
+    if (!S.networkConnected || disposed) return;
+    try {
+      await Promise.all([disconnect.remove(), onlineGone.remove()]);
+      if (disposed) return;
+      await Promise.all([writePresence(), writeOnline()]);
+      presenceDirty = true;
+    } catch { toast('접속 상태를 저장하지 못했어요. 새로고침해 주세요.'); }
+  }));
+  const sweep = setInterval(() => { refreshPeers(); refreshOnline(); }, 10000);
+  const beat = setInterval(() => { if (S.networkConnected && !disposed) void writeOnline().catch(() => {}); }, PRESENCE_HEARTBEAT_MS);
+  stops.push(() => clearInterval(sweep), () => clearInterval(beat));
+  stops.push(rt.onValue(rt.ref(a.database, 'online'), (snapshot) => {
+    onlineTree = snapshot.val() || {};
+    for (const [id, entry] of Object.entries(onlineTree[uid] || {})) {
+      if (id !== sid && serverNow() - (Number(entry?.at) || 0) > PRESENCE_STALE_MS) void rt.remove(rt.ref(a.database, `online/${uid}/${id}`)).catch(() => {});
+    }
+    refreshOnline();
+  }, () => toast('접속자 목록 권한을 확인해 주세요.')));
+  stops.push(rt.onValue(rt.ref(a.database, '.info/serverTimeOffset'), (snapshot) => { serverOffset = Number(snapshot.val()) || 0; }));
+  stops.push(fs.onSnapshot(fs.collection(a.firestore, 'villages'), (snapshot) => {
+    S.villages = Object.fromEntries(snapshot.docs.map((doc) => [doc.id, doc.data()]));
+    render();
+  }, () => toast('이웃 마을 정보를 받지 못해요. 새로고침해 주세요.')));
+  let placed = false;
   try {
-    await Promise.race([deadline, Promise.all([
-      firstPresence,
-      new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.collection(a.firestore, 'gamePlayers'), { includeMetadataChanges: true }, (snapshot) => {
+    await withDeadline(Promise.all([
+      villageReady,
+      new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'gamePlayers', uid), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
-        S.firebasePlayers = Object.fromEntries(snapshot.docs.map((doc) => [doc.id, doc.data()]));
+        S.ownPlayer = snapshot.exists() ? snapshot.data() : null;
+        // 분장을 처음 고른 순간 서버가 정한 마을이 지금 보던 마을과 다르면 그 마을로 옮긴다.
+        const home = S.ownPlayer?.village;
+        if (home && !placed) { placed = true; if (home !== S.village) void travelTo(home); }
         applyFirebasePlayers(); notifyKnocks(); resolve();
-      }, (error) => { S.readOnly = true; toast('마을 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
+      }, (error) => { S.readOnly = true; toast('내 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
       new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'game/event'), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         const previous = S.event?.id;
         S.event = snapshot.exists() ? snapshot.data() : null;
-        if (previous && previous !== S.event?.id) toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.');
+        if (previous && previous !== S.event?.id) { S.rankList = null; S.rankAt = 0; toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.'); }
         applyFirebasePlayers(); resolve();
       }, (error) => { S.readOnly = true; toast('이벤트 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
-    ])]);
+    ]));
   } catch (error) { await a.dispose(); throw error; }
-  finally { clearTimeout(readyTimer); }
 }
 
 function showAuthGate(message = '') {
