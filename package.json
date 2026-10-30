@@ -1,0 +1,21 @@
+{
+  "name": "trick-or-treat",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "build": "node scripts/build.cjs",
+    "dev": "node --env-file-if-exists=.env.local scripts/dev-server.cjs",
+    "dev:emulators": "firebase emulators:start --only auth,firestore,database --project demo-trick-or-treat",
+    "test": "node --test tests/game.test.cjs tests/auth.test.cjs tests/game-rules.test.cjs",
+    "test:emulator": "firebase emulators:exec --only auth,firestore,database --project demo-trick-or-treat \"node --test tests/auth.integration.test.cjs tests/game.integration.test.cjs\""
+  },
+  "dependencies": {
+    "firebase-admin": "14.5.0"
+  },
+  "devDependencies": {
+    "firebase-tools": "15.34.2"
+  }
+}

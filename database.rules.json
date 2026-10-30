@@ -1,0 +1,34 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "presence": {
+      ".read": "auth != null",
+      "$uid": {
+        "$session": {
+          ".write": "auth != null && auth.uid == $uid",
+          ".validate": "newData.hasChildren(['x','y','f','m','at'])",
+          "x": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 416" },
+          "y": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 20000" },
+          "f": { ".validate": "newData.val() == 1 || newData.val() == -1" },
+          "m": { ".validate": "newData.isBoolean()" },
+          "at": { ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 1000" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+    "events": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid == $uid && newData.exists() && (!data.exists() || now - data.child('at').val() >= 600)",
+        ".validate": "newData.hasChildren(['id','kind','at']) && ((newData.child('kind').val() == 'chat' && newData.hasChild('text')) || (newData.child('kind').val() == 'bonk' && newData.hasChild('to')))",
+        "id": { ".validate": "newData.isString() && newData.val().length <= 80" },
+        "kind": { ".validate": "newData.val() == 'chat' || newData.val() == 'bonk'" },
+        "at": { ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 1000" },
+        "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60" },
+        "to": { ".validate": "newData.isString() && newData.val().length <= 100" },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
