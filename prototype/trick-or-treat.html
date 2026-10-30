@@ -1,9 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>똑똑 할로윈</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Silkscreen:wght@400;700&display=swap">
 <style>
-/* 레이아웃: 화면 전체가 위에서 내려다본 픽셀 마을. HUD는 위 두 모서리, 문 앞 행동과 대화창은 아래 가운데 */
+/* 화면 전체는 픽셀 마을. 행동·대화·노크는 캐릭터를 따라가는 말풍선으로 표시한다. */
 :root{
   --night:#140f1c; --panel:#2a1f3d; --panel-2:#3b2d55; --text:#fff4e2; --muted:#c3b4da; --edge:#0b0810;
   --pumpkin:#f28a2e; --candy:#ff6fa8; --slime:#8bd450; --gold:#ffd166;
@@ -37,6 +40,12 @@ img.px-img{image-rendering:pixelated;display:block}
 .me img{width:40px;height:40px;grid-row:span 2}
 .me b{font-size:1.05rem;font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .me .bag{font-family:var(--f-px);font-size:.85rem;color:var(--gold);display:flex;align-items:center;gap:6px}
+.quest{margin-top:14px;padding:10px 12px;display:grid;gap:4px;font-size:.85rem}
+.quest .quest-label{font-size:.75rem;color:var(--gold)}
+.quest b{font-size:.95rem;font-weight:400}
+.quest>span:last-child{color:var(--muted)}
+.quest progress{width:100%;height:10px;accent-color:var(--pumpkin)}
+.quest[data-step="knock"]{border-color:var(--gold)}
 .me .status{grid-column:1/-1;font-size:.8rem;color:var(--muted)}
 
 .bc{left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;gap:14px;padding:10px 12px 10px 16px;width:max-content;max-width:calc(100vw - 40px)}
@@ -44,7 +53,10 @@ img.px-img{image-rendering:pixelated;display:block}
 .bc span{display:block;font-size:.85rem;color:var(--muted)}
 .bc>div{min-width:0}
 
-.hint{position:fixed;z-index:4;left:50%;transform:translateX(-50%);bottom:calc(22px + env(safe-area-inset-bottom,0px));font-size:.88rem;color:var(--text);background:rgba(11,8,16,.72);padding:6px 12px;text-align:center;max-width:calc(100vw - 40px)}
+.hint{position:fixed;z-index:4;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(400px,calc(100vw - 40px));margin:0;color:var(--text);background:rgba(11,8,16,.9);border:3px solid var(--gold);padding:16px 20px;text-align:center;pointer-events:none}
+.hint b{display:block;font-size:1.2rem;font-weight:400;color:var(--gold);margin-bottom:6px}
+.hint span{display:block;font-size:.95rem}
+.hint small{display:block;color:var(--muted);margin-top:8px}
 
 .dialog{position:fixed;z-index:8;left:50%;transform:translateX(-50%);bottom:calc(18px + env(safe-area-inset-bottom,0px));width:min(560px,calc(100vw - 40px));padding:20px 18px 16px;cursor:pointer}
 .dialog .who{position:absolute;top:-18px;left:14px;font-size:.95rem;padding:3px 10px;background:var(--pumpkin);color:var(--edge);border:3px solid var(--text);box-shadow:0 0 0 3px var(--edge)}
@@ -82,12 +94,16 @@ input[type=text]{flex:1 1 180px}
 .book li:first-child{border-top:0}
 .book img{width:32px;height:32px;flex:none}
 .book li div{flex:1;min-width:0;overflow-wrap:anywhere;font-size:.92rem}
+.book .guest-name{color:var(--pumpkin)}
+.book .guest-message{color:var(--text)}
 .book time{font-size:.78rem;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
 .tag{font-family:var(--f-px);font-weight:700;font-size:.8rem}
-.tag.treat{color:var(--slime)} .tag.trick{color:var(--candy)} .tag.note{color:var(--gold)}
+.tag.treat{color:var(--slime)} .tag.trick{color:var(--candy)}
 textarea{width:100%;box-sizing:border-box;resize:vertical;line-height:1.4;font-family:var(--f-ko)}
 textarea:focus{outline:none;border-color:var(--gold)}
 .me .status.ev{color:var(--gold)}
+.reward{color:var(--gold);font-size:.9rem}
+.me .reward{color:var(--gold)}
 .chatbar{left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;padding:8px;width:min(520px,calc(100vw - 40px));z-index:9}
 .chatbar input{flex:1 1 auto}
 .chatlog{left:max(14px,env(safe-area-inset-left,0px));bottom:calc(96px + env(safe-area-inset-bottom,0px));max-width:min(320px,calc(100vw - 40px));display:flex;flex-direction:column;gap:2px;pointer-events:none;font-size:.85rem}
@@ -97,6 +113,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .mc{all:unset;cursor:pointer;width:30px;height:30px;border:3px solid var(--edge);box-shadow:0 0 0 2px var(--muted);font-size:.7rem;text-align:center;line-height:30px;color:var(--text)}
 .mc[aria-pressed="true"]{box-shadow:0 0 0 3px var(--gold)}
 .intro .sheet{width:min(460px,100%);text-align:center;align-items:stretch}
+.intro-footer{display:flex;justify-content:flex-end;margin-top:4px}
 .born{width:96px;height:96px;margin:4px auto 0}
 .born.hatch{animation:hatch .5s}
 @keyframes hatch{0%{transform:scale(.3) rotate(-10deg)}60%{transform:scale(1.25)}100%{transform:none}}
@@ -126,6 +143,19 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .marker{position:absolute;top:-9px;bottom:-9px;width:6px;margin-left:-3px;background:var(--gold);box-shadow:0 0 0 2px var(--edge)}
 
 
+/* 캔버스의 월드 좌표를 CSS 좌표로 바꿔 캐릭터 위에 배치한다. */
+.actor-bubble{box-sizing:border-box;left:0;top:0;bottom:auto;transform:none;max-width:calc(100vw - 40px);max-height:calc(100dvh - 140px);overflow:visible}
+.actor-bubble::after{content:"";position:absolute;left:var(--tail-x,50%);bottom:-14px;width:16px;height:16px;background:var(--panel);border-right:4px solid var(--text);border-bottom:4px solid var(--text);transform:translateX(-50%) rotate(45deg);pointer-events:none}
+.actor-bubble.below::after{top:-14px;bottom:auto;transform:translateX(-50%) rotate(225deg)}
+.bc.actor-bubble{width:min(390px,calc(100vw - 40px));flex-wrap:wrap;gap:12px;padding:12px 14px}
+.bc.actor-bubble>div{flex:1 1 100%}
+.bc.actor-bubble .pbtn{flex:1}
+.dialog.actor-bubble{width:min(440px,calc(100vw - 40px))}
+.dialog.actor-bubble .bubble-content{max-height:calc(100dvh - 204px);overflow-y:auto;overscroll-behavior:contain;padding:0 2px 4px}
+.dialog.actor-bubble .choices{gap:10px;justify-content:flex-start}
+.dialog.actor-bubble .choices .pbtn{white-space:normal;line-height:1.3}
+.timing.actor-bubble{width:min(400px,calc(100vw - 40px))}
+
 .toast{position:fixed;z-index:12;left:50%;transform:translateX(-50%);top:calc(90px + env(safe-area-inset-top,0px));padding:8px 14px;max-width:calc(100vw - 40px);font-size:.95rem;text-align:center}
 
 @media (max-width:560px){
@@ -137,9 +167,17 @@ textarea:focus{outline:none;border-color:var(--gold)}
 }
 </style>
 
-<div id="stage"><canvas id="world" aria-label="할로윈 마을 지도. 방향키나 화면을 눌러 걸어요"></canvas></div>
+<div id="stage"><canvas id="world" tabindex="0" aria-label="할로윈 마을 지도. 방향키나 화면을 눌러 걸어요"></canvas></div>
 
-<div class="hud tl px me" id="me"></div>
+<div class="hud tl">
+  <div class="px me" id="me"></div>
+  <section class="px quest" id="quest" aria-label="현재 퀘스트" aria-live="polite" hidden>
+    <span class="quest-label" id="quest-label"></span>
+    <b id="quest-title"></b>
+    <progress id="quest-progress" max="3" value="0" aria-label="수집한 호박"></progress>
+    <span id="quest-detail"></span>
+  </section>
+</div>
 <div class="hud tr">
   <button class="pbtn" id="open-wardrobe" type="button">옷장</button>
   <button class="pbtn" id="open-home" type="button">우리 집</button>
@@ -148,17 +186,19 @@ textarea:focus{outline:none;border-color:var(--gold)}
 </div>
 
 <button class="hud pbtn hot bonk" id="bonk-btn" type="button" hidden>뿅망치 (F)</button>
-<div class="hud bc px" id="action" hidden>
+<div class="hud bc px actor-bubble" id="action" hidden>
   <div><b id="act-title"></b><span id="act-sub"></span></div>
   <button class="pbtn hot" id="act-btn" type="button"></button>
   <button class="pbtn" id="act-note" type="button" hidden>방명록</button>
 </div>
-<p class="hint" id="hint">방향키·WASD로 걷거나 땅을 눌러 이동해요. 호박 3개로 바구니를 만들면 친구 집 문을 두드릴 수 있어요</p>
+<p class="hint" id="hint" role="status" hidden><b>이제 마을을 걸어 보세요!</b><span>방향키 · WASD 또는 땅을 클릭·터치해서 이동</span><small>캐릭터가 움직이면 이 안내는 사라져요.</small></p>
 
-<div class="dialog px" id="dialog" role="dialog" aria-live="polite" hidden>
+<div class="dialog px actor-bubble" id="dialog" role="dialog" aria-live="polite" hidden>
   <span class="who" id="dlg-who"></span>
-  <p id="dlg-text"></p>
-  <div class="choices" id="dlg-choices" hidden></div>
+  <div class="bubble-content">
+    <p id="dlg-text"></p>
+    <div class="choices" id="dlg-choices" hidden></div>
+  </div>
   <span class="next" id="dlg-next" aria-hidden="true">▼</span>
 </div>
 
@@ -200,11 +240,11 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <div class="field">
         <span class="lab">꾸미기 상점</span>
-        <span class="note">사탕으로 우리 집을 꾸며요. 마을 지도에 바로 붙고 친구들 눈에도 보여요. 쓴 사탕만큼 순위 점수도 줄어요.</span>
+        <span class="note">장식을 사면 보유 사탕이 줄고 순위에도 반영돼요. 선물은 이벤트 종료 시 남은 사탕 순위를 기준으로 드려요.</span>
         <div class="shop" id="shop"></div>
       </div>
       <div class="field">
-        <span class="lab">사탕 규칙</span>
+        <span class="lab">사탕을 주고받는 경쟁 규칙</span>
         <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 박자 맞추기가 나와요. 초록 칸을 세 번 연속 맞추면 그 집 사탕 1개를 가져오고, 놓치면 내 사탕 1개를 그 집에 두고 와요. 우리 집에 온 친구가 박자를 놓치면 그 사탕은 내 거예요. 사탕이 많은 집일수록 맞추는 칸이 좁아져요.</span>
       </div>
       <div class="field">
@@ -226,6 +266,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <h2 id="rk-title">사탕 순위<small id="rk-sub"></small></h2>
       <button class="pbtn" type="button" data-close="rank">닫기</button>
     </div>
+    <p class="reward">최종 사탕 순위에 따라 실제 선물을 드려요!</p>
+    <p class="note">친구 집 노크에 성공하면 상대에게서 사탕 1개를 가져오고, 실패하면 내 사탕 1개를 줘요. 장식에 쓴 사탕은 순위에서도 빠져요. 같은 사탕 수는 현재 이름순으로 표시돼요.</p>
     <ol class="book rank" id="rk-list"></ol>
     <div class="field" id="rk-admin" hidden>
       <span class="lab">운영자</span>
@@ -265,13 +307,14 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <span class="note">1~12자. 마을 사람들 눈에 이 이름으로 보여요. 나중에 옷장에서 바꿀 수 있어요.</span>
     </div>
+    <div class="intro-footer"><button class="pbtn" id="in-skip" type="button" aria-label="이야기 건너뛰고 이름 정하기">건너뛰기</button></div>
   </div>
 </div>
 
-<div class="timing px" id="timing" hidden>
+<div class="timing px actor-bubble" id="timing" hidden>
   <p class="t-title">박자 맞춰서 <b>똑똑똑</b> <span class="dots" id="t-dots"></span> <span id="t-say"></span></p>
   <div class="track"><div class="zone" id="t-zone"></div><div class="marker" id="t-marker"></div></div>
-  <p class="note">초록 칸에서 Space나 터치, 세 번 연속. 맞출 때마다 칸이 옮겨가고 빨라져요</p>
+  <p class="note">초록 칸에서 Space나 터치, 세 번 연속. 맞출 때마다 칸만 옮겨가요. 한 번에 6초 안에 눌러요</p>
 </div>
 
 <div class="hud chatlog" id="chatlog" aria-live="polite" hidden></div>
@@ -351,6 +394,9 @@ const ROOF = [null, '#f28a2e', '#7a4bb8', '#5fae3c', '#d8343a', '#4a4058'];
 const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
 const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000, KNOCK_HITS = 3;
+// 노크 난이도: 사탕 10개인 집은 폭 28%, 부자 집도 최소 20%를 보장한다.
+const KNOCK_ZONE_MAX = 0.32, KNOCK_ZONE_MIN = 0.20, KNOCK_ZONE_PER_CANDY = 0.004;
+const KNOCK_SPEED_MIN = 0.78, KNOCK_SPEED_MAX = 1.08, KNOCK_TIMEOUT_MS = 6000;
 const DECOR = {
   lantern: { name: '호박등', price: 2, icon: 'lantern', line: '문 옆에서 빛나는 호박' },
   web: { name: '거미줄', price: 2, icon: 'web', line: '지붕 모서리에 거미줄' },
@@ -382,7 +428,16 @@ const FONT = '"Jua", "Gowun Dodum", sans-serif';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const wait = (ms, signal) => new Promise((resolve) => {
+  if (signal?.aborted) { resolve(); return; }
+  const finish = () => {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', finish);
+    resolve();
+  };
+  const timer = setTimeout(finish, ms);
+  signal?.addEventListener('abort', finish, { once: true });
+});
 const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -449,7 +504,7 @@ function rng(seed) {
 
 const S = {
   mode: 'loading', db: null, user: null, room: null, me: null, players: {}, names: {},
-  readOnly: false, busy: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null, timingPress: null,
+  readOnly: false, busy: false, guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null, timingPress: null,
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
   pumpkins: [], nearPumpkin: null, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
@@ -494,7 +549,7 @@ function computeLedger() {
 const ledger = () => (S.ledger ??= computeLedger());
 const candiesOf = (id) => ledger().bal[id] ?? START_CANDIES;
 const wasMoved = (k) => ledger().moved.has(k);
-const zoneFor = (hostCandies) => Math.min(0.18, Math.max(0.06, 0.18 - hostCandies * 0.008));
+const zoneFor = (hostCandies) => clamp(KNOCK_ZONE_MAX - hostCandies * KNOCK_ZONE_PER_CANDY, KNOCK_ZONE_MIN, KNOCK_ZONE_MAX);
 function ranking() {
   return Object.entries(S.players)
     .filter(([, p]) => p.costume)
@@ -645,6 +700,8 @@ const keys = new Set();
 const KEYMAP = { ArrowLeft: 'l', KeyA: 'l', ArrowRight: 'r', KeyD: 'r', ArrowUp: 'u', KeyW: 'u', ArrowDown: 'd', KeyS: 'd' };
 const modalOpen = () => MODALS.some((id) => !$(`#${id}`).hidden);
 const typingInField = (e) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+// 일부 브라우저는 조합 확정 Enter에서 isComposing 대신 keyCode 229를 보낸다.
+const isImeComposing = (e) => e.isComposing || e.keyCode === 229;
 
 let lastPresence = 0, presenceDirty = true;
 function update(dt) {
@@ -697,6 +754,7 @@ const CHAT_MAX = 60, CHAT_BUBBLE_MS = 5000, CHAT_LOG = 6;
 const chatBubbles = new Map();
 const chatLog = [];
 function openChat() {
+  if (S.busy) { toast('진행 중인 대화나 노크를 먼저 마쳐 주세요.'); return; }
   if (S.readOnly || !myCostume()) { toast('코스튬을 입어야 말할 수 있어요.'); return; }
   $('#chatbar').hidden = false;
   keys.clear();
@@ -830,6 +888,39 @@ function syncPeers() {
 }
 
 function w2s(wx, wy) { return [wx * Z - camX, wy * Z - camY]; }
+// 캔버스는 기기 픽셀, DOM은 CSS 픽셀을 쓰므로 dpr로 나눠 위치를 맞춘다.
+const actorBubbles = ['action', 'dialog', 'timing'].map((id) => $(`#${id}`));
+function positionActorBubbles() {
+  const visible = actorBubbles.filter((el) => !el.hidden);
+  if (!visible.length) return;
+  const covered = modalOpen();
+  for (const el of visible) el.style.visibility = covered ? 'hidden' : '';
+  if (covered) return;
+  const bounds = canvas.getBoundingClientRect();
+  const [worldX, worldY] = w2s(S.pos.x, S.pos.y - 28);
+  const anchorX = bounds.left + worldX / dpr;
+  const anchorY = bounds.top + worldY / dpr;
+  const actorBottom = bounds.top + w2s(S.pos.x, S.pos.y + 4)[1] / dpr;
+  const margin = 20, safeBottom = window.innerHeight - 96;
+  const hud = [...document.querySelectorAll('.hud.tl, .hud.tr')].map((el) => el.getBoundingClientRect());
+  for (const el of visible) {
+    const { width, height } = el.getBoundingClientRect();
+    const left = clamp(anchorX - width / 2, margin, Math.max(margin, window.innerWidth - width - margin));
+    const hudBottom = Math.max(margin + 18, ...hud.filter((r) => r.right > left && r.left < left + width).map((r) => r.bottom + 24));
+    const minTop = Math.min(hudBottom, Math.max(margin + 18, safeBottom - height));
+    let top = anchorY - height - 14;
+    // 위쪽 공간이 부족하면 캐릭터 아래로 옮겨 몸과 HUD를 가리지 않는다.
+    const belowTop = Math.max(actorBottom + 26, minTop);
+    const below = top < minTop && belowTop + height <= safeBottom;
+    if (below) top = belowTop;
+    top = clamp(top, minTop, Math.max(minTop, safeBottom - height));
+    el.classList.toggle('below', below);
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+    el.style.setProperty('--tail-x', `${clamp(anchorX - left, 24, width - 24)}px`);
+  }
+}
+
 function drawSpr(img, wx, wy) {
   const [sx, sy] = w2s(Math.round(wx), Math.round(wy));
   ctx.drawImage(img, sx, sy, img.width * Z, img.height * Z);
@@ -1003,11 +1094,14 @@ function frame(now) {
   lastT = now;
   syncPeers();
   update(dt);
+  renderMovementHint();
   draw();
+  positionActorBubbles();
   const sec = Math.floor(Date.now() / 1000);
   if (sec !== hudSecond) {
     hudSecond = sec;
     renderHud();
+    renderAction();
     if (!$('#rank').hidden) renderRanking();
   }
 }
@@ -1108,7 +1202,7 @@ function harvest(p) {
   const have = (S.players[S.me]?.pumpkins || 0) + 1;
   saveMe({ pumpkins: have });
   S.floats.push({ text: '호박 +1', x: p.x, y: p.y - 12, t: 0, life: 0.9 });
-  if (have === BASKET_PUMPKINS) toast('호박 바구니 완성! 이제 들고 다녀요. 친구들 눈에도 보여요.');
+  if (have === BASKET_PUMPKINS) toast('퀘스트 완료! 바구니 완성! 이제 친구 집에서 사탕을 가져올 수 있어요.');
   else if (have < BASKET_PUMPKINS) toast(`호박 ${have}개. 바구니까지 ${BASKET_PUMPKINS - have}개 남았어요.`);
   updateNear();
 }
@@ -1125,7 +1219,6 @@ function renderAction() {
     btn.textContent = '호박 따기';
     btn.disabled = S.readOnly || !myCostume();
     box.hidden = false;
-    $('#hint').hidden = true;
     return;
   }
   if (!n || S.busy) { box.hidden = true; return; }
@@ -1140,16 +1233,21 @@ function renderAction() {
     $('#act-sub').textContent = !myCostume() ? '코스튬부터 입어야 문을 두드릴 수 있어요'
       : ended ? '이벤트가 끝나서 문이 잠겼어요'
       : !hasBasket(S.me) ? `호박 바구니가 있어야 두드릴 수 있어요 · 호박 ${S.players[S.me]?.pumpkins || 0}/${BASKET_PUMPKINS}`
-      : '박자 맞추면 사탕 1개 가져오고, 놓치면 1개 뺏겨요';
+      : `성공: ${nameOf(n.owner)} → 나 1개 / 실패: 나 → ${nameOf(n.owner)} 1개`;
     btn.textContent = '똑똑 두드리기';
     btn.disabled = S.readOnly || !myCostume() || ended || !hasBasket(S.me);
   }
   box.hidden = false;
-  $('#hint').hidden = true;
+}
+
+function renderMovementHint() {
+  const hint = $('#hint');
+  const hidden = S.hintHidden || !myCostume() || !S.players[S.me]?.guideSeen || S.guideRunning || S.busy || S.readOnly || modalOpen();
+  if (hint.hidden !== hidden) hint.hidden = hidden;
 }
 
 function hideHint() {
-  if (S.hintHidden) return;
+  if (S.hintHidden || $('#hint').hidden) return;
   S.hintHidden = true;
   $('#hint').hidden = true;
 }
@@ -1160,15 +1258,43 @@ function fmtLeft(ms) {
 }
 function eventLine() {
   const st = eventState();
-  if (st === 'before') return '이벤트 시작 전 · 지금은 연습판';
+  const list = ranking();
+  const rank = list.findIndex((r) => r.id === S.me) + 1;
+  const mine = rank ? ` · 내 순위 ${rank}등` : '';
+  if (st === 'before') return `이벤트 시작 전 · 연습 중${mine}`;
   if (st === 'ended') {
-    const top = ranking()[0];
-    return top ? `이벤트 끝 · 우승 ${nameOf(top.id)} (사탕 ${top.n}개)` : '이벤트 끝';
+    const top = list[0];
+    return top ? `이벤트 끝 · 우승 ${nameOf(top.id)} (사탕 ${top.n}개)${mine}` : '이벤트 끝';
   }
-  const rank = ranking().findIndex((r) => r.id === S.me) + 1;
-  return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${rank ? ` · 내 순위 ${rank}등` : ''}`;
+  return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${mine}`;
 }
+// 별도 퀘스트 잔액을 저장하지 않고 기존 호박 수와 노크 기록으로 진행도를 복원한다.
+function renderQuest() {
+  const el = $('#quest'), p = S.players[S.me];
+  el.hidden = !p?.costume || !p.guideSeen || S.guideRunning || S.readOnly;
+  if (el.hidden) return;
+  const have = Math.min(BASKET_PUMPKINS, p.pumpkins || 0);
+  const ended = eventState() === 'ended';
+  const knocked = (p.knocks || []).some((k) => k.r === 'win' || k.r === 'lose');
+  const step = ended ? 'ended' : have < BASKET_PUMPKINS ? 'pumpkins' : !knocked ? 'knock' : 'compete';
+  el.dataset.step = step;
+  const content = {
+    pumpkins: ['진행 중인 퀘스트', `호박 바구니 만들기 · ${have}/${BASKET_PUMPKINS}`, '주황색 호박 근처에서 ‘호박 따기’ 또는 Space를 누르세요.'],
+    knock: ['퀘스트 완료! 다음 목표', '친구 집 문을 처음 두드려 보세요', '바구니 완성! 친구 집 문 앞에서 버튼이나 Space로 도전하세요.'],
+    compete: ['다음 목표', '사탕을 모아 순위를 올리세요', '성공하면 상대에게서 1개 획득, 실패하면 내 사탕 1개를 잃어요. 최종 순위에 따라 선물을 드려요.'],
+    ended: ['이벤트 종료', '최종 사탕 순위를 확인하세요', '순위 버튼에서 결과를 볼 수 있어요. 최종 순위에 따라 선물을 드려요.'],
+  }[step];
+  for (const [id, value] of [['quest-label', content[0]], ['quest-title', content[1]], ['quest-detail', content[2]]]) {
+    if ($(`#${id}`).textContent !== value) $(`#${id}`).textContent = value;
+  }
+  $('#quest-progress').hidden = step !== 'pumpkins';
+  $('#quest-progress').max = BASKET_PUMPKINS;
+  $('#quest-progress').value = have;
+}
+
 function renderHud() {
+  renderMovementHint();
+  renderQuest();
   const c = myCostume();
   const online = new Set();
   for (const g of ghosts.values()) if (!g.bot) online.add(g.by || g);
@@ -1181,10 +1307,10 @@ function renderHud() {
   const shown = fx ? `장난 당하는 중 · ${TRICKS[fx.kind].status} ${Math.ceil(fx.left / 1000)}초` : status;
   $('#me').innerHTML = `<img class="px-img" src="${spriteUrl(fx?.kind === 'poop' ? 'poop' : c || 'plain', 3)}" alt="">
     <b>${esc(nameOf(S.me))} · ${c ? COSTUMES[c].name : '분장 전'}</b>
-    <span class="bag"><img class="px-img" src="${spriteUrl('candy', 2)}" alt="" style="width:22px;height:12px">${candiesOf(S.me)}</span>
+    <span class="bag"><img class="px-img" src="${spriteUrl('candy', 2)}" alt="" style="width:22px;height:12px">보유 사탕 ${candiesOf(S.me)}개</span>
     <span class="status" ${fx ? 'style="color:var(--candy)"' : ''}>${esc(shown)}</span>
     <span class="status ev">${esc(eventLine())}</span>
-    ${c && !hasBasket(S.me) ? `<span class="status">호박 바구니까지 ${BASKET_PUMPKINS - (S.players[S.me]?.pumpkins || 0)}개 · 마을에 자라는 호박을 따요</span>` : ''}`;
+    <span class="status reward">최종 사탕 순위에 따라 실제 선물 지급</span>`;
 }
 
 function renderWardrobe() {
@@ -1232,7 +1358,7 @@ function renderHouse() {
     const own = Boolean(owned[key]);
     return `<div class="shop-item"><img class="px-img" src="${spriteUrl(it.icon, 3)}" alt="">
       <div><b>${it.name}</b><small>${it.line}</small></div>
-      <button class="pbtn ${own ? '' : 'hot'}" type="button" data-buy="${key}" ${own || closed || have < it.price ? 'disabled' : ''}>${own ? '설치함' : `사탕 ${it.price}개`}</button></div>`;
+      <button class="pbtn ${own ? '' : 'hot'}" type="button" data-buy="${key}" ${own || closed || have < it.price ? 'disabled' : ''}>${own ? '설치함' : `사탕 −${it.price}개`}</button></div>`;
   }).join('');
   renderMuralEditor(p);
   $('#book').innerHTML = guestbookHtml(S.me);
@@ -1242,12 +1368,12 @@ function guestbookHtml(host) {
   const items = [];
   for (const [vid, v] of Object.entries(S.players)) {
     for (const k of v.knocks || []) if (k.h === host) items.push({ at: k.at, v: vid, c: k.c, line: bookLine(k) });
-    for (const n of v.notes || []) if (n.h === host) items.push({ at: n.at, v: vid, c: v.costume, line: `<span class="tag note">글</span> ${esc(String(n.text).slice(0, NOTE_MAX))}` });
+    for (const n of v.notes || []) if (n.h === host) items.push({ at: n.at, v: vid, c: v.costume, line: esc(String(n.text).slice(0, NOTE_MAX)) });
   }
   items.sort((a, b) => b.at - a.at);
   return items.length
     ? items.slice(0, 40).map((it) => `<li><img class="px-img" src="${spriteUrl(COSTUMES[it.c] ? it.c : 'plain', 2)}" alt="">
-        <div><b>${esc(nameOf(it.v))}</b> ${COSTUMES[it.c]?.name || ''}<br>${it.line}</div>
+        <div><b class="guest-name">${esc(nameOf(it.v))}</b><br><span class="guest-message">${it.line}</span></div>
         <time>${ago(it.at)}</time></li>`).join('')
     : '<li class="note">아직 아무도 안 왔어요. 문 앞이 조용해요.</li>';
 }
@@ -1258,7 +1384,7 @@ function buyDecor(key) {
   if (eventState() === 'ended') { toast('이벤트가 끝나서 상점이 닫혔어요.'); return; }
   if (candiesOf(S.me) < it.price) { toast(`사탕이 ${it.price}개 있어야 해요.`); return; }
   saveMe({ decor: { ...(p.decor || {}), [key]: Date.now() } });
-  toast(`${it.name} 설치 완료! 사탕 ${it.price}개를 썼어요.`);
+  toast(`${it.name} 설치 완료! 사탕 ${it.price}개를 써서 순위에도 반영돼요.`);
 }
 
 function muralDraft() {
@@ -1333,13 +1459,46 @@ function render() {
   if (S.near) { S.near = { ...S.near, key: null }; updateNear(); }
 }
 
-let toastTimer;
-function toast(msg) {
+let toastTimer, finishToast;
+let toastDone = Promise.resolve();
+function toast(msg, { duration = 3000, dismissOnClick = false } = {}) {
+  // 새 알림으로 교체될 때도 기존 대기자는 풀어 주고 현재 알림을 기다릴 수 있게 한다.
+  finishToast?.();
   const t = $('#toast');
   t.textContent = msg;
   t.hidden = false;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 3000);
+  toastDone = new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(toastTimer);
+      document.removeEventListener('click', dismiss, true);
+      document.removeEventListener('keydown', dismissKey, true);
+      t.hidden = true;
+      finishToast = null;
+      resolve();
+    };
+    const dismiss = (e) => {
+      // 이 클릭이 다음 대화나 뒤쪽 버튼에도 전달되지 않도록 먼저 소비한다.
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      finish();
+    };
+    const dismissKey = (e) => {
+      if (!['Space', 'ArrowRight'].includes(e.code) || isImeComposing(e) || typingInField(e)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!e.repeat) finish();
+    };
+    finishToast = finish;
+    if (dismissOnClick) {
+      document.addEventListener('click', dismiss, true);
+      document.addEventListener('keydown', dismissKey, true);
+    }
+    toastTimer = setTimeout(finish, duration);
+  });
+  return toastDone;
+}
+async function waitForToasts() {
+  while (!$('#toast').hidden) await toastDone;
 }
 
 let writes = Promise.resolve();
@@ -1364,17 +1523,26 @@ function saveMe(patch) {
 }
 
 let typing = null, advanceFn = null;
-function typeText(el, text) {
+function typeText(el, text, signal, charMs = 32) {
   return new Promise((done) => {
+    if (signal?.aborted) { done(); return; }
     if (reduceMotion()) { el.textContent = text; done(); return; }
     let i = 0;
     const timer = setInterval(() => {
       i += 1;
       el.textContent = text.slice(0, i);
       if (i >= text.length) finish();
-    }, 32);
-    function finish() { clearInterval(timer); el.textContent = text; typing = null; done(); }
-    typing = { finish };
+    }, charMs);
+    function finish() {
+      clearInterval(timer);
+      signal?.removeEventListener('abort', finish);
+      if (!signal?.aborted) el.textContent = text;
+      if (typing === writer) typing = null;
+      done();
+    }
+    const writer = { finish };
+    typing = writer;
+    signal?.addEventListener('abort', finish, { once: true });
   });
 }
 async function say(who, text, kind = '') {
@@ -1430,7 +1598,7 @@ function timingGame(zone, speed, phase) {
     const rawT = () => (((performance.now() - start) / 1000) * speed + phase) % 2;
     const pos = () => { const t = rawT(); return t < 1 ? t : 2 - t; };
     const loop = () => { marker.style.left = `${pos() * 100}%`; raf = requestAnimationFrame(loop); };
-    const arm = () => { clearTimeout(timer); timer = setTimeout(() => finish(false), 4000); };
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => finish(false), KNOCK_TIMEOUT_MS); };
     const placeZone = () => {
       bar.style.left = `${(center - zone / 2) * 100}%`;
       bar.style.width = `${zone * 100}%`;
@@ -1455,13 +1623,12 @@ function timingGame(zone, speed, phase) {
       if (hits >= KNOCK_HITS) { finish(true); return; }
       phase = rawT();
       start = performance.now();
-      speed *= 1.25;
       center = zone / 2 + 0.05 + Math.random() * (0.9 - zone);
       $('#t-say').textContent = '똑!';
       placeZone();
       arm();
     }
-    box.className = 'timing px';
+    box.className = 'timing px actor-bubble';
     $('#t-say').textContent = '';
     placeZone();
     box.hidden = false;
@@ -1487,7 +1654,7 @@ async function knock(slot) {
     S.shakeDoor = null;
     await wait(reduceMotion() ? 50 : 110);
   }
-  const hit = await timingGame(zoneFor(candiesOf(id)), 1.3 + Math.random() * 0.5, Math.random() * 2);
+  const hit = await timingGame(zoneFor(candiesOf(id)), KNOCK_SPEED_MIN + Math.random() * (KNOCK_SPEED_MAX - KNOCK_SPEED_MIN), Math.random() * 2);
   const kind = hit ? null : pick(Object.keys(TRICKS));
   const entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, ...(kind ? { k: kind } : {}) };
   const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
@@ -1505,7 +1672,7 @@ async function knock(slot) {
   if (hit && moved) {
     await say(hostName, treatLine(me.costume));
     fly(doorPoint, head);
-    await say('TREAT!', `사탕 +1 · 지금 ${candiesOf(S.me)}개`, 'sys');
+    await say('TREAT!', `${hostName}에게서 사탕 1개 가져옴! 내 사탕 +1 · 지금 ${candiesOf(S.me)}개`, 'sys');
   } else if (hit) {
     await say(hostName, '박자는 딱 맞췄는데… 우리 집 사탕이 다 떨어졌어.');
   } else {
@@ -1513,7 +1680,7 @@ async function knock(slot) {
     await say(hostName, pick(['땡! 박자 감각 무엇?', '땡! 문 부서지는 줄.', '땡! 그건 노크가 아니라 박수야.']));
     if (moved) {
       fly(head, doorPoint);
-      await say('TRICK!', `사탕 1개 뺏김 · 지금 ${candiesOf(S.me)}개`, 'trick');
+      await say('TRICK!', `${hostName}에게 사탕 1개 빼앗김! 내 사탕 −1 · 지금 ${candiesOf(S.me)}개`, 'trick');
     } else {
       await say(hostName, '뺏을 사탕도 없네. 대신 장난이다.');
     }
@@ -1527,6 +1694,7 @@ async function knock(slot) {
   S.openDoor = null;
   S.npc = null;
   S.busy = false;
+  canvas.focus({ preventScroll: true });
   if (next === 'again') { await wait(150); knock(slot); return; }
   S.near = null;
   updateNear();
@@ -1557,21 +1725,44 @@ function armOrRun(btn, question, run) {
 }
 
 function openModal(id) {
+  if (S.busy) { toast('진행 중인 대화나 노크를 먼저 마쳐 주세요.'); return; }
   if (id === 'wardrobe') renderWardrobe();
   if (id === 'house') { S.muralDraft = null; renderHouse(); }
   if (id === 'rank') renderRanking();
   if (id === 'note') renderNote();
   $(`#${id}`).hidden = false;
   keys.clear();
-  $(`#${id} .pbtn`).focus();
+  if (id !== 'intro') $(`#${id} .pbtn`).focus();
 }
-function closeModal(id) { $(`#${id}`).hidden = true; }
+function closeModal(id) { $(`#${id}`).hidden = true; canvas.focus({ preventScroll: true }); }
 
+const INTRO_SPEED = 0.8;
 const INTRO_LINES = ['10월 31일, 할로윈 밤.', '마을 호박밭 한가운데서 호박 하나가 들썩거려요.', '쩍! 호박이 갈라지더니 새 주민이 태어났어요.'];
+let introController = null;
+function showNameForm() {
+  $('#in-pic').src = spriteUrl('plain', 6);
+  $('#in-pic').classList.remove('hatch');
+  $('#in-text').textContent = '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?';
+  $('#in-skip').hidden = true;
+  $('#in-form').hidden = false;
+  $('#in-name').value = cleanNick(S.players[S.me]?.nick || S.names[S.me]);
+  $('#in-name').focus();
+}
+function skipIntro() {
+  if ($('#intro').hidden || !$('#in-form').hidden) return;
+  introController?.abort();
+  introController = null;
+  showNameForm();
+}
 async function startIntro() {
   if (S.readOnly) return;
+  introController?.abort();
+  const controller = new AbortController();
+  introController = controller;
+  const { signal } = controller;
   const pic = $('#in-pic'), text = $('#in-text');
   $('#in-form').hidden = true;
+  $('#in-skip').hidden = false;
   pic.src = spriteUrl('pumpkin', 6);
   pic.classList.remove('hatch');
   openModal('intro');
@@ -1581,20 +1772,26 @@ async function startIntro() {
       void pic.offsetWidth;
       pic.classList.add('hatch');
     }
-    await typeText(text, line);
-    await wait(reduceMotion() ? 200 : 650);
+    await typeText(text, line, signal, 32 / INTRO_SPEED);
+    if (signal.aborted) return;
+    await wait((reduceMotion() ? 200 : 650) / INTRO_SPEED, signal);
+    if (signal.aborted) return;
   }
-  await typeText(text, '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?');
-  $('#in-form').hidden = false;
-  $('#in-name').value = cleanNick(S.players[S.me]?.nick || S.names[S.me]);
-  $('#in-name').focus();
+  await typeText(text, '…앗, 아직 이름이 없네요? 뭐라고 불러 드릴까요?', signal, 32 / INTRO_SPEED);
+  if (signal.aborted) return;
+  introController = null;
+  showNameForm();
 }
 function confirmName() {
   const nick = cleanNick($('#in-name').value);
   if (!nick) { toast('이름을 한 글자 이상 정해 주세요.'); return; }
   saveMe({ nick });
   closeModal('intro');
-  if (myCostume()) { toast(`반가워요, ${nick}! 이제 마을에서 이 이름으로 불려요.`); return; }
+  if (myCostume()) {
+    if (!S.players[S.me].guideSeen) welcomeTips();
+    else toast(`반가워요, ${nick}! 이제 마을에서 이 이름으로 불려요.`);
+    return;
+  }
   $('#wr-title').firstChild.textContent = `${nick}, 오늘 뭐 입고 나가지`;
   openModal('wardrobe');
 }
@@ -1604,10 +1801,27 @@ function renameMe() {
   saveMe({ nick });
   toast(`이제 ${nick}(으)로 불려요.`);
 }
-async function welcomeTips() {
-  await say('', '마을 곳곳에 호박이 자라요. 3개를 따면 호박 바구니가 생겨요.', 'sys');
-  await say('', '바구니를 들고 친구 집 문 앞에서 Space. 박자 맞추면 사탕, 놓치면 장난이에요.', 'sys');
+async function welcomeTips(creationMessage) {
+  S.guideRunning = true;
+  S.busy = true;
+  keys.clear();
+  S.target = null;
+  render();
+  if (creationMessage) await toast(creationMessage, { duration: 4000, dismissOnClick: true });
+  await waitForToasts();
+  await say('', '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!', 'sys');
+  await say('', '먼저 호박 3개로 바구니를 만드세요. 호박 근처에서 버튼이나 Space로 수집할 수 있어요.', 'sys');
+  await say('', '바구니를 들고 친구 집 문을 두드리세요. 박자 맞추면 상대 사탕 1개를 가져오고, 놓치면 내 사탕 1개를 빼앗겨요.', 'sys');
   $('#dialog').hidden = true;
+  S.guideRunning = false;
+  saveMe({ guideSeen: true });
+  await toast(`새 퀘스트가 도착했습니다! ${$('#quest-title').textContent}`);
+  await waitForToasts();
+  S.busy = false;
+  keys.clear();
+  S.target = null;
+  canvas.focus({ preventScroll: true });
+  renderMovementHint();
 }
 
 function act() {
@@ -1632,11 +1846,10 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   const hit = MAP.slots.find((s) => s.owner && wx >= s.hx * T && wx < s.hx * T + 64 && wy >= s.hy * T - 4 && wy < s.hy * T + 48);
   S.target = hit ? doorFront(hit) : { x: wx, y: wy };
-  hideHint();
 });
 
 document.addEventListener('keydown', (e) => {
-  if (typingInField(e)) return;
+  if (typingInField(e) || isImeComposing(e)) return;
   if (S.timingPress && (e.code === 'Space' || e.code === 'Enter')) {
     e.preventDefault();
     if (!e.repeat) S.timingPress();
@@ -1659,7 +1872,7 @@ document.addEventListener('keydown', (e) => {
   if (KEYMAP[e.code]) { keys.add(KEYMAP[e.code]); e.preventDefault(); return; }
   if (e.code === 'Enter' && $('#dialog').hidden) { e.preventDefault(); openChat(); return; }
   if (e.code === 'Space' || e.code === 'Enter') {
-    if (!$('#dialog').hidden && $('#dlg-choices').hidden) { e.preventDefault(); advance(); }
+    if (!$('#dialog').hidden && $('#dlg-choices').hidden) { e.preventDefault(); if (!e.repeat) advance(); }
     else if ($('#dialog').hidden && (S.near || S.nearPumpkin) && !$('#act-btn').disabled && document.activeElement?.tagName !== 'BUTTON') { e.preventDefault(); act(); }
   }
 });
@@ -1681,6 +1894,7 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'act-note') openNote(S.near?.owner);
   else if (t.id === 'nt-send') sendNote();
   else if (t.id === 'in-ok') confirmName();
+  else if (t.id === 'in-skip') skipIntro();
   else if (t.dataset.mc) { S.muralColor = t.dataset.mc; renderMuralEditor(S.players[S.me]); }
   else if (t.id === 'mural-clear') { S.muralDraft = new Array(MURAL_CELLS).fill('.'); renderMuralEditor(S.players[S.me]); }
   else if (t.id === 'mural-save') { saveMe({ mural: muralDraft().join('') }); toast('지붕에 그렸어요. 마을 지도에서 확인해 보세요.'); }
@@ -1688,12 +1902,13 @@ document.addEventListener('click', (e) => {
   else if (t.dataset.buy) buyDecor(t.dataset.buy);
   else if (t.dataset.cos) {
     const first = !myCostume();
+    if (first) { S.guideRunning = true; S.busy = true; }
     const cur = S.players[S.me];
     saveMe({ costume: t.dataset.cos, joinedAt: cur?.joinedAt || Date.now() });
     presenceDirty = true;
     closeModal('wardrobe');
-    toast(first ? `${COSTUMES[t.dataset.cos].name} 분장 완료. 마을에 우리 집도 생겼어요.` : `${COSTUMES[t.dataset.cos].name}로 갈아입었어요.`);
-    if (first) setTimeout(welcomeTips, 500);
+    if (first) welcomeTips(`${COSTUMES[t.dataset.cos].name} 분장 완료. 마을에 우리 집도 생겼어요.`);
+    else toast(`${COSTUMES[t.dataset.cos].name}로 갈아입었어요.`);
   } else if (t.dataset.door) {
     saveMe({ door: Number(t.dataset.door) });
   } else if (t.id === 'ev-start') {
@@ -1712,7 +1927,12 @@ document.addEventListener('click', (e) => {
 });
 $('#chatbar').addEventListener('submit', (e) => { e.preventDefault(); sendChat(); });
 $('#chat-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeChat(); } });
-$('#in-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); confirmName(); } });
+$('#in-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !isImeComposing(e)) {
+    e.preventDefault();
+    confirmName();
+  }
+});
 $('#nt-text').addEventListener('input', () => { $('#nt-count').textContent = `${$('#nt-text').value.length} / ${NOTE_MAX}`; });
 $('#timing').addEventListener('pointerdown', (e) => { e.preventDefault(); S.timingPress?.(); });
 
@@ -1802,7 +2022,14 @@ async function boot() {
     notifyKnocks();
     render();
     if (Object.keys(next).join() !== known) loadNames();
-    if (first) { first = false; if (!S.readOnly) { if (!S.players[S.me]?.nick) startIntro(); else if (!myCostume()) openModal('wardrobe'); } }
+    if (first) {
+      first = false;
+      if (!S.readOnly) {
+        if (!S.players[S.me]?.nick) startIntro();
+        else if (!myCostume()) openModal('wardrobe');
+        else if (!S.players[S.me].guideSeen) welcomeTips();
+      }
+    }
   }, () => toast('마을 소식을 더 받지 못해요. 새로고침해 주세요.'));
 }
 
