@@ -23,10 +23,11 @@ const handler = apiHandler(['GET'], async () => {
       apiKey: 'demo-api-key',
       authDomain: `${projectId}.firebaseapp.com`,
       projectId,
+      databaseURL: `https://${projectId}-default-rtdb.firebaseio.com`,
       storageBucket: `${projectId}.firebasestorage.app`,
       messagingSenderId: '000000000000',
       appId: '1:000000000000:web:demo',
-    }, emulator: { auth: `http://${authEmulatorHost}` } } };
+    }, emulator: { auth: `http://${authEmulatorHost}`, firestore: '127.0.0.1:8080', database: '127.0.0.1:9000' } } };
   }
 
   const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -37,6 +38,7 @@ const handler = apiHandler(['GET'], async () => {
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
     messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
     appId: process.env.FIREBASE_APP_ID,
+    databaseURL: process.env.FIREBASE_DATABASE_URL,
   };
   if (!projectId || Object.values(firebaseConfig).some((value) => !value)) {
     const error = new Error('Firebase web configuration is incomplete');

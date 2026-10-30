@@ -42,21 +42,29 @@ Vercel Project Settings → Environment Variables에 등록한 뒤 다시 배포
 | FIREBASE_STORAGE_BUCKET | trick-or-treat-89de3.firebasestorage.app |
 | FIREBASE_MESSAGING_SENDER_ID | 891696036211 |
 | FIREBASE_APP_ID | 1:891696036211:web:a9ab62f17b940f1507ed06 |
+| FIREBASE_DATABASE_URL | https://trick-or-treat-89de3-default-rtdb.asia-southeast1.firebasedatabase.app |
+| GAME_ADMIN_UIDS | 이벤트 운영자 계정의 Firebase UID. 여러 명이면 쉼표로 구분 |
 | FIREBASE_SERVICE_ACCOUNT_JSON | 프로젝트 설정 → 서비스 계정 → Firebase Admin SDK의 서비스 계정 JSON 전체 |
 
 Web 설정은 공개 설정이고 `FIREBASE_SERVICE_ACCOUNT_JSON`은 서버 전용 비밀값이다. JSON 키는 Vercel 환경변수에서만 관리하며 Git이나 PR 본문에 올리지 않는다. `/api/firebase-config`는 이 비밀값을 반환하지 않는다.
 
-`FIREBASE_AUTH_EMULATOR_HOST`와 `FIRESTORE_EMULATOR_HOST`는 Vercel에 등록하지 않는다. RTDB URL과 Analytics measurementId는 현재 계정 기능에서 사용하지 않아 환경변수로 필요하지 않다.
+`FIREBASE_AUTH_EMULATOR_HOST`와 `FIRESTORE_EMULATOR_HOST`는 Vercel에 등록하지 않는다. Analytics measurementId는 게임에 필요하지 않다.
 
 ## Firebase 설정과 배포 확인
 
-1. 대상 프로젝트가 `trick-or-treat-89de3`인지 확인하고 저장소의 `firestore.rules`를 Firestore Rules 화면에서 게시한다.
+1. 대상 프로젝트가 `trick-or-treat-89de3`인지 확인하고 `firestore.rules`를 Firestore Rules 화면에, `database.rules.json`의 rules 내용을 Realtime Database Rules 화면에 게시한다. 한쪽만 적용하면 실시간 게임이 정상 동작하지 않는다.
 2. 서비스 계정 JSON을 Vercel 환경변수에 등록한다. JSON의 `project_id`와 `FIREBASE_PROJECT_ID`가 일치해야 한다.
 3. PR Preview에서 가입 → 분장 선택 → 로그아웃 → 같은 계정 로그인 → 다른 브라우저 로그인 순으로 확인한다. 중복 닉네임과 잘못된 비밀번호도 거부되어야 한다.
 4. `/`에서 게임이 열리고 기존 HTML 링크가 `/`로 연결되는지 확인한다. `/api/firebase-config`는 200이어야 하며 비밀 키가 없어야 한다.
+5. 운영자도 일반 가입 화면으로 가입한다. Firebase Authentication의 해당 계정 UID를 `GAME_ADMIN_UIDS`에 등록하고 재배포한다. 등록한 계정에만 순위 창의 시작·종료 버튼이 나타난다. 닉네임을 넣으면 권한이 생기지 않는다.
+6. 두 계정으로 로그인해 서로의 캐릭터 이동·채팅·노크 결과와 순위를 확인한다. 이벤트 시작 전 기록은 연습 라운드로 저장되며, 시작 버튼을 누르면 모두 사탕 10개로 새 라운드를 시작한다. 종료 후 노크·구매를 거부하고 최종 사탕 순위를 보존한다. 시간이 다 되어 자연 종료되면 운영자의 ‘결과 확정’ 버튼으로 보관한다. 새 라운드를 시작해도 이전 결과는 `gameRounds/{라운드 ID}`에 남는다.
+
+운영은 Spark 기준으로 진행한다. Realtime Database 동시 연결 한도는 브라우저 탭을 포함해 100개이며, 사용자가 실제 동시 접속은 이 범위 안으로 예상한다고 확인했다. [Firebase 공식 제한](https://firebase.google.com/docs/database/usage/limits)을 참고한다. Firestore는 플레이어 문서 변경마다 접속 중인 클라이언트에 읽기가 발생하므로 사용량도 확인한다.
 
 ## 현재 구현 범위
 
-닉네임·비밀번호 인증, 중복 닉네임 방지, 기기 간 동일 UID, 분장·지붕 색·인트로 및 튜토리얼 완료 저장까지 구현했다. 닉네임은 로그인 ID라 변경하지 않는다. 비밀번호 초기화·복구 도구는 아직 없다.
+닉네임·비밀번호 인증과 캐릭터 설정에 더해 접속·위치·채팅·뿅망치, 호박 진행, 노크 기록·사탕·랭킹·장식·방명록·지붕 그림이 연결되어 있다. 닉네임은 로그인 ID라 변경하지 않으며 비밀번호 초기화·복구 도구는 아직 없다.
 
-Firebase 계정으로 들어간 게임은 연습 마을이다. 사탕·노크·방명록·채팅·접속 위치·실제 선물 순위의 Firebase 연결은 다음 작업이다. RTDB는 생성되어 있지만 코드에서 아직 사용하지 않는다.
+점수는 서버 API만 변경한다. Firestore 트랜잭션에서 양쪽 사탕과 노크 기록을 함께 저장하며, 같은 요청을 재전송해도 한 번만 반영한다. 서버가 발급한 제한 시간·타이밍 조건으로 입력 기록을 검증한다. 이 검증이 자동 입력이나 한 사람이 여러 계정을 만드는 행동까지 막는 것은 아니다. 상품 지급 때 참가자 확인은 운영 절차로 필요하다.
+
+실시간 위치는 최대 초당 4회 전송하며 채팅·뿅망치 이벤트는 계정별 최신 1개만 유지한다. 연결마다 별도 세션을 두고 `onDisconnect`로 정리하므로 한 탭이 닫혀도 같은 계정의 다른 접속은 유지된다. 지속 기록은 Firestore, 일시적인 접속과 메시지는 RTDB를 쓴다.

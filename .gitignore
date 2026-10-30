@@ -5,6 +5,7 @@ node_modules/
 dist/
 firebase-debug.log
 firestore-debug.log
+database-debug.log
 ui-debug.log
 *firebase-adminsdk*.json
 service-account*.json

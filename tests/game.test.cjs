@@ -87,6 +87,30 @@ test('HTML contains every static script target and JavaScript loads', () => {
   for (const [, id] of source.matchAll(/\$\(['"]#([\w-]+)['"]\)/g)) assert.ok(g.elements.has(id), id);
 });
 
+test('Firebase rankings use server balances and reset to ten for a new event', () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.event = { id: 'round1', startedAt: 1, endsAt: Date.now() + 60000 };
+    S.players.me.round = 'round1'; S.players.me.candies = 7;
+    S.players.host.round = 'round1'; S.players.host.candies = 13;
+    S.players.me.knocks = [{ h: 'host', r: 'win', at: Date.now() }];`);
+  assert.equal(g.run('candiesOf(S.me)'), 7);
+  assert.equal(g.run('ranking()[0].id'), 'host');
+  g.run(`S.event.id = 'round2'`);
+  assert.equal(g.run('candiesOf(S.me)'), 10);
+  assert.equal(g.run('candiesOf("host")'), 10);
+});
+
+test('server challenge controls timing zones and captures the actual input trace', async () => {
+  const g = game();
+  const result = g.run(`const challenge = { centers: [.5, .6, .7] }; timingGame(.28, 1, .5, challenge)`);
+  g.run('S.timingPress()');
+  g.setNow(100); g.run('S.timingPress()');
+  g.setNow(200); g.run('S.timingPress()');
+  g.fire(700);
+  assert.equal(await result, true);
+  assert.equal(g.run('JSON.stringify(challenge.presses)'), '[0,100,200]');
+});
+
 test('queued profile saves cannot change their destination after an account switch', async () => {
   const g = game(); g.players();
   g.run(`S.mode = 'account'; S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'me-token' } } };
@@ -122,6 +146,14 @@ test('failed automatic login leaves a usable login form', async () => {
   assert.equal(g.elements.get('auth').hidden, false);
   assert.equal(g.elements.get('auth-submit').disabled, false);
   assert.match(g.elements.get('auth-error').textContent, /다시 로그인/);
+});
+
+test('a failed multiplayer connection keeps the login form visible for retry', async () => {
+  const g = game(); g.players();
+  g.run(`S.account = { firestore: {} }; $('#auth').hidden = false;
+    connectFirebaseGame = async () => { throw new Error('Database rules denied'); };`);
+  await assert.rejects(g.run(`enterAccount('new-uid', { uid: 'new-uid', nick: '새주민', costume: 'witch', introSeen: true, guideSeen: true })`), /rules denied/);
+  assert.equal(g.elements.get('auth').hidden, false);
 });
 
 test('entering another account resets movement and stun state', async () => {

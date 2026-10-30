@@ -15,6 +15,8 @@ const api = new Map([
   ['/api/auth/signup', require('../api/auth/signup.js')],
   ['/api/auth/login', require('../api/auth/login.js')],
   ['/api/auth/profile', require('../api/auth/profile.js')],
+  ['/api/game/session', require('../api/game/session.js')],
+  ['/api/game/action', require('../api/game/action.js')],
 ]);
 
 const server = http.createServer((req, res) => {
@@ -41,4 +43,5 @@ const port = Number(process.env.PORT) || 4173;
 server.listen(port, '127.0.0.1', () => {
   console.log(`Practice server: http://127.0.0.1:${port}`);
   console.log('Firebase emulators: http://127.0.0.1:9099 (Auth), http://127.0.0.1:8080 (Firestore)');
+  console.log('Realtime Database emulator: http://127.0.0.1:9000');
 });

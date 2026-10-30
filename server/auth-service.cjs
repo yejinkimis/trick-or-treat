@@ -226,8 +226,14 @@ async function updateProfile(authorization, value) {
   const ref = firebase.db.collection('profiles').doc(uid);
   await firebase.db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(ref);
+    const playerRef = firebase.db.collection('gamePlayers').doc(uid);
+    const player = await transaction.get(playerRef);
     if (!snapshot.exists) throw new AuthError(404, 'profile-not-found', '계정 정보를 찾을 수 없어요.');
+    if (patch.costume === null && player.exists && player.data().costume) throw new AuthError(400, 'invalid-profile', '다른 분장으로 갈아입어 주세요.');
     transaction.update(ref, patch);
+    if (player.exists) transaction.update(playerRef, { ...patch,
+      ...(patch.costume && !player.data().readyAt ? { readyAt: Date.now() } : {}),
+    });
   });
   const snapshot = await ref.get();
   return publicProfile(uid, snapshot.data());
@@ -237,5 +243,5 @@ module.exports = {
   AuthError, SCRYPT, PASSWORD_MIN, PASSWORD_MAX_BYTES,
   cleanNickname, validatePassword, derivePassword, verifyPassword,
   publicProfile, validateProfilePatch, createEmulatorCustomToken,
-  signup, login, getProfile, updateProfile,
+  signup, login, getProfile, updateProfile, authenticatedUid,
 };

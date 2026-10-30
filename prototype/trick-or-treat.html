@@ -308,7 +308,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
     <div class="sheet-head">
       <h2 id="auth-title">마을 계정으로 로그인<small id="auth-subtitle">닉네임과 비밀번호로 다른 기기에서도 이어서 접속해요.</small></h2>
     </div>
-    <div class="auth-note" id="auth-note">닉네임은 마을 사람들에게 보여요. 연습 마을의 노크와 사탕 기록은 저장되지 않고 선물 순위에도 포함되지 않아요.</div>
+    <div class="auth-note" id="auth-note">닉네임은 마을 사람들에게 보여요. 같은 계정으로 다시 로그인하면 캐릭터와 사탕 기록이 이어져요. 이벤트 시작 전 기록은 연습용이에요.</div>
     <form id="auth-form">
       <label for="auth-nickname">닉네임</label>
       <input type="text" id="auth-nickname" maxlength="12" autocomplete="username" required placeholder="예: 호박도둑">
@@ -580,12 +580,16 @@ function computeLedger() {
   return { bal, moved };
 }
 const ledger = () => (S.ledger ??= computeLedger());
-const candiesOf = (id) => ledger().bal[id] ?? START_CANDIES;
-const wasMoved = (k) => ledger().moved.has(k);
+const sharedGame = () => S.mode === 'live' || S.mode === 'firebase';
+const candiesOf = (id) => S.mode === 'firebase'
+  ? (S.players[id]?.round === (S.event?.id || 'practice') ? S.players[id].candies : START_CANDIES)
+  : ledger().bal[id] ?? START_CANDIES;
+const wasMoved = (k) => S.mode === 'firebase' ? k.moved === true : ledger().moved.has(k);
 const zoneFor = (hostCandies) => clamp(KNOCK_ZONE_MAX - hostCandies * KNOCK_ZONE_PER_CANDY, KNOCK_ZONE_MIN, KNOCK_ZONE_MAX);
 function ranking() {
+  if (S.mode === 'firebase' && eventState() === 'ended' && S.event.results) return S.event.results;
   return Object.entries(S.players)
-    .filter(([, p]) => p.costume)
+    .filter(([, p]) => p.costume && (S.mode !== 'firebase' || eventState() !== 'ended' || (p.readyAt || p.joinedAt || 0) <= S.event.endsAt))
     .map(([id]) => ({ id, n: candiesOf(id) }))
     .sort((a, b) => b.n - a.n || nameOf(a.id).localeCompare(nameOf(b.id), 'ko'));
 }
@@ -594,6 +598,7 @@ function activeFx(id) {
   const now = Date.now();
   for (let i = ks.length - 1; i >= 0; i--) {
     const k = ks[i], t = TRICKS[k.k];
+    if (S.mode === 'firebase' && k.round !== (S.event?.id || 'practice')) continue;
     if ((k.r === 'trick' || k.r === 'lose') && t?.dur && now < k.at + t.dur) return { kind: k.k, left: k.at + t.dur - now };
   }
   return null;
@@ -887,7 +892,7 @@ function botSpot(g) {
 }
 
 function sendPresence() {
-  if (!S.room || !presenceDirty || performance.now() - lastPresence < 90) return;
+  if (!S.room || !presenceDirty || performance.now() - lastPresence < (S.mode === 'firebase' ? 250 : 90)) return;
   presenceDirty = false;
   lastPresence = performance.now();
   const p = S.pos;
@@ -910,7 +915,8 @@ function syncPeers() {
     if (typeof pr.x !== 'number' || typeof pr.y !== 'number') continue;
     const x = clamp(pr.x, 0, maxX), y = clamp(pr.y, 0, maxY);
     const g = ghosts.get(peer.peer) || { x, y, walk: 0 };
-    Object.assign(g, { tx: x, ty: y, c: COSTUMES[pr.c] ? pr.c : 'plain', f: pr.f === -1 ? -1 : 1, m: pr.m === true, by: peer.by, peer: peer.peer });
+    const costume = S.mode === 'firebase' ? S.players[peer.by]?.costume : pr.c;
+    Object.assign(g, { tx: x, ty: y, c: COSTUMES[costume] ? costume : 'plain', f: pr.f === -1 ? -1 : 1, m: pr.m === true, by: peer.by, peer: peer.peer });
     ghosts.set(peer.peer, g);
     seen.add(peer.peer);
     if (peer.by && !(peer.by in S.names)) unknown = true;
@@ -1229,11 +1235,20 @@ function growPumpkins(dt) {
 }
 const hasBasket = (id) => Boolean(id) && (S.players[id]?.pumpkins || 0) >= BASKET_PUMPKINS;
 
-function harvest(p) {
-  if (S.busy || S.readOnly || !myCostume()) return;
+async function harvest(p) {
+  if (S.busy || S.readOnly || !myCostume() || S.harvesting) return;
+  let have;
+  if (S.mode === 'firebase') {
+    S.harvesting = true;
+    try { have = (await gameRequest({ type: 'harvest' })).pumpkins; }
+    catch (error) { toast(error.message); return; }
+    finally { S.harvesting = false; }
+    S.players[S.me] = { ...S.players[S.me], pumpkins: have }; render();
+  } else {
+    have = (S.players[S.me]?.pumpkins || 0) + 1;
+    saveMe({ pumpkins: have });
+  }
   S.pumpkins = S.pumpkins.filter((q) => q !== p);
-  const have = (S.players[S.me]?.pumpkins || 0) + 1;
-  saveMe({ pumpkins: have });
   S.floats.push({ text: '호박 +1', x: p.x, y: p.y - 12, t: 0, life: 0.9 });
   if (have === BASKET_PUMPKINS) toast('퀘스트 완료! 바구니 완성! 이제 친구 집에서 사탕을 가져올 수 있어요.');
   else if (have < BASKET_PUMPKINS) toast(`호박 ${have}개. 바구니까지 ${BASKET_PUMPKINS - have}개 남았어요.`);
@@ -1335,6 +1350,7 @@ function renderHud() {
     loading: '마을 불러오는 중…',
     practice: '연습 모드 · 허수아비 집으로 연습해요. 저장되지 않아요',
     account: '연습 마을 · 사탕과 순위 기록은 저장되지 않아요',
+    firebase: S.networkConnected ? `지금 마을에 ${online.size + 1}명 · 기록 저장 중` : '마을 연결 중…',
   }[S.mode] || (S.readOnly ? '구경만 가능 · 참여자(Contributor) 권한이 있어야 놀 수 있어요'
     : online.size ? `지금 마을에 ${online.size + 1}명` : '지금 마을엔 나 혼자');
   const fx = S.me ? activeFx(S.me) : null;
@@ -1344,13 +1360,13 @@ function renderHud() {
     <span class="bag"><img class="px-img" src="${spriteUrl('candy', 2)}" alt="" style="width:22px;height:12px">보유 사탕 ${candiesOf(S.me)}개</span>
     <span class="status" ${fx ? 'style="color:var(--candy)"' : ''}>${esc(shown)}</span>
     <span class="status ev">${esc(eventLine())}</span>
-    <span class="status reward">${S.mode === 'live' ? '최종 사탕 순위에 따라 실제 선물 지급' : '연습 중 · 선물 순위에 포함되지 않아요'}</span>`;
-  $('#account-session').hidden = S.mode !== 'account';
+    <span class="status reward">${sharedGame() ? '최종 사탕 순위에 따라 실제 선물 지급' : '연습 중 · 선물 순위에 포함되지 않아요'}</span>`;
+  $('#account-session').hidden = !['account', 'firebase'].includes(S.mode);
 }
 
 function renderWardrobe() {
   const mine = myCostume();
-  $('#wr-name-row').hidden = S.mode === 'account';
+  $('#wr-name-row').hidden = ['account', 'firebase'].includes(S.mode);
   if (document.activeElement !== $('#wr-name')) $('#wr-name').value = cleanNick(S.players[S.me]?.nick);
   $('#costumes').innerHTML = Object.entries(COSTUMES).map(([key, c]) =>
     `<button class="cos-btn" type="button" data-cos="${key}" aria-pressed="${mine === key}" ${S.readOnly ? 'disabled' : ''}>
@@ -1414,12 +1430,15 @@ function guestbookHtml(host) {
     : '<li class="note">아직 아무도 안 왔어요. 문 앞이 조용해요.</li>';
 }
 
-function buyDecor(key) {
+async function buyDecor(key) {
   const it = DECOR[key], p = S.players[S.me];
   if (!it || !p?.costume || p.decor?.[key] || S.readOnly) return;
   if (eventState() === 'ended') { toast('이벤트가 끝나서 상점이 닫혔어요.'); return; }
   if (candiesOf(S.me) < it.price) { toast(`사탕이 ${it.price}개 있어야 해요.`); return; }
-  saveMe({ decor: { ...(p.decor || {}), [key]: Date.now() } });
+  if (S.mode === 'firebase') {
+    try { await gameRequest({ type: 'decor', item: key }); }
+    catch (error) { toast(error.message); return; }
+  } else saveMe({ decor: { ...(p.decor || {}), [key]: Date.now() } });
   toast(`${it.name} 설치 완료! 사탕 ${it.price}개를 써서 순위에도 반영돼요.`);
 }
 
@@ -1462,11 +1481,14 @@ function openNote(host) {
   openModal('note');
   $('#nt-text').focus();
 }
-function sendNote() {
+async function sendNote() {
   const text = $('#nt-text').value.replace(/\s+/g, ' ').trim().slice(0, NOTE_MAX);
   if (!text || !S.noteHost) { toast('한 글자라도 적어 주세요.'); return; }
   const mine = S.players[S.me]?.notes || [];
-  saveMe({ notes: [...mine, { h: S.noteHost, text, at: Date.now() }].slice(-MAX_NOTES) });
+  if (S.mode === 'firebase') {
+    try { await gameRequest({ type: 'note', host: S.noteHost, text }); }
+    catch (error) { toast(error.message); return; }
+  } else saveMe({ notes: [...mine, { h: S.noteHost, text, at: Date.now() }].slice(-MAX_NOTES) });
   $('#nt-text').value = '';
   renderNote();
   toast(`${nameOf(S.noteHost)}네 방명록에 남겼어요.`);
@@ -1474,17 +1496,19 @@ function sendNote() {
 
 function renderRanking() {
   $('#rk-sub').textContent = eventLine();
-  $('#rk-reward').textContent = S.mode === 'live'
+  $('#rk-reward').textContent = sharedGame()
     ? '최종 사탕 순위에 따라 실제 선물을 드려요!'
     : '연습 모드의 결과는 저장되지 않으며 실제 선물 순위에 포함되지 않아요.';
   const list = ranking();
   $('#rk-list').innerHTML = list.length
     ? list.map((r, i) => `<li class="${r.id === S.me ? 'mine' : ''}"><span class="no">${i + 1}</span>
-        <img class="px-img" src="${spriteUrl(S.players[r.id].costume, 2)}" alt="">
+        <img class="px-img" src="${spriteUrl(r.costume || S.players[r.id]?.costume || 'plain', 2)}" alt="">
         <div><b>${esc(nameOf(r.id))}</b>${r.id === S.me && nameOf(r.id) !== '나' ? ' (나)' : ''}${S.names[r.id] && S.names[r.id] !== nameOf(r.id) ? `<small class="real">${esc(S.names[r.id])}</small>` : ''}</div><span class="cnt">${r.n}개</span></li>`).join('')
     : '<li class="note">아직 마을에 아무도 없어요.</li>';
   $('#rk-admin').hidden = !S.isOwner;
-  $('#ev-stop').disabled = eventState() !== 'running';
+  const canFinalize = S.mode === 'firebase' && S.event && !S.event.results && eventState() === 'ended';
+  $('#ev-stop').disabled = eventState() !== 'running' && !canFinalize;
+  if (!$('#ev-stop').dataset.armed) $('#ev-stop').textContent = canFinalize ? '결과 확정' : '이벤트 종료';
 }
 
 function render() {
@@ -1568,7 +1592,7 @@ function saveMe(patch) {
   const next = { ...blankPlayer(), ...cur, ...patch };
   S.players = { ...S.players, [S.me]: next };
   render();
-  if (S.mode === 'account') {
+  if (['account', 'firebase'].includes(S.mode)) {
     saveAccountProfile(patch);
     return;
   }
@@ -1655,7 +1679,7 @@ function shake() {
   setTimeout(() => stage.classList.remove('fx-shake'), 1000);
 }
 
-function timingGame(zone, speed, phase) {
+function timingGame(zone, speed, phase, challenge = null) {
   return new Promise((done) => {
     const box = $('#timing'), marker = $('#t-marker'), bar = $('#t-zone');
     let hits = 0, center = 0.5, start = performance.now(), raf = 0, timer = 0, over = false;
@@ -1679,6 +1703,7 @@ function timingGame(zone, speed, phase) {
       setTimeout(() => { box.hidden = true; done(hit); }, 700);
     }
     function press() {
+      if (challenge) challenge.presses.push(performance.now() - challenge.clientStart);
       const p = pos();
       marker.style.left = `${p * 100}%`;
       if (Math.abs(p - center) > zone / 2) { finish(false); return; }
@@ -1687,7 +1712,7 @@ function timingGame(zone, speed, phase) {
       if (hits >= KNOCK_HITS) { finish(true); return; }
       phase = rawT();
       start = performance.now();
-      center = zone / 2 + 0.05 + Math.random() * (0.9 - zone);
+      center = challenge ? challenge.centers[hits] : zone / 2 + 0.05 + Math.random() * (0.9 - zone);
       $('#t-say').textContent = '똑!';
       placeZone();
       arm();
@@ -1696,6 +1721,7 @@ function timingGame(zone, speed, phase) {
     $('#t-say').textContent = '';
     placeZone();
     box.hidden = false;
+    if (challenge) { challenge.clientStart = start; challenge.presses = []; }
     loop();
     arm();
     S.timingPress = press;
@@ -1718,11 +1744,26 @@ async function knock(slot) {
     S.shakeDoor = null;
     await wait(reduceMotion() ? 50 : 110);
   }
-  const hit = await timingGame(zoneFor(candiesOf(id)), KNOCK_SPEED_MIN + Math.random() * (KNOCK_SPEED_MAX - KNOCK_SPEED_MIN), Math.random() * 2);
-  const kind = hit ? null : pick(Object.keys(TRICKS));
-  const entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, ...(kind ? { k: kind } : {}) };
-  const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
-  saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS) });
+  let hit, kind, entry;
+  try {
+    const challenge = S.mode === 'firebase' ? (await gameRequest({ type: 'knock-start', host: id })).challenge : null;
+    hit = await timingGame(challenge?.zone ?? zoneFor(candiesOf(id)), challenge?.speed ?? KNOCK_SPEED_MIN + Math.random() * (KNOCK_SPEED_MAX - KNOCK_SPEED_MIN), challenge?.phase ?? Math.random() * 2, challenge);
+    if (challenge) {
+      const result = await gameRequest({ type: 'knock-finish', challengeId: challenge.id, presses: challenge.presses });
+      entry = result.entry; hit = entry.r === 'win'; kind = entry.k;
+      const round = entry.round;
+      S.players[S.me] = { ...S.players[S.me], round, candies: result.candies };
+      S.players[id] = { ...S.players[id], round, candies: result.hostCandies };
+      render();
+    } else {
+      kind = hit ? null : pick(Object.keys(TRICKS));
+      entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, ...(kind ? { k: kind } : {}) };
+      const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
+      saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS) });
+    }
+  } catch (error) {
+    S.busy = false; renderAction(); toast(error.message); return;
+  }
   const moved = wasMoved(entry);
 
   S.openDoor = slot.i;
@@ -1765,11 +1806,16 @@ async function knock(slot) {
   if (next === 'note') openNote(id);
 }
 
-function saveEvent(ev) {
+async function saveEvent(ev) {
+  if (S.mode === 'firebase') {
+    try { await gameRequest({ type: ev.startedAt !== S.event?.startedAt ? 'event-start' : 'event-stop' }); return true; }
+    catch (error) { toast(error.message); return false; }
+  }
   S.event = ev;
   render();
   if (S.mode !== 'live') return;
   S.db.doc('game/event').set(ev).catch(() => toast('이벤트를 저장하지 못했어요. 잠시 뒤 다시 해 주세요.'));
+  return true;
 }
 function armOrRun(btn, question, run) {
   if (btn.dataset.armed) {
@@ -1816,7 +1862,7 @@ function skipIntro() {
   if ($('#intro').hidden || !$('#in-form').hidden) return;
   introController?.abort();
   introController = null;
-  if (S.mode === 'account') { completeAccountIntro(); return; }
+  if (['account', 'firebase'].includes(S.mode)) { completeAccountIntro(); return; }
   showNameForm();
 }
 function completeAccountIntro() {
@@ -1848,7 +1894,7 @@ async function startIntro() {
     await wait((reduceMotion() ? 200 : 650) / INTRO_SPEED, signal);
     if (signal.aborted) return;
   }
-  if (S.mode === 'account') {
+  if (['account', 'firebase'].includes(S.mode)) {
     await typeText(text, `${nameOf(S.me)} 이름표를 달고 마을에 들어가요. 이제 분장을 골라 볼까요?`, signal, 32 / INTRO_SPEED);
     if (signal.aborted) return;
     introController = null;
@@ -1874,7 +1920,7 @@ function confirmName() {
   openModal('wardrobe');
 }
 function renameMe() {
-  if (S.mode === 'account') { toast('닉네임은 로그인 이름이라 옷장에서 바꿀 수 없어요.'); return; }
+  if (['account', 'firebase'].includes(S.mode)) { toast('닉네임은 로그인 이름이라 옷장에서 바꿀 수 없어요.'); return; }
   const nick = cleanNick($('#wr-name').value);
   if (!nick) { toast('이름을 한 글자 이상 정해 주세요.'); return; }
   saveMe({ nick });
@@ -1888,7 +1934,7 @@ async function welcomeTips(creationMessage) {
   render();
   if (creationMessage) await toast(creationMessage, { duration: 4000, dismissOnClick: true });
   await waitForToasts();
-  await say('', S.mode === 'live'
+  await say('', sharedGame()
     ? '친구 집에서 사탕을 가져오세요. 이벤트 종료 시 사탕 순위에 따라 실제 선물을 드려요!'
     : '연습 마을에서 친구 집 사탕을 가져와 보세요. 연습 결과는 저장되거나 선물 순위에 포함되지 않아요.', 'sys');
   await say('', '먼저 호박 3개로 바구니를 만드세요. 호박 근처에서 버튼이나 Space로 수집할 수 있어요.', 'sys');
@@ -1980,7 +2026,7 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'in-skip') skipIntro();
   else if (t.dataset.mc) { S.muralColor = t.dataset.mc; renderMuralEditor(S.players[S.me]); }
   else if (t.id === 'mural-clear') { S.muralDraft = new Array(MURAL_CELLS).fill('.'); renderMuralEditor(S.players[S.me]); }
-  else if (t.id === 'mural-save') { saveMe({ mural: muralDraft().join('') }); toast('지붕에 그렸어요. 마을 지도에서 확인해 보세요.'); }
+  else if (t.id === 'mural-save') saveMural();
   else if (t.id === 'wr-rename') renameMe();
   else if (t.dataset.buy) buyDecor(t.dataset.buy);
   else if (t.dataset.cos) {
@@ -1995,15 +2041,15 @@ document.addEventListener('click', (e) => {
   } else if (t.dataset.door) {
     saveMe({ door: Number(t.dataset.door) });
   } else if (t.id === 'ev-start') {
-    armOrRun(t, '정말 시작? 모두 사탕 10개로 리셋돼요', () => {
-      saveEvent({ startedAt: Date.now(), endsAt: Date.now() + EVENT_MS });
+    armOrRun(t, '정말 시작? 모두 사탕 10개로 리셋돼요', async () => {
+      if ((await saveEvent({ startedAt: Date.now(), endsAt: Date.now() + EVENT_MS })) === false) return;
       S.bonus = {};
       if (S.mode === 'live') S.db.doc('game/bonus').set({}).catch(() => {});
       toast('이벤트 시작! 24시간 동안 사탕을 모아요.');
     });
   } else if (t.id === 'ev-stop') {
-    armOrRun(t, '정말 지금 끝낼까요?', () => {
-      saveEvent({ ...S.event, endsAt: Date.now() });
+    armOrRun(t, '정말 지금 끝낼까요?', async () => {
+      if ((await saveEvent({ ...S.event, endsAt: Date.now() })) === false) return;
       toast('이벤트를 끝냈어요.');
     });
   }
@@ -2074,8 +2120,129 @@ async function accountRequest(url, options = {}) {
   });
   let payload = {};
   try { payload = await response.json(); } catch { /* 서버 오류는 아래의 공통 문구로 표시 */ }
-  if (!response.ok) throw new Error(payload.message || '요청을 처리하지 못했어요.');
+  if (!response.ok) { const error = new Error(payload.message || '요청을 처리하지 못했어요.'); error.status = response.status; throw error; }
   return payload;
+}
+
+async function gameRequest(action) {
+  const uid = S.me, user = S.account?.auth.currentUser;
+  if (!user || user.uid !== uid) throw new Error('다시 로그인해 주세요.');
+  S.pendingGame = (S.pendingGame || 0) + 1;
+  try {
+    const body = JSON.stringify({ ...action, requestId: crypto.randomUUID() });
+    const token = await user.getIdToken();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = await accountRequest('/api/game/action', { method: 'POST', headers: { authorization: `Bearer ${token}` }, body });
+        if (S.me !== uid || S.account.auth.currentUser?.uid !== uid) throw new Error('계정이 변경됐어요. 새로고침해 주세요.');
+        return result;
+      } catch (error) {
+        if (attempt || (error.status && error.status < 500)) throw error;
+      }
+    }
+  } finally { S.pendingGame -= 1; }
+  }
+}
+
+async function saveMural() {
+  const mural = muralDraft().join('');
+  try {
+    if (S.mode === 'firebase') await gameRequest({ type: 'mural', mural });
+    else saveMe({ mural });
+    toast('지붕에 그렸어요. 마을 지도에서 확인해 보세요.');
+  } catch (error) { toast(error.message); }
+}
+
+function applyFirebasePlayers() {
+  const round = S.event?.id || 'practice';
+  S.players = Object.fromEntries(Object.entries(S.firebasePlayers || {}).map(([uid, player]) => [uid, {
+    ...player, decor: Object.fromEntries(Object.entries(player.decor || {}).filter(([, item]) => item.round === round).map(([key, item]) => [key, item.at])),
+  }]));
+  lastPeers = null;
+  render();
+}
+
+async function connectFirebaseGame(uid) {
+  await S.account.dispose?.();
+  const a = S.account, fs = a.firestoreSdk, rt = a.databaseSdk;
+  const token = await a.auth.currentUser.getIdToken();
+  const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
+  S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = {};
+  ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
+  const stops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
+  const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
+  const ownRef = rt.ref(a.database, `presence/${uid}/${sid}`);
+  rt.goOnline(a.database);
+  const disconnect = rt.onDisconnect(ownRef);
+  S.myPeer = myPeer;
+  const handlers = { chat: onChat, bonk: onBonk };
+  let presenceReady, presenceFailed;
+  const firstPresence = new Promise((resolve, reject) => { presenceReady = resolve; presenceFailed = reject; });
+  S.room = {
+    peers: () => peers,
+    presence: async (data) => {
+      currentPresence = { x: data.x, y: data.y, f: data.f, m: data.m };
+      if (S.networkConnected && !disposed) await rt.set(ownRef, { ...currentPresence, at: rt.serverTimestamp() });
+    },
+    emit: async (kind, data) => {
+      if (!S.networkConnected) throw new Error('마을에 다시 연결 중이에요.');
+      await rt.set(rt.ref(a.database, `events/${uid}`), { id: crypto.randomUUID(), kind, ...data, at: rt.serverTimestamp() });
+    },
+  };
+  a.dispose = async () => {
+    disposed = true; stops.forEach((stop) => stop()); S.networkConnected = false;
+    void rt.remove(ownRef).catch(() => {});
+    rt.goOffline(a.database); S.room = null;
+  };
+  stops.push(rt.onValue(rt.ref(a.database, '.info/connected'), async (snapshot) => {
+    S.networkConnected = snapshot.val() === true;
+    renderHud();
+    if (!S.networkConnected || disposed) return;
+    try {
+      await disconnect.remove();
+      if (disposed) return;
+      await rt.set(ownRef, { ...currentPresence, at: rt.serverTimestamp() });
+      presenceDirty = true;
+    } catch { toast('접속 상태를 저장하지 못했어요. 새로고침해 주세요.'); }
+  }));
+  stops.push(rt.onValue(rt.ref(a.database, 'presence'), (snapshot) => {
+    peers = Object.entries(snapshot.val() || {}).flatMap(([by, sessions]) => Object.entries(sessions).map(([id, presence]) => ({
+      by, peer: `${by}:${id}`, sameTab: `${by}:${id}` === myPeer, isMe: by === uid, kind: 'viewer',
+      presence: { ...presence, c: S.players[by]?.costume || 'plain' },
+    })));
+    syncPeers();
+    presenceReady();
+  }, (error) => { toast('실시간 접속 권한을 확인해 주세요.'); presenceFailed(error); }));
+  const seen = new Set(), joined = Date.now();
+  const receive = (snapshot) => {
+    const data = snapshot.val();
+    if (!data || seen.has(data.id) || data.at < joined - 5000) return;
+    seen.add(data.id); if (seen.size > 300) seen.delete(seen.values().next().value);
+    handlers[data.kind]?.({ data, by: snapshot.key, peer: peers.find((p) => p.by === snapshot.key)?.peer || snapshot.key, sameTab: snapshot.key === uid });
+  };
+  const messageError = () => toast('채팅 권한을 확인해 주세요.');
+  stops.push(rt.onChildAdded(rt.ref(a.database, 'events'), receive, messageError));
+  stops.push(rt.onChildChanged(rt.ref(a.database, 'events'), receive, messageError));
+  let readyTimer;
+  const deadline = new Promise((_, reject) => { readyTimer = setTimeout(() => reject(new Error('마을 연결이 지연돼요. 다시 로그인해 주세요.')), 15000); });
+  try {
+    await Promise.race([deadline, Promise.all([
+      firstPresence,
+      new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.collection(a.firestore, 'gamePlayers'), { includeMetadataChanges: true }, (snapshot) => {
+        if (snapshot.metadata.fromCache) return;
+        S.firebasePlayers = Object.fromEntries(snapshot.docs.map((doc) => [doc.id, doc.data()]));
+        applyFirebasePlayers(); notifyKnocks(); resolve();
+      }, (error) => { S.readOnly = true; toast('마을 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
+      new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'game/event'), { includeMetadataChanges: true }, (snapshot) => {
+        if (snapshot.metadata.fromCache) return;
+        const previous = S.event?.id;
+        S.event = snapshot.exists() ? snapshot.data() : null;
+        if (previous && previous !== S.event?.id) toast('이벤트 시작! 모두 사탕 10개로 다시 시작해요.');
+        applyFirebasePlayers(); resolve();
+      }, (error) => { S.readOnly = true; toast('이벤트 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
+    ])]);
+  } catch (error) { await a.dispose(); throw error; }
+  finally { clearTimeout(readyTimer); }
 }
 
 function showAuthGate(message = '') {
@@ -2151,15 +2318,20 @@ async function submitAccountForm(event) {
 async function loadAccountClient() {
   const config = await accountRequest('/api/firebase-config');
   const version = '13.1.0';
-  const [appSdk, authSdk] = await Promise.all([
+  const [appSdk, authSdk, firestoreSdk, databaseSdk] = await Promise.all([
     import(`https://www.gstatic.com/firebasejs/${version}/firebase-app.js`),
     import(`https://www.gstatic.com/firebasejs/${version}/firebase-auth.js`),
+    import(`https://www.gstatic.com/firebasejs/${version}/firebase-firestore.js`),
+    import(`https://www.gstatic.com/firebasejs/${version}/firebase-database.js`),
   ]);
   const app = appSdk.getApps().length ? appSdk.getApp() : appSdk.initializeApp(config.firebaseConfig);
   const auth = authSdk.getAuth(app);
   if (config.emulator?.auth) authSdk.connectAuthEmulator(auth, config.emulator.auth, { disableWarnings: true });
   await authSdk.setPersistence(auth, authSdk.browserLocalPersistence);
-  S.account = { app, auth, authSdk };
+  const firestore = firestoreSdk.getFirestore(app), database = databaseSdk.getDatabase(app);
+  if (config.emulator?.firestore) firestoreSdk.connectFirestoreEmulator(firestore, '127.0.0.1', 8080);
+  if (config.emulator?.database) databaseSdk.connectDatabaseEmulator(database, '127.0.0.1', 9000);
+  S.account = { app, auth, authSdk, firestoreSdk, databaseSdk, firestore, database };
   await auth.authStateReady();
   return auth.currentUser;
 }
@@ -2182,6 +2354,7 @@ async function enterAccount(uid, profile) {
     p2: { ...blankPlayer(), nick: '연습용 집 2', costume: 'mummy', door: 5, joinedAt: 2 },
     'bot-test': { ...blankPlayer(), name: '테스트친구', costume: 'dracula', door: 3, joinedAt: 3 },
   };
+  if (S.account?.firestore) await connectFirebaseGame(uid);
   $('#auth').hidden = true;
   render();
   if (!profile.introSeen) { startIntro(); return; }
@@ -2191,11 +2364,12 @@ async function enterAccount(uid, profile) {
 }
 
 async function logoutAccount() {
-  if (S.mode !== 'account') return;
-  if (S.busy) { toast('진행 중인 안내를 마친 뒤 로그아웃할 수 있어요.'); return; }
+  if (!['account', 'firebase'].includes(S.mode)) return;
+  if (S.busy || S.pendingGame) { toast('진행 중인 안내와 저장을 마친 뒤 로그아웃할 수 있어요.'); return; }
   S.busy = true;
   try {
     await saveAccountProfile(S.players[S.me]);
+    await S.account.dispose?.();
     await S.account.authSdk.signOut(S.account.auth);
     for (const id of MODALS) if (id !== 'auth') $(`#${id}`).hidden = true;
     S.me = null;
