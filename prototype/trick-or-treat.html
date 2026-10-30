@@ -1992,6 +1992,11 @@ function candyGame(challenge) {
     let held = false, wantedHeld = false, inputIndex = 0, simAt = 0, raf = 0, finished = false;
     const inputs = [];
     const start = performance.now();
+    const heartbeatTimer = challenge?.id && S.mode === 'firebase'
+      ? setInterval(() => {
+        gameRequest({ type: 'knock-heartbeat', challengeId: challenge.id }).catch(() => {});
+      }, 15000)
+      : null;
 
     function setHeld(next) {
       if (finished || next === wantedHeld) return;
@@ -2035,6 +2040,7 @@ function candyGame(challenge) {
       if (finished) return;
       finished = true;
       cancelAnimationFrame(raf);
+      if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
       S.candyControl = null;
       const trace = encodeCandyInputs(inputs.filter((input) => input.t <= simAt));
       box.classList.add(won ? 'hit' : 'miss');
@@ -2149,9 +2155,16 @@ async function knock(slot) {
   $('#dlg-choices').hidden = true;
   S.openDoor = null;
   S.npc = null;
-  S.busy = false;
   canvas.focus({ preventScroll: true });
-  if (next === 'again') { await wait(150); knock(slot); return; }
+  if (next === 'again') {
+    const retryUid = S.me, retryRound = S.event?.id || 'practice';
+    await wait(1000);
+    S.busy = false;
+    if (S.me === retryUid && (S.event?.id || 'practice') === retryRound) return knock(slot);
+    renderAction();
+    return;
+  }
+  S.busy = false;
   S.near = null;
   updateNear();
   if (next === 'note') openNote(id);
