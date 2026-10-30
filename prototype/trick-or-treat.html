@@ -98,6 +98,8 @@ input[type=text]{flex:1 1 180px}
 textarea{width:100%;box-sizing:border-box;resize:vertical;line-height:1.4;font-family:var(--f-ko)}
 textarea:focus{outline:none;border-color:var(--gold)}
 .me .status.ev{color:var(--gold)}
+.reward{color:var(--gold);font-size:.9rem}
+.me .reward{color:var(--gold)}
 .chatbar{left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;padding:8px;width:min(520px,calc(100vw - 40px));z-index:9}
 .chatbar input{flex:1 1 auto}
 .chatlog{left:max(14px,env(safe-area-inset-left,0px));bottom:calc(96px + env(safe-area-inset-bottom,0px));max-width:min(320px,calc(100vw - 40px));display:flex;flex-direction:column;gap:2px;pointer-events:none;font-size:.85rem}
@@ -144,6 +146,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .bc.actor-bubble>div{flex:1 1 100%}
 .bc.actor-bubble .pbtn{flex:1}
 .dialog.actor-bubble{width:min(440px,calc(100vw - 40px))}
+.dialog.actor-bubble .bubble-content{max-height:calc(100dvh - 204px);overflow-y:auto;overscroll-behavior:contain;padding:0 2px 4px}
 .dialog.actor-bubble .choices{gap:10px;justify-content:flex-start}
 .dialog.actor-bubble .choices .pbtn{white-space:normal;line-height:1.3}
 .timing.actor-bubble{width:min(400px,calc(100vw - 40px))}
@@ -187,8 +190,10 @@ textarea:focus{outline:none;border-color:var(--gold)}
 
 <div class="dialog px actor-bubble" id="dialog" role="dialog" aria-live="polite" hidden>
   <span class="who" id="dlg-who"></span>
-  <p id="dlg-text"></p>
-  <div class="choices" id="dlg-choices" hidden></div>
+  <div class="bubble-content">
+    <p id="dlg-text"></p>
+    <div class="choices" id="dlg-choices" hidden></div>
+  </div>
   <span class="next" id="dlg-next" aria-hidden="true">▼</span>
 </div>
 
@@ -230,11 +235,11 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <div class="field">
         <span class="lab">꾸미기 상점</span>
-        <span class="note">사탕으로 우리 집을 꾸며요. 마을 지도에 바로 붙고 친구들 눈에도 보여요. 쓴 사탕만큼 순위 점수도 줄어요.</span>
+        <span class="note">장식을 사면 보유 사탕이 줄고 순위에도 반영돼요. 선물은 이벤트 종료 시 남은 사탕 순위를 기준으로 드려요.</span>
         <div class="shop" id="shop"></div>
       </div>
       <div class="field">
-        <span class="lab">사탕 규칙</span>
+        <span class="lab">사탕을 주고받는 경쟁 규칙</span>
         <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 박자 맞추기가 나와요. 초록 칸을 세 번 연속 맞추면 그 집 사탕 1개를 가져오고, 놓치면 내 사탕 1개를 그 집에 두고 와요. 우리 집에 온 친구가 박자를 놓치면 그 사탕은 내 거예요. 사탕이 많은 집일수록 맞추는 칸이 좁아져요.</span>
       </div>
       <div class="field">
@@ -256,6 +261,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <h2 id="rk-title">사탕 순위<small id="rk-sub"></small></h2>
       <button class="pbtn" type="button" data-close="rank">닫기</button>
     </div>
+    <p class="reward">최종 사탕 순위에 따라 실제 선물을 드려요!</p>
+    <p class="note">친구 집 노크에 성공하면 상대에게서 사탕 1개를 가져오고, 실패하면 내 사탕 1개를 줘요. 장식에 쓴 사탕은 순위에서도 빠져요. 같은 사탕 수는 현재 이름순으로 표시돼요.</p>
     <ol class="book rank" id="rk-list"></ol>
     <div class="field" id="rk-admin" hidden>
       <span class="lab">운영자</span>
@@ -730,6 +737,7 @@ const CHAT_MAX = 60, CHAT_BUBBLE_MS = 5000, CHAT_LOG = 6;
 const chatBubbles = new Map();
 const chatLog = [];
 function openChat() {
+  if (S.busy) { toast('진행 중인 대화나 노크를 먼저 마쳐 주세요.'); return; }
   if (S.readOnly || !myCostume()) { toast('코스튬을 입어야 말할 수 있어요.'); return; }
   $('#chatbar').hidden = false;
   keys.clear();
@@ -864,24 +872,31 @@ function syncPeers() {
 
 function w2s(wx, wy) { return [wx * Z - camX, wy * Z - camY]; }
 // 캔버스는 기기 픽셀, DOM은 CSS 픽셀을 쓰므로 dpr로 나눠 위치를 맞춘다.
+const actorBubbles = ['action', 'dialog', 'timing'].map((id) => $(`#${id}`));
 function positionActorBubbles() {
+  const visible = actorBubbles.filter((el) => !el.hidden);
+  if (!visible.length) return;
+  const covered = modalOpen();
+  for (const el of visible) el.style.visibility = covered ? 'hidden' : '';
+  if (covered) return;
   const bounds = canvas.getBoundingClientRect();
   const [worldX, worldY] = w2s(S.pos.x, S.pos.y - 28);
   const anchorX = bounds.left + worldX / dpr;
   const anchorY = bounds.top + worldY / dpr;
   const actorBottom = bounds.top + w2s(S.pos.x, S.pos.y + 4)[1] / dpr;
   const margin = 20, safeBottom = window.innerHeight - 96;
-  const covered = modalOpen();
-  for (const id of ['action', 'dialog', 'timing']) {
-    const el = $(`#${id}`);
-    el.style.visibility = covered ? 'hidden' : '';
-    if (covered || el.hidden) continue;
+  const hud = [...document.querySelectorAll('.hud.tl, .hud.tr')].map((el) => el.getBoundingClientRect());
+  for (const el of visible) {
     const { width, height } = el.getBoundingClientRect();
     const left = clamp(anchorX - width / 2, margin, Math.max(margin, window.innerWidth - width - margin));
+    const hudBottom = Math.max(margin + 18, ...hud.filter((r) => r.right > left && r.left < left + width).map((r) => r.bottom + 24));
+    const minTop = Math.min(hudBottom, Math.max(margin + 18, safeBottom - height));
     let top = anchorY - height - 14;
-    const below = top < margin + 18 && actorBottom + 26 + height <= safeBottom;
-    if (below) top = actorBottom + 26;
-    top = clamp(top, margin + 18, Math.max(margin + 18, safeBottom - height));
+    // 위쪽 공간이 부족하면 캐릭터 아래로 옮겨 몸과 HUD를 가리지 않는다.
+    const belowTop = Math.max(actorBottom + 26, minTop);
+    const below = top < minTop && belowTop + height <= safeBottom;
+    if (below) top = belowTop;
+    top = clamp(top, minTop, Math.max(minTop, safeBottom - height));
     el.classList.toggle('below', below);
     el.style.left = `${Math.round(left)}px`;
     el.style.top = `${Math.round(top)}px`;
@@ -1068,6 +1083,7 @@ function frame(now) {
   if (sec !== hudSecond) {
     hudSecond = sec;
     renderHud();
+    renderAction();
     if (!$('#rank').hidden) renderRanking();
   }
 }
@@ -1202,7 +1218,7 @@ function renderAction() {
     $('#act-sub').textContent = !myCostume() ? '코스튬부터 입어야 문을 두드릴 수 있어요'
       : ended ? '이벤트가 끝나서 문이 잠겼어요'
       : !hasBasket(S.me) ? `호박 바구니가 있어야 두드릴 수 있어요 · 호박 ${S.players[S.me]?.pumpkins || 0}/${BASKET_PUMPKINS}`
-      : '박자 맞추면 사탕 1개 가져오고, 놓치면 1개 뺏겨요';
+      : `성공: ${nameOf(n.owner)} → 나 1개 / 실패: 나 → ${nameOf(n.owner)} 1개`;
     btn.textContent = '똑똑 두드리기';
     btn.disabled = S.readOnly || !myCostume() || ended || !hasBasket(S.me);
   }
@@ -1222,13 +1238,15 @@ function fmtLeft(ms) {
 }
 function eventLine() {
   const st = eventState();
-  if (st === 'before') return '이벤트 시작 전 · 지금은 연습판';
+  const list = ranking();
+  const rank = list.findIndex((r) => r.id === S.me) + 1;
+  const mine = rank ? ` · 내 순위 ${rank}등` : '';
+  if (st === 'before') return `이벤트 시작 전 · 연습 중${mine}`;
   if (st === 'ended') {
-    const top = ranking()[0];
-    return top ? `이벤트 끝 · 우승 ${nameOf(top.id)} (사탕 ${top.n}개)` : '이벤트 끝';
+    const top = list[0];
+    return top ? `이벤트 끝 · 우승 ${nameOf(top.id)} (사탕 ${top.n}개)${mine}` : '이벤트 끝';
   }
-  const rank = ranking().findIndex((r) => r.id === S.me) + 1;
-  return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${rank ? ` · 내 순위 ${rank}등` : ''}`;
+  return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${mine}`;
 }
 // 별도 퀘스트 잔액을 저장하지 않고 기존 호박 수와 노크 기록으로 진행도를 복원한다.
 function renderQuest() {
@@ -1268,10 +1286,10 @@ function renderHud() {
   const shown = fx ? `장난 당하는 중 · ${TRICKS[fx.kind].status} ${Math.ceil(fx.left / 1000)}초` : status;
   $('#me').innerHTML = `<img class="px-img" src="${spriteUrl(fx?.kind === 'poop' ? 'poop' : c || 'plain', 3)}" alt="">
     <b>${esc(nameOf(S.me))} · ${c ? COSTUMES[c].name : '분장 전'}</b>
-    <span class="bag"><img class="px-img" src="${spriteUrl('candy', 2)}" alt="" style="width:22px;height:12px">${candiesOf(S.me)}</span>
+    <span class="bag"><img class="px-img" src="${spriteUrl('candy', 2)}" alt="" style="width:22px;height:12px">보유 사탕 ${candiesOf(S.me)}개</span>
     <span class="status" ${fx ? 'style="color:var(--candy)"' : ''}>${esc(shown)}</span>
     <span class="status ev">${esc(eventLine())}</span>
-    ${c && !hasBasket(S.me) ? `<span class="status">호박 바구니까지 ${BASKET_PUMPKINS - (S.players[S.me]?.pumpkins || 0)}개 · 마을에 자라는 호박을 따요</span>` : ''}`;
+    <span class="status reward">최종 사탕 순위에 따라 실제 선물 지급</span>`;
 }
 
 function renderWardrobe() {
@@ -1319,7 +1337,7 @@ function renderHouse() {
     const own = Boolean(owned[key]);
     return `<div class="shop-item"><img class="px-img" src="${spriteUrl(it.icon, 3)}" alt="">
       <div><b>${it.name}</b><small>${it.line}</small></div>
-      <button class="pbtn ${own ? '' : 'hot'}" type="button" data-buy="${key}" ${own || closed || have < it.price ? 'disabled' : ''}>${own ? '설치함' : `사탕 ${it.price}개`}</button></div>`;
+      <button class="pbtn ${own ? '' : 'hot'}" type="button" data-buy="${key}" ${own || closed || have < it.price ? 'disabled' : ''}>${own ? '설치함' : `사탕 −${it.price}개`}</button></div>`;
   }).join('');
   renderMuralEditor(p);
   $('#book').innerHTML = guestbookHtml(S.me);
@@ -1345,7 +1363,7 @@ function buyDecor(key) {
   if (eventState() === 'ended') { toast('이벤트가 끝나서 상점이 닫혔어요.'); return; }
   if (candiesOf(S.me) < it.price) { toast(`사탕이 ${it.price}개 있어야 해요.`); return; }
   saveMe({ decor: { ...(p.decor || {}), [key]: Date.now() } });
-  toast(`${it.name} 설치 완료! 사탕 ${it.price}개를 썼어요.`);
+  toast(`${it.name} 설치 완료! 사탕 ${it.price}개를 써서 순위에도 반영돼요.`);
 }
 
 function muralDraft() {
@@ -1591,7 +1609,7 @@ async function knock(slot) {
   if (hit && moved) {
     await say(hostName, treatLine(me.costume));
     fly(doorPoint, head);
-    await say('TREAT!', `사탕 +1 · 지금 ${candiesOf(S.me)}개`, 'sys');
+    await say('TREAT!', `${hostName}에게서 사탕 1개 가져옴! 내 사탕 +1 · 지금 ${candiesOf(S.me)}개`, 'sys');
   } else if (hit) {
     await say(hostName, '박자는 딱 맞췄는데… 우리 집 사탕이 다 떨어졌어.');
   } else {
@@ -1599,7 +1617,7 @@ async function knock(slot) {
     await say(hostName, pick(['땡! 박자 감각 무엇?', '땡! 문 부서지는 줄.', '땡! 그건 노크가 아니라 박수야.']));
     if (moved) {
       fly(head, doorPoint);
-      await say('TRICK!', `사탕 1개 뺏김 · 지금 ${candiesOf(S.me)}개`, 'trick');
+      await say('TRICK!', `${hostName}에게 사탕 1개 빼앗김! 내 사탕 −1 · 지금 ${candiesOf(S.me)}개`, 'trick');
     } else {
       await say(hostName, '뺏을 사탕도 없네. 대신 장난이다.');
     }
@@ -1613,6 +1631,7 @@ async function knock(slot) {
   S.openDoor = null;
   S.npc = null;
   S.busy = false;
+  canvas.focus({ preventScroll: true });
   if (next === 'again') { await wait(150); knock(slot); return; }
   S.near = null;
   updateNear();
@@ -1681,7 +1700,11 @@ function confirmName() {
   if (!nick) { toast('이름을 한 글자 이상 정해 주세요.'); return; }
   saveMe({ nick });
   closeModal('intro');
-  if (myCostume()) { if (!S.players[S.me].guideSeen) welcomeTips(); else toast(`반가워요, ${nick}! 이제 마을에서 이 이름으로 불려요.`); return; }
+  if (myCostume()) {
+    if (!S.players[S.me].guideSeen) welcomeTips();
+    else toast(`반가워요, ${nick}! 이제 마을에서 이 이름으로 불려요.`);
+    return;
+  }
   $('#wr-title').firstChild.textContent = `${nick}, 오늘 뭐 입고 나가지`;
   openModal('wardrobe');
 }
@@ -1703,7 +1726,7 @@ async function welcomeTips() {
   S.guideRunning = false;
   S.busy = false;
   saveMe({ guideSeen: true });
-  toast('새 퀘스트가 도착했습니다! 호박 3개를 모아 사탕 바구니를 만드세요.');
+  toast(`새 퀘스트가 도착했습니다! ${$('#quest-title').textContent}`);
 }
 
 function act() {
@@ -1899,7 +1922,14 @@ async function boot() {
     notifyKnocks();
     render();
     if (Object.keys(next).join() !== known) loadNames();
-    if (first) { first = false; if (!S.readOnly) { if (!S.players[S.me]?.nick) startIntro(); else if (!myCostume()) openModal('wardrobe'); else if (!S.players[S.me].guideSeen) welcomeTips(); } }
+    if (first) {
+      first = false;
+      if (!S.readOnly) {
+        if (!S.players[S.me]?.nick) startIntro();
+        else if (!myCostume()) openModal('wardrobe');
+        else if (!S.players[S.me].guideSeen) welcomeTips();
+      }
+    }
   }, () => toast('마을 소식을 더 받지 못해요. 새로고침해 주세요.'));
 }
 
