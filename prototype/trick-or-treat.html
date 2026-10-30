@@ -1717,7 +1717,7 @@ function openModal(id) {
   if (id === 'note') renderNote();
   $(`#${id}`).hidden = false;
   keys.clear();
-  $(`#${id} .pbtn`).focus();
+  if (id !== 'intro') $(`#${id} .pbtn`).focus();
 }
 function closeModal(id) { $(`#${id}`).hidden = true; canvas.focus({ preventScroll: true }); }
 
@@ -1751,7 +1751,6 @@ async function startIntro() {
   pic.src = spriteUrl('pumpkin', 6);
   pic.classList.remove('hatch');
   openModal('intro');
-  $('#in-skip').focus();
   for (const [i, line] of INTRO_LINES.entries()) {
     if (i === INTRO_LINES.length - 1) {
       pic.src = spriteUrl('plain', 6);
