@@ -2,7 +2,7 @@ const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { signup, login, updateProfile } = require('../server/auth-service.cjs');
-const { FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
+const { TRICK_KINDS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
 const { searchUsers, watchAccounts, moderate } = require('../server/admin-service.cjs');
 after(() => services().database.goOffline());
@@ -523,6 +523,9 @@ test('heartbeats alone cannot keep a house locked past ninety seconds, and a tim
   const settled = await act(rival, { type: 'knock-finish', challengeId: taken.id, inputs: [], elapsedMs: 90_000 });
   assert.equal(settled.entry.r, 'lose');
   assert.equal(settled.candies, 10);
+  assert.equal(settled.hostCandies, 10, 'a failure keeps both sides\' candy');
+  assert.ok(TRICK_KINDS.includes(settled.entry.k), 'but the challenger gets a trick');
+  assert.equal((await saved(rival)).knocks.at(-1).k, settled.entry.k, 'stored where the village can see it');
   assert.equal((await lockRef.get()).exists, false);
 });
 
