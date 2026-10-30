@@ -57,3 +57,14 @@ test('watch numbers cover the last day of challenges, candy flow and active hour
   assert.deepEqual(list[1].flags, []);
   assert.equal(WATCH.minTries, 20);
 });
+
+const { CHALLENGE_MAX_MS } = require('../server/candy-challenge.cjs');
+test('a challenge still undecided at ninety seconds ends as a loss', () => {
+  // 사탕이 막대 안팎을 오가며 잡기 게이지가 끝까지 차지도 비지도 않는 경로
+  const path = [{ t: 0, y: 1 }, ...Array.from({ length: 63 }, (_, i) => ({ t: (i + 1) * 1440, y: i % 2 ? 1 : .47 }))];
+  const hovering = { createdAt: 0, level: 1, path };
+  const before = evaluateCandyChallenge(hovering, [], CHALLENGE_MAX_MS - 20, CHALLENGE_MAX_MS);
+  assert.equal(before.finished, false);
+  const after = evaluateCandyChallenge(hovering, [], CHALLENGE_MAX_MS, CHALLENGE_MAX_MS + 500);
+  assert.deepEqual([after.valid, after.finished, after.won, after.timedOut, after.at], [true, true, false, true, CHALLENGE_MAX_MS]);
+});

@@ -495,3 +495,29 @@ test('a ban reaches people already connected: open Realtime Database listeners a
   await moderate(admin.authorization, { type: 'unban', target: banned.uid });
   assert.equal((await login({ nickname: banned.profile.nick, password: 'game-password-8' })).uid, banned.uid);
 });
+
+test('heartbeats alone cannot keep a house locked past ninety seconds, and a timed-out game settles as a loss', async () => {
+  await services().db.doc('game/event').delete();
+  const [alt, rival, host] = await Promise.all(['부캐', '도전', '부자'].map(player));
+  for (const p of [alt, rival]) await services().db.collection('gamePlayers').doc(p.uid).update({ pumpkins: 3 });
+  const { challenge } = await act(alt, { type: 'knock-start', host: host.uid });
+  await act(alt, { type: 'knock-heartbeat', challengeId: challenge.id });
+  await assert.rejects(act(rival, { type: 'knock-start', host: host.uid }), /다른 사람이 도전 중/);
+
+  // 신호를 계속 보내 잠금은 살아 있지만, 도전을 시작한 지 90초가 지난 상황
+  const lockRef = services().db.collection('gameHouseLocks').doc(host.uid);
+  const longAgo = Date.now() - 91_000;
+  await lockRef.update({ createdAt: longAgo, heartbeatAt: Date.now() });
+  await services().db.collection('gameChallenges').doc(alt.uid).update({ createdAt: longAgo });
+  await assert.rejects(act(alt, { type: 'knock-heartbeat', challengeId: challenge.id }), (e) => e.status === 409 && /90초/.test(e.message));
+  const taken = (await act(rival, { type: 'knock-start', host: host.uid })).challenge;
+  assert.equal((await lockRef.get()).data().challengeId, taken.id, 'the house opens for someone else');
+
+  // 화면이 90초에서 끝낸 도전은 지연된 정산 요청도 실패로 기록되고 잠금을 푼다
+  await lockRef.update({ createdAt: Date.now() - 95_000, heartbeatAt: Date.now() });
+  await services().db.collection('gameChallenges').doc(rival.uid).update({ createdAt: Date.now() - 95_000 });
+  const settled = await act(rival, { type: 'knock-finish', challengeId: taken.id, inputs: [], elapsedMs: 90_000 });
+  assert.equal(settled.entry.r, 'lose');
+  assert.equal(settled.candies, 10);
+  assert.equal((await lockRef.get()).exists, false);
+});

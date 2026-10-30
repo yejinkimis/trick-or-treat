@@ -2,7 +2,7 @@ const { randomUUID, randomInt } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
-const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
+const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, CHALLENGE_MAX_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 const { readVillagePlan } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 
@@ -24,6 +24,10 @@ function brewGain(roll = randomInt(100)) {
   return 0;
 }
 const roundOf = (event) => event?.id || 'practice';
+// 잠금은 신호가 끊기거나 도전 시작 후 90초가 지나면 풀린다. 끝나는 순간의 요청이 늦게 와도 받도록 정산에는 여유를 둔다.
+const FINISH_SLACK_MS = 10 * 1000;
+const lockAlive = (lock, now, slack = 0) => Boolean(lock?.createdAt)
+  && now - (lock.heartbeatAt || lock.createdAt) < CHALLENGE_LOCK_TTL_MS && now - lock.createdAt < CHALLENGE_MAX_MS + slack;
 const balance = (player, event) => player.round === roundOf(event) ? player.candies : 10;
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
 const fail = (message, status = 400) => { throw new AuthError(status, 'game-action-rejected', message); };
@@ -176,12 +180,11 @@ async function action(authorization, input) {
           const priorLock = priorLockDoc.exists ? priorLockDoc.data() : null;
           const lastSeen = priorLock?.heartbeatAt || priorLock?.createdAt || 0;
           const priorLockIsActive = priorLock?.challengeId === prior.id && priorLock.challengerUid === uid
-            && priorLock.round === round && now - lastSeen < CHALLENGE_LOCK_TTL_MS;
+            && priorLock.round === round && lockAlive(priorLock, now);
           if (priorLockIsActive) fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
         }
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        const lockIsActive = lock?.round === round
-          && now - (lock.heartbeatAt || lock.createdAt || now) < CHALLENGE_LOCK_TTL_MS;
+        const lockIsActive = lock?.round === round && lockAlive(lock, now);
         if (lockIsActive) fail('이 집은 지금 다른 사람이 도전 중이에요.', 429);
         const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
           ? { ...prior.nextLevelByHost } : {};
@@ -202,9 +205,8 @@ async function action(authorization, input) {
         const lockRef = db.collection('gameHouseLocks').doc(challenge.host);
         const lockDoc = await tx.get(lockRef);
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        const lastSeen = lock?.heartbeatAt || lock?.createdAt || 0;
-        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round
-          || now - lastSeen >= CHALLENGE_LOCK_TTL_MS) {
+        if (now - challenge.createdAt >= CHALLENGE_MAX_MS) fail('도전 시간 90초가 지나 실패로 끝났어요. 다시 노크해 주세요.', 409);
+        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round || !lockAlive(lock, now)) {
           fail('도전이 끝났거나 잠시 자리를 비워 잠금이 풀렸어요. 다시 도전해 주세요.', 409);
         }
         tx.update(lockRef, { heartbeatAt: now });
@@ -218,9 +220,7 @@ async function action(authorization, input) {
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
         if (hostDoc.data().houseHidden || hostDoc.data().banned) fail('운영자가 이 집의 도전을 중단했어요.');
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        const lastSeen = lock?.heartbeatAt || lock?.createdAt || 0;
-        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round
-          || now - lastSeen >= CHALLENGE_LOCK_TTL_MS) {
+        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round || !lockAlive(lock, now, FINISH_SLACK_MS)) {
           fail('이 도전은 더 이상 유효하지 않아요. 다시 노크해 주세요.');
         }
         const outcome = evaluateCandyChallenge(challenge, input.inputs, input.elapsedMs, now);
