@@ -28,3 +28,32 @@ test('alchemy rolls follow the 20/50/25/5 table', () => {
   const { brewGain } = require('../server/game-service.cjs');
   assert.deepEqual([0, 19, 20, 69, 70, 94, 95, 99].map((roll) => brewGain(roll)), [0, 0, 2, 2, 5, 5, 5, 5]);
 });
+
+const { WATCH, hourOf, summarize, watchList } = require('../server/watch.cjs');
+test('watch numbers cover the last day of challenges, candy flow and active hours, and only mark accounts', () => {
+  const now = Date.UTC(2026, 9, 31, 12), HOUR = 3600000, prices = { lantern: 2 };
+  const tries = Array.from({ length: 24 }, (_, i) => ({ at: now - i * HOUR, h: i < 12 ? 'alt' : 'other', w: i !== 23, ms: 4000 + i * 100, lv: 1, m: i !== 23 }));
+  const bot = {
+    id: 'bot', nick: '봇', costume: 'ghost',
+    challenges: [...tries, { at: now - 30 * HOUR, h: 'old', w: true, ms: 1, lv: 1, m: true }],
+    brews: [{ at: now - HOUR, n: 5 }, { at: now - 40 * HOUR, n: 5 }],
+    decor: { lantern: { at: now - HOUR } },
+    guests: [{ r: 'win', moved: true, at: now - HOUR, v: 'x' }, { r: 'win', moved: false, at: now - HOUR, v: 'y' }],
+    harvestHours: { [hourOf(now)]: 30, [hourOf(now - 30 * HOUR)]: 99 },
+  };
+  const s = summarize(bot, { now, prices, nickOf: (id) => id });
+  assert.equal(s.tries, 24);
+  assert.equal(s.wins, 23);
+  assert.equal(s.fastestWinMs, 4000);
+  assert.deepEqual(s.candy, { knocks: 23, brews: 5, decor: -2, lost: -1, net: 25 });
+  assert.equal(s.harvests, 30);
+  assert.equal(s.activeHours, 24);
+  assert.deepEqual(s.topSource, { id: 'alt', nick: 'alt', wins: 12, share: 12 / 23 });
+  assert.deepEqual(s.flags, ['성공률 높음', '오래 쉬지 않음', '한 집에서 몰아 받음']);
+
+  const casual = { id: 'me', nick: '나', costume: 'cat', challenges: [{ at: now, h: 'bot', w: true, ms: 9000, lv: 1, m: true }] };
+  const list = watchList([casual, bot, { id: 'idle', nick: '쉼', costume: 'cat' }], { now, prices });
+  assert.deepEqual(list.map((u) => u.id), ['bot', 'me'], 'flagged first, inactive left out');
+  assert.deepEqual(list[1].flags, []);
+  assert.equal(WATCH.minTries, 20);
+});

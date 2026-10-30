@@ -1,10 +1,11 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { signup, updateProfile } = require('../server/auth-service.cjs');
-const { LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
+const { signup, login, updateProfile } = require('../server/auth-service.cjs');
+const { FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
-const { searchUsers, moderate } = require('../server/admin-service.cjs');
+const { FieldValue } = require('firebase-admin/firestore');
+const { searchUsers, watchAccounts, moderate } = require('../server/admin-service.cjs');
 after(() => services().database.goOffline());
 
 test('admin moderation enforces permissions, bans existing sessions, hides houses and removes matching content', async (t) => {
@@ -35,17 +36,17 @@ test('admin moderation enforces permissions, bans existing sessions, hides house
   await assert.rejects(act(visitor, { type: 'knock-start', host: host.uid }), /집을 찾을/);
   await moderate(admin.authorization, { type: 'house', target: host.uid, hidden: false });
   await moderate(admin.authorization, { type: 'ban', target: visitor.uid, reason: '도배' });
-  await assert.rejects(act(visitor, { type: 'harvest' }), (e) => e.status === 401 || e.status === 403);
-  const read = await fetch(`http://127.0.0.1:8080/v1/projects/demo-trick-or-treat/databases/(default)/documents/gamePlayers/${visitor.uid}`, { headers: { authorization: visitor.authorization } });
+  await assert.rejects(harvest(visitor), (e) => e.status === 401 || e.status === 403);
+  const read = await fetch(`http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-trick-or-treat/databases/(default)/documents/gamePlayers/${visitor.uid}`, { headers: { authorization: visitor.authorization } });
   assert.equal(read.status, 403);
-  const denied = await fetch(`http://127.0.0.1:9000/chat/${visitor.uid}.json?ns=demo-trick-or-treat-default-rtdb&auth=${visitor.token}`, { method: 'PUT', body: JSON.stringify({ id: 'blocked', text: 'x', kind: 'chat', v: 1, at: { '.sv': 'timestamp' } }) });
+  const denied = await fetch(`http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}/chat/${visitor.uid}.json?ns=demo-trick-or-treat-default-rtdb&auth=${visitor.token}`, { method: 'PUT', body: JSON.stringify({ id: 'blocked', text: 'x', kind: 'chat', v: 1, at: { '.sv': 'timestamp' } }) });
   assert.equal(denied.status, 401);
   assert.ok((await services().db.doc('game/moderation').get()).data().excluded.includes(visitor.uid));
   await moderate(admin.authorization, { type: 'unban', target: visitor.uid });
   assert.equal((await saved(visitor)).rankExcluded, true);
   await moderate(admin.authorization, { type: 'rank', target: visitor.uid, excluded: false });
   assert.ok(!(await services().db.doc('game/moderation').get()).data().excluded.includes(visitor.uid));
-  await act(visitor, { type: 'harvest', host: { invalid: true } });
+  await harvest(visitor, { host: { invalid: true } });
   const found = (await searchUsers(admin.authorization, visitor.uid)).users[0];
   assert.equal(found.banned, false);
   assert.ok(found.activity.some((item) => item.type === 'harvest'));
@@ -55,7 +56,7 @@ test('admin moderation enforces permissions, bans existing sessions, hides house
 
 async function player(prefix) {
   const account = await signup({ nickname: `${prefix}${randomUUID().slice(0, 8)}`, password: 'game-password-8' });
-  const response = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-api-key', {
+  const response = await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-api-key`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: account.customToken, returnSecureToken: true }),
   });
   const token = (await response.json()).idToken;
@@ -66,6 +67,10 @@ async function player(prefix) {
 }
 const act = (p, data) => action(p.authorization, { requestId: randomUUID(), ...data });
 const saved = async (p) => (await services().db.collection('gamePlayers').doc(p.uid).get()).data();
+const harvest = async (p, extra = {}) => {
+  const ripe = ((await saved(p)).field || []).find((pumpkin) => pumpkin.at <= Date.now());
+  return act(p, { type: 'harvest', pumpkin: ripe?.id, ...extra });
+};
 
 async function winningChallenge(visitor, host) {
   const { challenge } = await act(visitor, { type: 'knock-start', host: host.uid });
@@ -259,7 +264,7 @@ test('a replaced or previous-round challenge cannot release another challenger h
 
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {
   const p = await player('규');
-  const base = 'http://127.0.0.1:8080/v1/projects/demo-trick-or-treat/databases/(default)/documents';
+  const base = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-trick-or-treat/databases/(default)/documents`;
   for (const [path, method, expected] of [
     [`gamePlayers/${p.uid}`, 'GET', 200], [`gamePlayers/${p.uid}`, 'DELETE', 403],
     [`gameChallenges/${p.uid}`, 'GET', 403], [`gameHouseLocks/${p.uid}`, 'GET', 403], [`gameRequests/anything`, 'GET', 403],
@@ -272,7 +277,7 @@ test('public scores are readable but direct client edits and private challenge r
 
 test('Realtime Database enforces identity, payload validation and per-session cleanup', async () => {
   const [a, b] = await Promise.all([player('접'), player('속')]);
-  const base = 'http://127.0.0.1:9000';
+  const base = `http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}`;
   const request = (path, token, method = 'GET', body) => fetch(`${base}/${path}.json?ns=demo-trick-or-treat-default-rtdb${token ? `&auth=${token}` : ''}`, {
     method, headers: { 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}),
   });
@@ -329,7 +334,7 @@ test('costumed players fill villages of eight in order and visits across village
 
 test('a player gets a village when picking a costume after joining', async () => {
   const account = await signup({ nickname: `늦${randomUUID().slice(0, 8)}`, password: 'game-password-8' });
-  const response = await fetch('http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-api-key', {
+  const response = await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-api-key`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: account.customToken, returnSecureToken: true }),
   });
   const authorization = `Bearer ${(await response.json()).idToken}`;
@@ -347,12 +352,12 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   const [brewer, host] = await Promise.all(['솥', '이웃'].map(player));
   const ref = services().db.collection('gamePlayers').doc(brewer.uid);
   for (let i = 0; i < 3; i++) {
-    await act(brewer, { type: 'harvest' });
+    await harvest(brewer);
     await ref.update({ harvestAt: 0 });
   }
   assert.equal((await saved(brewer)).basket, true);
   await ref.update({ pumpkins: 100 });
-  await assert.rejects(act(brewer, { type: 'harvest' }), /꽉 찼어요/);
+  await assert.rejects(harvest(brewer), /꽉 찼어요/);
   await ref.update({ pumpkins: 29 });
   await assert.rejects(act(brewer, { type: 'brew' }), /30개/);
   await ref.update({ pumpkins: 55 });
@@ -397,4 +402,96 @@ test('the leaderboard is computed once per three minutes, shared through the CDN
   assert.equal(busted.statusCode, 400);
   assert.equal(busted.headers['cache-control'], 'no-store, max-age=0');
   await act(p, { type: 'event-stop' });
+});
+
+test('only pumpkins the server planted and grew can be harvested, each once, and a new one regrows later', async () => {
+  await services().db.doc('game/event').delete();
+  const farmer = await player('밭');
+  const ref = services().db.collection('gamePlayers').doc(farmer.uid);
+  const field = (await saved(farmer)).field;
+  assert.equal(field.length, FIELD_SIZE);
+  assert.ok(field.every((p) => /^[a-f0-9]{12}$/.test(p.id) && Number.isInteger(p.s) && p.at <= Date.now()));
+  await assert.rejects(act(farmer, { type: 'harvest' }), (e) => e.status === 409);
+  await assert.rejects(act(farmer, { type: 'harvest', pumpkin: 'made-up-id' }), (e) => e.status === 409);
+  const picked = field[0].id;
+  const result = await act(farmer, { type: 'harvest', pumpkin: picked });
+  assert.equal(result.pumpkins, 1);
+  assert.equal(result.field.length, FIELD_SIZE);
+  assert.ok(!result.field.some((p) => p.id === picked));
+  const regrown = result.field.at(-1);
+  assert.ok(regrown.at >= Date.now() + 4000, 'the replacement is still growing');
+  await ref.update({ harvestAt: 0 });
+  await assert.rejects(act(farmer, { type: 'harvest', pumpkin: picked }), (e) => e.status === 409, 'the same pumpkin cannot be picked twice');
+  await assert.rejects(act(farmer, { type: 'harvest', pumpkin: regrown.id }), /자라는 중/);
+  await ref.update({ field: (await saved(farmer)).field.map((p) => ({ ...p, at: 0 })) });
+  await act(farmer, { type: 'harvest', pumpkin: regrown.id });
+  assert.equal((await saved(farmer)).pumpkins, 2);
+});
+
+test('players from before the planted field get one on their next session', async () => {
+  const old = await player('옛');
+  const ref = services().db.collection('gamePlayers').doc(old.uid);
+  await ref.update({ field: FieldValue.delete() });
+  await session(old.authorization);
+  assert.equal((await saved(old)).field.length, FIELD_SIZE);
+});
+
+test('the admin watch list shows who won from whom, how fast, and stays admin-only', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, visitor, host] = await Promise.all(['감', '봇', '부'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await harvest(visitor);
+  await act(visitor, { type: 'knock-finish', ...(await winningChallenge(visitor, host)) });
+  await assert.rejects(watchAccounts(visitor.authorization), (e) => e.status === 403);
+  const row = (await watchAccounts(admin.authorization)).users.find((u) => u.id === visitor.uid);
+  assert.equal(row.tries, 1);
+  assert.equal(row.wins, 1);
+  assert.ok(row.fastestWinMs > 0 && row.fastestWinMs <= 6000);
+  assert.equal(row.candy.knocks, 1);
+  assert.equal(row.harvests, 1);
+  assert.deepEqual(row.topSource && [row.topSource.id, row.topSource.wins], [host.uid, 1]);
+  const hostRow = (await watchAccounts(admin.authorization)).users.find((u) => u.id === host.uid);
+  assert.equal(hostRow, undefined, 'a host who only lost candy has no activity of their own');
+});
+
+test('a ban reaches people already connected: open Realtime Database listeners are cut, their marks disappear and login is refused', async () => {
+  const [admin, banned, other] = await Promise.all(['운', '금', '옆'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const base = `http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}`;
+  const url = (path, token) => `${base}/${path}.json?ns=demo-trick-or-treat-default-rtdb&auth=${token}`;
+  const village = (await saved(banned)).village;
+  const now = { '.sv': 'timestamp' };
+  const put = (path, token, body) => fetch(url(path, token), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await put(`presence/${village}/${banned.uid}/tab1`, banned.token, { x: 208, y: 72, f: 1, m: false, at: now })).status, 200);
+  assert.equal((await put(`online/${banned.uid}/tab1`, banned.token, { v: village, at: now })).status, 200);
+  assert.equal((await fetch(url(`bannedUsers/${banned.uid}`, banned.token))).status, 200, 'a player can watch their own ban mark');
+  assert.equal((await fetch(url(`bannedUsers/${banned.uid}`, other.token))).status, 401, 'but not anyone else\'s');
+
+  // 밴 전에 열어 둔 실시간 구독(브라우저가 계속 붙어 있는 상태)을 그대로 흉내 낸다.
+  const stream = await fetch(url(`presence/${village}`, banned.token), { headers: { accept: 'text/event-stream' } });
+  const reader = stream.body.getReader();
+  const events = [];
+  const pump = (async () => {
+    const decoder = new TextDecoder();
+    for (let text = ''; ;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      text += decoder.decode(value, { stream: true });
+      for (const match of text.matchAll(/^event: (\w+)$/gm)) events.push(match[1]);
+      if (events.includes('cancel')) return;
+    }
+  })();
+  while (!events.includes('put')) await new Promise((resolve) => setTimeout(resolve, 20));
+
+  await moderate(admin.authorization, { type: 'ban', target: banned.uid, reason: '자동 플레이' });
+  await Promise.race([pump, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  await reader.cancel().catch(() => {});
+  assert.ok(events.includes('cancel'), `the rules, not token revocation, cut the open listener (got ${events.join(', ')})`);
+  assert.equal((await put(`presence/${village}/${banned.uid}/tab1`, banned.token, { x: 1, y: 1, f: 1, m: false, at: now })).status, 401);
+  assert.equal(await (await fetch(url(`presence/${village}/${banned.uid}`, other.token))).json(), null, 'their character disappears for others at once');
+  assert.equal(await (await fetch(url(`online/${banned.uid}`, other.token))).json(), null);
+  await assert.rejects(login({ nickname: banned.profile.nick, password: 'game-password-8' }), (e) => e.status === 403 && e.code === 'account-banned');
+  await moderate(admin.authorization, { type: 'unban', target: banned.uid });
+  assert.equal((await login({ nickname: banned.profile.nick, password: 'game-password-8' })).uid, banned.uid);
 });

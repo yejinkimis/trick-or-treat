@@ -2,6 +2,8 @@ const { randomUUID } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
+const { PRICES } = require('./game-service.cjs');
+const { watchList } = require('./watch.cjs');
 
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
 const reject = (status, code, message) => { throw new AuthError(status, code, message); };
@@ -45,6 +47,12 @@ async function searchUsers(authorization, query) {
   })) };
 }
 
+async function watchAccounts(authorization) {
+  await requireAdmin(authorization);
+  const snap = await services().db.collection('gamePlayers').get();
+  return { users: watchList(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })), { now: Date.now(), prices: PRICES }) };
+}
+
 async function moderate(authorization, input) {
   const actor = await requireAdmin(authorization);
   const { db, auth, database } = services();
@@ -68,6 +76,9 @@ async function moderate(authorization, input) {
       await db.collection('gameBans').doc(target).set({ banned: true, reason: reasonText, by: actor, at: now });
       await playerRef.update({ banned: true, rankExcluded: true });
       await database.ref(`bannedUsers/${target}`).set(true);
+      // 규칙이 막은 뒤 남은 접속 표시와 위치를 지워, 다른 사람 화면에서 1분을 기다리지 않고 바로 사라지게 한다.
+      const village = player.data().village;
+      await Promise.all([database.ref(`online/${target}`).remove(), village ? database.ref(`presence/${village}/${target}`).remove() : null]);
       await auth.updateUser(target, { disabled: true });
     } else {
       await auth.updateUser(target, { disabled: false });
@@ -116,4 +127,4 @@ async function moderate(authorization, input) {
   return { ok: true };
 }
 
-module.exports = { searchUsers, moderate };
+module.exports = { searchUsers, watchAccounts, moderate };

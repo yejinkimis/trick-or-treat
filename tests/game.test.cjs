@@ -892,27 +892,35 @@ test('brewing spends thirty pumpkins, adds rolled candy, keeps the basket and co
   assert.match(g.elements.get('toast').textContent, /식는 중/);
 });
 
-test('an online harvest shows at once while the server answers, and rolls back if the server refuses', async () => {
+test('an online harvest picks a server-planted pumpkin, shows at once, and rolls back if the server refuses', async () => {
   const g = game(); g.players();
   g.run(`S.mode = 'firebase'; crypto = { randomUUID: () => 'harvest-request' };
     S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } } };
-    var answer; accountRequest = () => new Promise((resolve, reject) => { answer = { resolve, reject }; });
-    S.pumpkins = [{ x: 32, y: 32 }]; var first = harvest(S.pumpkins[0]);`);
+    var sent = [], answer; accountRequest = (url, options) => { sent.push(JSON.parse(options.body)); return new Promise((resolve, reject) => { answer = { resolve, reject }; }); };
+    S.players.me.field = [{ id: 'ripe1', s: 0, at: 0 }, { id: 'ripe2', s: 0, at: 0 }, { id: 'later', s: 5, at: Date.now() + 60000 }];
+    growPumpkins(0);`);
+  assert.equal(g.run('JSON.stringify(S.pumpkins.map((p) => p.id))'), '["ripe1","ripe2"]', 'only grown pumpkins show, on separate tiles');
+  assert.notEqual(g.run('`${S.pumpkins[0].tx},${S.pumpkins[0].ty}`'), g.run('`${S.pumpkins[1].tx},${S.pumpkins[1].ty}`'));
+  g.run('var first = harvest(S.pumpkins[0]); growPumpkins(0);');
   await tick();
-  assert.equal(g.run('S.pumpkins.length'), 0, 'the pumpkin disappears before the server answers');
+  assert.equal(g.run('sent[0].pumpkin'), 'ripe1');
+  assert.equal(g.run('S.pumpkins.length'), 1, 'the pumpkin disappears before the server answers');
   assert.equal(g.run('S.players.me.pumpkins'), 1);
   assert.equal(g.run('S.floats.some((f) => f.text === "호박 +1")'), true);
-  g.run('answer.resolve({ pumpkins: 1, basket: false })');
+  g.run(`answer.resolve({ pumpkins: 1, basket: false, field: [{ id: 'ripe2', s: 0, at: 0 }, { id: 'later', s: 5, at: Date.now() + 60000 }] })`);
   await g.run('first');
-  assert.equal(g.run('S.players.me.pumpkins'), 1);
+  g.run(`S.players.me.field = [{ id: 'ripe1', s: 0, at: 0 }, ...S.players.me.field]; growPumpkins(0);`);
+  assert.equal(g.run('JSON.stringify(S.pumpkins.map((p) => p.id))'), '["ripe2"]', 'a late snapshot cannot bring the picked pumpkin back');
 
-  g.run(`S.pumpkins = [{ x: 48, y: 48 }]; var second = harvest(S.pumpkins[0]);`);
+  g.run('var second = harvest(S.pumpkins[0]); growPumpkins(0);');
   await tick();
   assert.equal(g.run('S.players.me.pumpkins'), 2);
+  assert.equal(g.run('S.pumpkins.length'), 0);
   g.run(`const refused = new Error('조금 뒤 다른 호박을 따 주세요.'); refused.status = 429; answer.reject(refused);`);
   await g.run('second');
+  g.run('growPumpkins(0)');
   assert.equal(g.run('S.players.me.pumpkins'), 1, 'a refused harvest is taken back');
-  assert.equal(g.run('S.pumpkins.length'), 1, 'and the pumpkin returns');
+  assert.equal(g.run('JSON.stringify(S.pumpkins.map((p) => p.id))'), '["ripe2"]', 'and the pumpkin returns');
   assert.match(g.elements.get('toast').textContent, /조금 뒤 다른 호박/);
 });
 
@@ -1146,4 +1154,43 @@ test('the cauldron bubbles while brewing', async () => {
   g.run(`say = async () => {}; Math.random = () => 0.5; S.players.me.pumpkins = 60; S.players.me.basket = true;`);
   await g.finish(g.run('brew()'));
   assert.deepEqual(JSON.parse(g.run('JSON.stringify(played)')), ['bubble', 'bubble', 'bubble']);
+});
+
+test('the admin special-accounts view lists the numbers and flags and opens the account on request', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.isOwner = true; openModal('admin');
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } } };
+    var urls = []; accountRequest = async (url) => { urls.push(url); return url.includes('view=watch')
+      ? { users: [{ id: 'b'.repeat(32), nick: '<봇>', banned: false, tries: 24, wins: 23, winRate: 23 / 24, avgWinMs: 4550, fastestWinMs: 4000,
+          candy: { knocks: 23, brews: 5, decor: -2, lost: -1, net: 25 }, harvests: 30, activeHours: 24,
+          topSource: { id: 'a'.repeat(32), nick: '부계정', wins: 12, share: .5 }, flags: ['성공률 높음', '오래 쉬지 않음'] }] }
+      : { users: [] }; };
+    var watched = loadAdminWatch();`);
+  await g.run('watched');
+  const html = g.elements.get('ad-results').innerHTML;
+  assert.equal(g.run('urls[0]'), '/api/game/admin?view=watch');
+  assert.match(html, /&lt;봇&gt;/);
+  assert.match(html, /성공률 96%/);
+  assert.match(html, /최단 4\.0초/);
+  assert.match(html, /사탕 \+25 \(노크 \+23, 연금술 \+5, 장식 -2, 털림 -1\)/);
+  assert.match(html, /부계정에게서 12번/);
+  assert.match(html, /<small class="flag">성공률 높음<\/small>/);
+  g.run(`var opened = inspectAdminTarget('${'b'.repeat(32)}')`);
+  await g.run('opened');
+  assert.equal(g.run('urls[1]'), `/api/game/admin?q=${'b'.repeat(32)}`);
+});
+
+test('a ban during play disconnects and returns to the login screen with the reason', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; var calls = []; crypto = { randomUUID: () => 'banned-request' };
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } }, authSdk: { signOut: async () => { calls.push('signout'); } },
+      dispose: async () => { calls.push('dispose'); } };
+    fetch = async () => ({ ok: false, status: 403, json: async () => ({ error: 'account-banned', message: '이 계정은 게임 이용이 제한됐어요. 운영자에게 문의해 주세요.' }) });
+    var request = gameRequest({ type: 'harvest', pumpkin: 'p1' }).catch((error) => error.status);`);
+  assert.equal(await g.run('request'), 403);
+  for (let i = 0; i < 5; i++) await new Promise(setImmediate);
+  assert.equal(g.run('JSON.stringify(calls)'), '["dispose","signout"]');
+  assert.equal(g.run('S.me'), null);
+  assert.equal(g.elements.get('auth').hidden, false);
+  assert.match(g.elements.get('auth-error').textContent, /이용이 제한/);
 });
