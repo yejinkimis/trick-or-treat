@@ -24,6 +24,10 @@ service cloud.firestore {
       allow read: if activePlayer();
       allow write: if false;
     }
+    match /gamePrivate/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
     match /profiles/{uid} {
       allow read: if request.auth != null && request.auth.uid == uid;
       allow create, update, delete: if false;

@@ -4,7 +4,6 @@ const { randomUUID } = require('node:crypto');
 const { signup, login, updateProfile } = require('../server/auth-service.cjs');
 const { FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
-const { FieldValue } = require('firebase-admin/firestore');
 const { searchUsers, watchAccounts, moderate } = require('../server/admin-service.cjs');
 after(() => services().database.goOffline());
 
@@ -32,7 +31,7 @@ test('admin moderation enforces permissions, bans existing sessions, hides house
   await moderate(admin.authorization, { type: 'delete-chat', target: visitor.uid, chatId: 'new' });
   assert.equal((await chatRef.get()).exists(), false);
   await moderate(admin.authorization, { type: 'house', target: host.uid, hidden: true });
-  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
   await assert.rejects(act(visitor, { type: 'knock-start', host: host.uid }), /집을 찾을/);
   await moderate(admin.authorization, { type: 'house', target: host.uid, hidden: false });
   await moderate(admin.authorization, { type: 'ban', target: visitor.uid, reason: '도배' });
@@ -67,8 +66,9 @@ async function player(prefix) {
 }
 const act = (p, data) => action(p.authorization, { requestId: randomUUID(), ...data });
 const saved = async (p) => (await services().db.collection('gamePlayers').doc(p.uid).get()).data();
+const secret = async (p) => (await services().db.collection('gamePrivate').doc(p.uid).get()).data();
 const harvest = async (p, extra = {}) => {
-  const ripe = ((await saved(p)).field || []).find((pumpkin) => pumpkin.at <= Date.now());
+  const ripe = ((await secret(p)).field || []).find((pumpkin) => pumpkin.at <= Date.now());
   return act(p, { type: 'harvest', pumpkin: ripe?.id, ...extra });
 };
 
@@ -85,7 +85,7 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   await assert.rejects(act(first, { type: 'event-start' }), (error) => error.status === 403);
   const start = await act(owner, { type: 'event-start' });
   await assert.rejects(act(first, { type: 'knock-start', host: host.uid }), /바구니/);
-  for (const p of [first, second]) await services().db.collection('gamePlayers').doc(p.uid).update({ pumpkins: 3 });
+  for (const p of [first, second]) await services().db.collection('gamePlayers').doc(p.uid).update({ basket: true });
   await services().db.collection('gamePlayers').doc(host.uid).update({ round: start.event.id, candies: 1 });
   const contenders = [first, second];
   const starts = await Promise.allSettled(contenders.map((p) => act(p, { type: 'knock-start', host: host.uid })));
@@ -170,7 +170,7 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
 test('event stop and a winning candy transfer are serialized at the round boundary', async () => {
   const [owner, visitor, host] = await Promise.all(['운영', '도전', '집'].map(player));
   process.env.GAME_ADMIN_UIDS = owner.uid;
-  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
   const started = await act(owner, { type: 'event-start' });
   const attempt = await winningChallenge(visitor, host);
 
@@ -203,7 +203,7 @@ test('two tabs cannot start separate challenges or double-settle while the host 
   process.env.GAME_ADMIN_UIDS = owner.uid;
   const { event } = await act(owner, { type: 'event-start' });
   const db = services().db;
-  await db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
   const hosts = [firstHost, secondHost];
   const starts = await Promise.allSettled(hosts.map((host) => act(visitor, { type: 'knock-start', host: host.uid })));
   assert.equal(starts.filter((r) => r.status === 'fulfilled').length, 1);
@@ -244,7 +244,7 @@ test('a replaced or previous-round challenge cannot release another challenger h
   const [owner, first, second, host] = await Promise.all(['관리', '이전', '다음', '대상'].map(player));
   process.env.GAME_ADMIN_UIDS = owner.uid;
   await act(owner, { type: 'event-start' });
-  for (const p of [first, second]) await services().db.collection('gamePlayers').doc(p.uid).update({ pumpkins: 3 });
+  for (const p of [first, second]) await services().db.collection('gamePlayers').doc(p.uid).update({ basket: true });
   const prior = await winningChallenge(first, host);
   const lockRef = services().db.collection('gameHouseLocks').doc(host.uid);
   await lockRef.update({ createdAt: Date.now() - 60 * 60 * 1000 - 1, heartbeatAt: Date.now() - 60_001 });
@@ -263,11 +263,12 @@ test('a replaced or previous-round challenge cannot release another challenger h
 });
 
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {
-  const p = await player('규');
+  const [p, other] = await Promise.all([player('규'), player('남')]);
   const base = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-trick-or-treat/databases/(default)/documents`;
   for (const [path, method, expected] of [
     [`gamePlayers/${p.uid}`, 'GET', 200], [`gamePlayers/${p.uid}`, 'DELETE', 403],
     [`gameChallenges/${p.uid}`, 'GET', 403], [`gameHouseLocks/${p.uid}`, 'GET', 403], [`gameRequests/anything`, 'GET', 403],
+    [`gamePrivate/${p.uid}`, 'GET', 200], [`gamePrivate/${other.uid}`, 'GET', 403], [`gamePrivate/${p.uid}`, 'PATCH', 403],
     [`villages/${(await saved(p)).village}`, 'GET', 200], ['villages/1', 'DELETE', 403], ['game/villages', 'GET', 403],
   ]) {
     const result = await fetch(`${base}/${path}`, { method, headers: { authorization: `Bearer ${p.token}` } });
@@ -322,7 +323,7 @@ test('costumed players fill villages of eight in order and visits across village
   const visitor = made.at(-1), host = made[0];
   process.env.GAME_ADMIN_UIDS = host.uid;
   await act(host, { type: 'event-start' });
-  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
   await act(visitor, { type: 'note', host: host.uid, text: '옆 마을에서 왔어요' });
   const finish = await act(visitor, { type: 'knock-finish', ...await winningChallenge(visitor, host) });
   assert.equal(finish.entry.r, 'win');
@@ -350,7 +351,7 @@ test('a player gets a village when picking a costume after joining', async () =>
 test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforces the cooldown', async () => {
   await services().db.doc('game/event').delete();
   const [brewer, host] = await Promise.all(['솥', '이웃'].map(player));
-  const ref = services().db.collection('gamePlayers').doc(brewer.uid);
+  const ref = services().db.collection('gamePrivate').doc(brewer.uid);
   for (let i = 0; i < 3; i++) {
     await harvest(brewer);
     await ref.update({ harvestAt: 0 });
@@ -365,7 +366,7 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   assert.ok([0, 2, 5, 10].includes(result.gain));
   assert.equal(result.candies, 10 + result.gain);
   const after = await saved(brewer);
-  assert.equal(after.pumpkins, 25);
+  assert.equal((await secret(brewer)).pumpkins, 25);
   assert.equal(after.basket, true);
   assert.equal(after.brews.at(-1).n, result.gain);
   await ref.update({ pumpkins: 60 });
@@ -407,8 +408,8 @@ test('the leaderboard is computed once per three minutes, shared through the CDN
 test('only pumpkins the server planted and grew can be harvested, each once, and a new one regrows later', async () => {
   await services().db.doc('game/event').delete();
   const farmer = await player('밭');
-  const ref = services().db.collection('gamePlayers').doc(farmer.uid);
-  const field = (await saved(farmer)).field;
+  const ref = services().db.collection('gamePrivate').doc(farmer.uid);
+  const field = (await secret(farmer)).field;
   assert.equal(field.length, FIELD_SIZE);
   assert.ok(field.every((p) => /^[a-f0-9]{12}$/.test(p.id) && Number.isInteger(p.s) && p.at <= Date.now()));
   await assert.rejects(act(farmer, { type: 'harvest' }), (e) => e.status === 409);
@@ -423,24 +424,27 @@ test('only pumpkins the server planted and grew can be harvested, each once, and
   await ref.update({ harvestAt: 0 });
   await assert.rejects(act(farmer, { type: 'harvest', pumpkin: picked }), (e) => e.status === 409, 'the same pumpkin cannot be picked twice');
   await assert.rejects(act(farmer, { type: 'harvest', pumpkin: regrown.id }), /자라는 중/);
-  await ref.update({ field: (await saved(farmer)).field.map((p) => ({ ...p, at: 0 })) });
+  await ref.update({ field: (await secret(farmer)).field.map((p) => ({ ...p, at: 0 })) });
   await act(farmer, { type: 'harvest', pumpkin: regrown.id });
-  assert.equal((await saved(farmer)).pumpkins, 2);
+  assert.equal((await secret(farmer)).pumpkins, 2);
+  assert.equal((await saved(farmer)).field, undefined, 'the field never touches the public document');
 });
 
-test('players from before the planted field get one on their next session', async () => {
+test('players from before the private document keep their pumpkins and get a field on their next session', async () => {
   const old = await player('옛');
-  const ref = services().db.collection('gamePlayers').doc(old.uid);
-  await ref.update({ field: FieldValue.delete() });
+  await services().db.collection('gamePrivate').doc(old.uid).delete();
+  await services().db.collection('gamePlayers').doc(old.uid).update({ pumpkins: 7, basket: true });
   await session(old.authorization);
-  assert.equal((await saved(old)).field.length, FIELD_SIZE);
+  const mine = await secret(old);
+  assert.equal(mine.pumpkins, 7);
+  assert.equal(mine.field.length, FIELD_SIZE);
 });
 
 test('the admin watch list shows who won from whom, how fast, and stays admin-only', async () => {
   await services().db.doc('game/event').delete();
   const [admin, visitor, host] = await Promise.all(['감', '봇', '부'].map(player));
   process.env.GAME_ADMIN_UIDS = admin.uid;
-  await services().db.collection('gamePlayers').doc(visitor.uid).update({ pumpkins: 3 });
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
   await harvest(visitor);
   await act(visitor, { type: 'knock-finish', ...(await winningChallenge(visitor, host)) });
   await assert.rejects(watchAccounts(visitor.authorization), (e) => e.status === 403);
@@ -499,7 +503,7 @@ test('a ban reaches people already connected: open Realtime Database listeners a
 test('heartbeats alone cannot keep a house locked past ninety seconds, and a timed-out game settles as a loss', async () => {
   await services().db.doc('game/event').delete();
   const [alt, rival, host] = await Promise.all(['부캐', '도전', '부자'].map(player));
-  for (const p of [alt, rival]) await services().db.collection('gamePlayers').doc(p.uid).update({ pumpkins: 3 });
+  for (const p of [alt, rival]) await services().db.collection('gamePlayers').doc(p.uid).update({ basket: true });
   const { challenge } = await act(alt, { type: 'knock-start', host: host.uid });
   await act(alt, { type: 'knock-heartbeat', challengeId: challenge.id });
   await assert.rejects(act(rival, { type: 'knock-start', host: host.uid }), /다른 사람이 도전 중/);
@@ -520,4 +524,21 @@ test('heartbeats alone cannot keep a house locked past ninety seconds, and a tim
   assert.equal(settled.entry.r, 'lose');
   assert.equal(settled.candies, 10);
   assert.equal((await lockRef.get()).exists, false);
+});
+
+test('a harvest writes only the private document, and retries of the same request are answered once', async () => {
+  await services().db.doc('game/event').delete();
+  const farmer = await player('절약');
+  await harvest(farmer);
+  const publicBefore = (await services().db.collection('gamePlayers').doc(farmer.uid).get()).updateTime;
+  await services().db.collection('gamePrivate').doc(farmer.uid).update({ harvestAt: 0 });
+  const ripe = (await secret(farmer)).field.find((p) => p.at <= Date.now());
+  const requestId = randomUUID();
+  const first = await action(farmer.authorization, { requestId, type: 'harvest', pumpkin: ripe.id });
+  const again = await action(farmer.authorization, { requestId, type: 'harvest', pumpkin: ripe.id });
+  assert.deepEqual(again, first);
+  assert.equal((await secret(farmer)).pumpkins, 2);
+  const publicAfter = (await services().db.collection('gamePlayers').doc(farmer.uid).get()).updateTime;
+  assert.ok(publicAfter.isEqual(publicBefore), 'neighbors subscribed to the public document are not woken up');
+  assert.ok((await secret(farmer)).activity.some((item) => item.type === 'harvest'));
 });

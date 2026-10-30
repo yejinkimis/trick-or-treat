@@ -1209,3 +1209,15 @@ test('the candy game ends as a timeout at ninety seconds', async () => {
   assert.equal(attempt.won, false);
   assert.equal(attempt.elapsedMs, 90000);
 });
+
+test('my pumpkins and field come from my private document, not the stale public one', () => {
+  const { run } = game();
+  run(`S.me = 'u1'; S.firebasePlayers = {};
+    S.ownPlayer = { ...blankPlayer(), nick: '나', costume: 'cat', pumpkins: 2, basket: true };
+    S.ownPrivate = { pumpkins: 41, field: [{ id: 'p1', s: 3, at: 0 }] };
+    applyFirebasePlayers();`);
+  assert.equal(run('S.players.u1.pumpkins'), 41);
+  assert.equal(run('S.players.u1.field[0].id'), 'p1');
+  run(`S.ownPrivate = null; applyFirebasePlayers();`);
+  assert.equal(run('S.players.u1.pumpkins'), 2, 'before the private document arrives the public value is used');
+});

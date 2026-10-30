@@ -3109,7 +3109,9 @@ async function saveMural() {
 
 function applyFirebasePlayers() {
   const round = S.event?.id || 'practice';
-  const source = { ...S.strangers, ...S.firebasePlayers, ...(S.ownPlayer ? { [S.me]: { ...S.ownPlayer, ...unsavedOwnFields() } } : {}) };
+  // 내 호박 수와 밭은 나만 읽는 비공개 문서에서 온다. 공개 문서의 호박 수는 예전 값일 수 있다.
+  const own = S.ownPlayer && { ...S.ownPlayer, ...(S.ownPrivate ? { pumpkins: S.ownPrivate.pumpkins, field: S.ownPrivate.field } : {}), ...unsavedOwnFields() };
+  const source = { ...S.strangers, ...S.firebasePlayers, ...(own ? { [S.me]: own } : {}) };
   for (const p of Object.values(source)) for (const g of p.guests || []) if (g.nick && !S.names[g.v]) S.names[g.v] = cleanNick(g.nick);
   const next = Object.fromEntries(Object.entries(source).map(([uid, player]) => [uid, {
     ...player, decor: Object.fromEntries(Object.entries(player.decor || {}).filter(([, item]) => item.round === round).map(([key, item]) => [key, item.at])),
@@ -3134,7 +3136,7 @@ async function connectFirebaseGame(uid) {
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
-  Object.assign(S, { ownPlayer: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [] });
+  Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [] });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
   const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
@@ -3285,6 +3287,11 @@ async function connectFirebaseGame(uid) {
         if (home && !placed) { placed = true; if (home !== S.village) void travelTo(home); }
         applyFirebasePlayers(); notifyKnocks(); resolve();
       }, (error) => { S.readOnly = true; toast('내 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
+      new Promise((resolve) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'gamePrivate', uid), { includeMetadataChanges: true }, (snapshot) => {
+        if (snapshot.metadata.fromCache) return;
+        S.ownPrivate = snapshot.exists() ? snapshot.data() : null;
+        applyFirebasePlayers(); resolve();
+      }, () => { S.ownPrivate = null; resolve(); }))),
       new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'game/event'), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         const previous = S.event?.id;

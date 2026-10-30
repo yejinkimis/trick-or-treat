@@ -24,12 +24,13 @@ async function searchUsers(authorization, query) {
     .filter((p) => p.id.toLowerCase().includes(q) || String(p.nick || '').toLocaleLowerCase('ko').includes(q))
     .slice(0, 20);
   return { users: await Promise.all(matches.map(async (p) => {
-    const [ban, activities] = await Promise.all([
+    const [ban, privateDoc] = await Promise.all([
       db.collection('gameBans').doc(p.id).get(),
-      db.collection('gameActivity').doc(p.id).collection('entries').orderBy('at', 'desc').limit(30).get(),
+      db.collection('gamePrivate').doc(p.id).get(),
     ]);
     const chatSnapshot = await services().database.ref(`chat/${p.id}`).get();
-    const activity = activities.docs.map((doc) => doc.data());
+    const mine = privateDoc.exists ? privateDoc.data() : {};
+    const activity = [...(mine.activity || [])];
     for (const item of p.knocks || []) activity.push({ uid: p.id, type: 'knock-finish', host: item.h, at: item.at, outcome: item.r, moved: item.moved, level: item.level });
     for (const item of p.brews || []) activity.push({ uid: p.id, type: 'brew', at: item.at });
     for (const item of p.notes || []) activity.push({ uid: p.id, type: 'note', host: item.h, at: item.at });
@@ -37,7 +38,7 @@ async function searchUsers(authorization, query) {
       .sort((a, b) => b.at - a.at).slice(0, 30);
     return {
       id: p.id, nick: p.nick || '이름 없음', costume: p.costume || null, village: p.village || null,
-      candies: p.round === round ? p.candies : 10, pumpkins: Number(p.pumpkins) || 0,
+      candies: p.round === round ? p.candies : 10, pumpkins: Number(mine.pumpkins ?? p.pumpkins) || 0,
       rankExcluded: p.rankExcluded === true, houseHidden: p.houseHidden === true,
       banned: ban.exists && ban.data().banned === true,
       banReason: ban.exists ? ban.data().reason || '' : '', activity: recentActivity,
@@ -49,8 +50,11 @@ async function searchUsers(authorization, query) {
 
 async function watchAccounts(authorization) {
   await requireAdmin(authorization);
-  const snap = await services().db.collection('gamePlayers').get();
-  return { users: watchList(snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })), { now: Date.now(), prices: PRICES }) };
+  const { db } = services();
+  const [players, privates] = await Promise.all([db.collection('gamePlayers').get(), db.collection('gamePrivate').get()]);
+  const harvestHoursOf = new Map(privates.docs.map((doc) => [doc.id, doc.data().harvestHours]));
+  const merged = players.docs.map((doc) => ({ id: doc.id, ...doc.data(), harvestHours: harvestHoursOf.get(doc.id) || doc.data().harvestHours }));
+  return { users: watchList(merged, { now: Date.now(), prices: PRICES }) };
 }
 
 async function moderate(authorization, input) {
