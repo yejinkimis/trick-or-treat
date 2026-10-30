@@ -103,7 +103,7 @@ test('Firebase rankings use server balances and reset to ten for a new event', (
 
 test('candy challenge renders the server difficulty and moves the catch bar while held', () => {
   const g = game();
-  g.run(`candyGame({ level: 3, duration: 18000, path: [{t:0,y:.5},{t:18000,y:.5}] })`);
+  g.run(`candyGame({ level: 3, path: [{t:0,y:.5},{t:18000,y:.5}] })`);
   assert.equal(g.elements.get('timing').hidden, false);
   assert.match(g.elements.get('t-level').textContent, /난이도 3단계/);
   assert.equal(g.elements.get('t-bar').style.height, '25%');
@@ -240,16 +240,16 @@ test('knock prerequisites and ended event disable the action', () => {
   assert.match(g.elements.get('act-sub').textContent, /문이 잠겼어요/);
 });
 
-test('candy challenge difficulty has five stages and an eighteen-second limit', () => {
+test('candy challenge difficulty has five stages and keeps generating candy movement without a timer', () => {
   const g = game();
   assert.equal(g.run('CANDY_MAX_LEVEL'), 5);
-  assert.equal(g.run('CANDY_GAME_MS'), 18000);
-  assert.equal(g.run('localCandyPath(5).at(-1).t'), 18000);
+  assert.equal(g.run('typeof CANDY_GAME_MS'), 'undefined');
+  assert.equal(g.run('Number.isFinite(createCandyPathLookup(5, 42)(20000))'), true);
 });
 
 test('holding the bar until the catch meter fills succeeds', async () => {
   const g = game();
-  const result = g.run('candyGame({ level: 1, duration: 18000, path: [{t:0,y:.05},{t:18000,y:.05}] })');
+  const result = g.run('candyGame({ level: 1, path: [{t:0,y:.05},{t:18000,y:.05}] })');
   g.run('S.candyControl(true)');
   for (let now = 20; now <= 7000 && g.run('S.candyControl !== null'); now += 20) {
     g.setNow(now);
@@ -262,7 +262,7 @@ test('holding the bar until the catch meter fills succeeds', async () => {
 
 test('letting the progress bar empty fails without a candy transfer', async () => {
   const g = game();
-  const result = g.run('candyGame({ level: 1, duration: 18000, path: [{t:0,y:.05},{t:18000,y:.05}] })');
+  const result = g.run('candyGame({ level: 1, path: [{t:0,y:.05},{t:18000,y:.05}] })');
   for (let now = 20; now <= 4000 && g.run('S.candyControl !== null'); now += 20) {
     g.setNow(now);
     [...g.frames.values()].at(-1)?.();

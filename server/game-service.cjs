@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
-const { DURATION_MS, MAX_LEVEL, createCandyPath, evaluateCandyChallenge } = require('./candy-challenge.cjs');
+const { MAX_LEVEL, STALE_CHALLENGE_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 const roundOf = (event) => event?.id || 'practice';
@@ -98,23 +98,24 @@ async function action(authorization, input) {
         if (!host.exists || !host.data().costume) fail('집을 찾을 수 없어요.');
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
-        if (prior.round === round && !prior.used && prior.expiresAt > now) {
-          fail(`아까 노크가 아직 정리 중이에요. ${Math.ceil((prior.expiresAt - now) / 1000)}초 뒤 다시 두드릴 수 있어요.`, 429);
+        const priorAge = now - (prior.createdAt || 0);
+        const priorIsActive = prior.expiresAt ? prior.expiresAt > now : priorAge < STALE_CHALLENGE_MS;
+        if (prior.round === round && !prior.used && priorIsActive) {
+          fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
         }
-        const sameTarget = prior.streakHost === input.host && prior.streakRound === round;
-        const level = sameTarget ? Math.min(MAX_LEVEL, (prior.streakCount || 1) + 1) : 1;
+        const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
+          ? { ...prior.nextLevelByHost } : {};
+        const level = Math.min(MAX_LEVEL, Math.max(1, Number(nextLevelByHost[input.host]) || 1));
         const challenge = {
-          id: randomUUID(), host: input.host, round, createdAt: now, expiresAt: now + 30000, used: false,
-          duration: DURATION_MS, level, path: createCandyPath(level),
-          streakHost: input.host, streakRound: round, streakCount: level,
+          id: randomUUID(), host: input.host, round, createdAt: now, used: false,
+          level, seed: createCandySeed(), nextLevelByHost, streakRound: round,
         };
         tx.set(challengeRef, challenge);
-        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, expiresAt: challenge.expiresAt,
-          duration: challenge.duration, level, path: challenge.path } };
+        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed } };
       } else if (type === 'knock-finish') {
         const challengeDoc = await tx.get(challengeRef);
         const challenge = challengeDoc.exists ? challengeDoc.data() : null;
-        if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round || now > challenge.expiresAt) fail('노크가 만료됐어요. 다시 시도해 주세요.');
+        if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round) fail('도전이 끝났거나 다시 시작됐어요. 다시 시도해 주세요.');
         const hostRef = db.collection('gamePlayers').doc(challenge.host);
         const hostDoc = await tx.get(hostRef);
         if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
@@ -124,12 +125,16 @@ async function action(authorization, input) {
         const win = outcome.won;
         const hostCount = balance(hostDoc.data(), event);
         const moved = win && hostCount > 0;
+        const nextLevelByHost = challenge.streakRound === round && challenge.nextLevelByHost
+          ? { ...challenge.nextLevelByHost } : {};
+        if (win) nextLevelByHost[challenge.host] = Math.min(MAX_LEVEL, challenge.level + 1);
+        else delete nextLevelByHost[challenge.host];
         const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level };
         const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now };
         if (win) playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
         tx.update(playerRef, playerUpdate);
         if (moved) tx.update(hostRef, { round, candies: hostCount - 1 });
-        tx.update(challengeRef, { used: true });
+        tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
       } else fail('지원하지 않는 행동이에요.');
     }

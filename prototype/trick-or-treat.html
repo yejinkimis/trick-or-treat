@@ -255,7 +255,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <div class="field">
         <span class="lab">사탕을 주고받는 경쟁 규칙</span>
-        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로예요. 같은 집에 연속 도전할수록 사탕이 더 빠르고 불규칙하게 움직이고, 포획 바가 좁아져요.</span>
+        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로예요. 같은 집에서 이기면 다음 도전이 최대 5단계까지 어려워지고, 그 집에서 실패하면 1단계로 돌아가요. 다른 집 난이도는 따로 기억해요.</span>
       </div>
       <div class="field">
         <span class="lab">뿅망치 맞으면 당하는 장난</span>
@@ -435,7 +435,8 @@ const ROOF = [null, '#f28a2e', '#7a4bb8', '#5fae3c', '#d8343a', '#4a4058'];
 const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
 const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000;
-const CANDY_GAME_MS = 18000, CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5;
+const CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5, CANDY_MAX_INPUTS = 1000;
+const CANDY_BAR_UP_SPEED = .72, CANDY_BAR_DOWN_SPEED = .82, CANDY_BAR_ACCELERATION = 2.6, CANDY_BAR_BRAKING = 8;
 const DECOR = {
   lantern: { name: '호박등', price: 2, icon: 'lantern', line: '문 옆에서 빛나는 호박' },
   web: { name: '거미줄', price: 2, icon: 'web', line: '지붕 모서리에 거미줄' },
@@ -545,7 +546,7 @@ const S = {
   mode: 'loading', db: null, user: null, room: null, me: null, players: {}, names: {},
   account: null, accountProfile: null,
   readOnly: false, busy: false, guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null,
-  candyControl: null, localKnockStreak: { host: null, round: null, count: 0 },
+  candyControl: null, localKnockStreaks: { challenger: null, round: null, byHost: {} },
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
   pumpkins: [], nearPumpkin: null, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
@@ -1703,18 +1704,24 @@ function shake() {
   setTimeout(() => stage.classList.remove('fx-shake'), 1000);
 }
 
-function localCandyPath(level) {
+function createCandyPathLookup(level, seed) {
   const stage = clamp(level, 1, CANDY_MAX_LEVEL);
   const minSegment = 880 - (stage - 1) * 120, maxSegment = 1320 - (stage - 1) * 130;
-  const point = () => .08 + Math.random() * .84;
+  const random = rng(seed);
+  const point = () => .08 + random() * .84;
   const path = [{ t: 0, y: point() }];
-  let time = 0;
-  while (time < CANDY_GAME_MS) {
-    time = Math.min(CANDY_GAME_MS, time + minSegment + Math.random() * (maxSegment - minSegment));
-    path.push({ t: Math.round(time / CANDY_STEP_MS) * CANDY_STEP_MS, y: point() });
-  }
-  path[path.length - 1].t = CANDY_GAME_MS;
-  return path;
+  let cursor = 1;
+  return (time) => {
+    while (path[path.length - 1].t <= time) {
+      const previous = path[path.length - 1];
+      const segment = minSegment + Math.floor(random() * (maxSegment - minSegment + 1));
+      path.push({ t: previous.t + segment, y: point() });
+    }
+    while (cursor < path.length - 1 && time > path[cursor].t) cursor++;
+    const previous = path[cursor - 1], next = path[cursor];
+    const progress = (time - previous.t) / Math.max(1, next.t - previous.t);
+    return previous.y + (next.y - previous.y) * progress;
+  };
 }
 
 function candyYAt(path, time) {
@@ -1728,27 +1735,38 @@ function candyYAt(path, time) {
   return path[path.length - 1].y;
 }
 
+function encodeCandyInputs(inputs) {
+  const packed = [];
+  let previousTick = 0;
+  for (const input of inputs) {
+    const tick = input.t / CANDY_STEP_MS;
+    packed.push(tick - previousTick, input.down ? 1 : 0);
+    previousTick = tick;
+  }
+  return packed;
+}
+
 function candyGame(challenge) {
   return new Promise((done) => {
     const box = $('#timing'), track = $('#t-track'), bar = $('#t-bar'), candy = $('#t-candy');
     const meter = $('#catch-meter'), meterFill = $('#t-progress'), result = $('#t-result');
     const level = clamp(challenge?.level || 1, 1, CANDY_MAX_LEVEL);
-    const duration = challenge?.duration || CANDY_GAME_MS;
-    const path = challenge?.path || localCandyPath(level);
+    const currentCandy = challenge?.path
+      ? (time) => candyYAt(challenge.path, time)
+      : createCandyPathLookup(level, challenge?.seed ?? Math.floor(Math.random() * 0x100000000));
     const barHeight = .30 - (level - 1) * .025, stepSeconds = CANDY_STEP_MS / 1000;
     const gain = .12 - (level - 1) * .004;
     let barY = (1 - barHeight) / 2, velocity = 0, progress = .5;
     let held = false, wantedHeld = false, inputIndex = 0, simAt = 0, raf = 0, finished = false;
     const inputs = [];
     const start = performance.now();
-    const currentCandy = (time) => candyYAt(path, time);
 
     function setHeld(next) {
       if (finished || next === wantedHeld) return;
       const rounded = Math.ceil(Math.max(0, performance.now() - start) / CANDY_STEP_MS) * CANDY_STEP_MS;
       const previous = inputs[inputs.length - 1];
       const at = Math.max(simAt + CANDY_STEP_MS, rounded, previous ? previous.t + 60 : CANDY_STEP_MS);
-      if (at > duration || inputs.length >= 240) return;
+      if (inputs.length >= CANDY_MAX_INPUTS) return;
       wantedHeld = next;
       inputs.push({ t: at, down: next });
     }
@@ -1758,7 +1776,11 @@ function candyGame(challenge) {
         held = inputs[inputIndex].down;
         inputIndex++;
       }
-      velocity = clamp(velocity + (held ? -3.8 : 4.6) * stepSeconds, -1.7, 1.7);
+      const targetVelocity = held ? -CANDY_BAR_UP_SPEED : CANDY_BAR_DOWN_SPEED;
+      const reversing = velocity !== 0 && Math.sign(velocity) !== Math.sign(targetVelocity);
+      const acceleration = reversing ? CANDY_BAR_BRAKING : CANDY_BAR_ACCELERATION;
+      const velocityChange = acceleration * stepSeconds;
+      velocity += clamp(targetVelocity - velocity, -velocityChange, velocityChange);
       barY += velocity * stepSeconds;
       if (barY < 0) { barY = 0; velocity = Math.max(0, velocity); }
       if (barY > 1 - barHeight) { barY = 1 - barHeight; velocity = Math.min(0, velocity); }
@@ -1782,7 +1804,7 @@ function candyGame(challenge) {
       finished = true;
       cancelAnimationFrame(raf);
       S.candyControl = null;
-      const trace = inputs.filter((input) => input.t <= simAt);
+      const trace = encodeCandyInputs(inputs.filter((input) => input.t <= simAt));
       box.classList.add(won ? 'hit' : 'miss');
       result.className = `timing-result ${won ? 'hit' : 'miss'}`;
       result.textContent = won ? '잡았다!' : '놓쳤어!';
@@ -1793,7 +1815,7 @@ function candyGame(challenge) {
     }
 
     function loop() {
-      const target = Math.min(duration, Math.floor((performance.now() - start) / CANDY_STEP_MS) * CANDY_STEP_MS);
+      const target = Math.floor((performance.now() - start) / CANDY_STEP_MS) * CANDY_STEP_MS;
       let outcome = null;
       while (simAt + CANDY_STEP_MS <= target && outcome === null) {
         simAt += CANDY_STEP_MS;
@@ -1801,12 +1823,11 @@ function candyGame(challenge) {
       }
       draw();
       if (outcome !== null) { finish(outcome); return; }
-      if (simAt >= duration) { finish(false); return; }
       raf = requestAnimationFrame(loop);
     }
 
     box.className = 'timing px';
-    $('#t-level').textContent = `난이도 ${level}단계 · ${duration / 1000}초 안에 잡으세요`;
+    $('#t-level').textContent = `난이도 ${level}단계`;
     candy.src = spriteUrl('candy', 2);
     result.className = 'timing-result';
     result.textContent = '';
@@ -1840,12 +1861,13 @@ async function knock(slot) {
   let hit, entry;
   try {
     const round = S.event?.id || 'practice';
-    const localStreak = S.localKnockStreak;
-    const localLevel = localStreak.host === id && localStreak.round === round
-      ? Math.min(CANDY_MAX_LEVEL, localStreak.count + 1) : 1;
+    if (S.localKnockStreaks.challenger !== S.me || S.localKnockStreaks.round !== round) {
+      S.localKnockStreaks = { challenger: S.me, round, byHost: {} };
+    }
+    const localLevel = Math.min(CANDY_MAX_LEVEL, Number(S.localKnockStreaks.byHost[id]) || 1);
     const challenge = S.mode === 'firebase'
       ? (await gameRequest({ type: 'knock-start', host: id })).challenge
-      : { level: localLevel, duration: CANDY_GAME_MS, path: localCandyPath(localLevel) };
+      : { level: localLevel, seed: Math.floor(Math.random() * 0x100000000) };
     const attempt = await candyGame(challenge);
     hit = attempt.won;
     if (S.mode === 'firebase') {
@@ -1857,7 +1879,10 @@ async function knock(slot) {
       S.players[id] = { ...S.players[id], round, candies: result.hostCandies };
       render();
     } else {
-      S.localKnockStreak = { host: id, round, count: localLevel };
+      const byHost = { ...S.localKnockStreaks.byHost };
+      if (hit) byHost[id] = Math.min(CANDY_MAX_LEVEL, localLevel + 1);
+      else delete byHost[id];
+      S.localKnockStreaks = { challenger: S.me, round, byHost };
       const moved = hit && candiesOf(id) > 0;
       entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, moved, level: localLevel };
       if (hit) {
