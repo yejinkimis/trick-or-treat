@@ -239,6 +239,24 @@ test('three harvests update progress, unlock knocking, and restore from saved pl
   assert.equal(next.elements.get('quest').dataset.step, 'ended');
 });
 
+test('the next goal shows how close the cauldron is, when it is ready, and while it cools', () => {
+  const g = game(); g.players();
+  g.run(`S.players.me.basket = true; S.players.me.knocks = [{ r: 'lose' }]; S.players.me.pumpkins = 12; renderQuest()`);
+  const quest = g.elements.get('quest'), bar = g.elements.get('quest-progress'), detail = () => g.elements.get('quest-detail').textContent;
+  assert.equal(quest.dataset.step, 'compete');
+  assert.equal(quest.dataset.brew, 'filling');
+  assert.equal(bar.hidden, false);
+  assert.deepEqual([bar.max, bar.value], [30, 12]);
+  assert.match(detail(), /친구 집 도전: 성공하면 사탕 \+1\n연금술: 호박 30개를 광장 솥에 넣으면 사탕 최대\s5개\n호박 12\/30/);
+  g.run('S.players.me.pumpkins = 30; renderQuest()');
+  assert.equal(quest.dataset.brew, 'ready');
+  assert.equal(bar.hidden, true);
+  assert.match(detail(), /솥이 준비됐어요! 광장 솥으로 가세요/);
+  g.run('S.players.me.brewAt = Date.now(); renderQuest()');
+  assert.equal(quest.dataset.brew, 'cooling');
+  assert.match(detail(), /솥이 식는 중 · 10분 뒤/);
+});
+
 test('knock prerequisites and ended event disable the action', () => {
   const g = game(); g.players();
   g.run(`S.near = { owner: 'host' }; renderAction()`);
@@ -882,6 +900,7 @@ test('brewing spends thirty pumpkins, adds rolled candy, keeps the basket and co
   g.run(`globalThis.messages = []; say = async (who, text) => messages.push(text); Math.random = () => 0.5;
     S.players.me.pumpkins = 20; S.players.me.basket = true; S.nearCauldron = true; renderAction();`);
   assert.equal(g.elements.get('act-btn').disabled, true);
+  assert.equal(g.elements.get('act-sub').textContent, '호박 30개를 넣으면 꽝 · 사탕 +2 · 사탕 +5 중 하나');
   g.run('S.players.me.pumpkins = 60; renderAction()');
   assert.equal(g.elements.get('act-btn').disabled, false);
   assert.match(g.elements.get('act-title').textContent, /마녀 솥 · 호박 60\/30/);
@@ -1036,6 +1055,8 @@ test('the rank board shows the top three and my place, and the board and quest f
   press({ id: '', dataset: { fold: 'board' } });
   assert.equal(g.elements.get('board').classList.contains('folded'), false);
   assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3');
+  g.run(`const mode = S.mode; S.mode = 'firebase'; S.rankList = [{ id: 'me', n: 10, costume: 'pumpkin' }]; renderBoard(); S.mode = mode`);
+  assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3 (3분마다 갱신)');
   press({ id: '', dataset: { fold: 'quest' } });
   assert.equal(g.elements.get('quest').classList.contains('folded'), true);
   assert.match(g.elements.get('quest-label').textContent, /진행 중인 퀘스트 · 호박 바구니 만들기/);
