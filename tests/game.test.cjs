@@ -899,6 +899,24 @@ test('chat reaches every village but shows a bubble only for people in the same 
   assert.match(log, /<b>이웃<\/b>여기 안녕/);
 });
 
+test('the chat window keeps history in time order, pages older lines in, and filters to this village', () => {
+  const g = game(); village(g);
+  g.run(`onChat({ data: { id: 'c3', text: '셋', v: 1, at: 300 }, by: 'near', peer: 'near:tab' });
+    chatHistory.more = true;
+    addChat([{ id: 'c1', by: 'far', v: 2, text: '하나', at: 100 }, { id: 'c2', by: 'near', v: 1, text: '둘', at: 200 }, { id: 'c3', by: 'near', v: 1, text: '셋', at: 300 }], { older: true });`);
+  const log = () => g.elements.get('chatlog').innerHTML;
+  assert.equal(g.elements.get('chatbox').hidden, false);
+  assert.match(log(), /^<p class="more">위로 올리면 이전 채팅을 불러와요<\/p><p><b><small>\[구리마을\]<\/small> 먼집<\/b>하나<\/p><p><b>이웃<\/b>둘<\/p><p><b>이웃<\/b>셋<\/p>$/);
+  const press = (dataset) => g.run(`document.listeners.click({ target: { classList: { contains: () => false }, closest: () => (${JSON.stringify({ id: '', dataset })}) }, preventDefault() {} })`);
+  press({ chatTab: 'here' });
+  assert.doesNotMatch(log(), /하나/);
+  assert.match(log(), /둘.*셋/);
+  press({ chatTab: 'all' });
+  assert.match(log(), /하나/);
+  g.run(`toggleFold('chat')`);
+  assert.equal(g.elements.get('chatbox').classList.contains('folded'), true);
+});
+
 test('the village map lists villages top to bottom in sign order and travels to the chosen one', async () => {
   const g = game(); village(g);
   g.run(`S.online = [
