@@ -28,7 +28,7 @@ Root Directory는 저장소 루트로 둔다. `prototype`을 지정하면 루트
 | Output Directory | dist |
 | Production Branch | main |
 
-빌드·출력 경로는 `vercel.json`에도 지정되어 있다. 빌드는 원본 HTML을 `dist/index.html`로 복사하고, API는 저장소 루트의 `api/`에서 실행된다.
+빌드·출력 경로는 `vercel.json`에도 지정되어 있다. 빌드는 원본 HTML로 `dist/index.html`을 만들고, 분석 활성화 시 `dist/analytics.js`도 만든다. API는 저장소 루트의 `api/`에서 실행된다.
 
 ## 환경변수
 
@@ -49,6 +49,8 @@ Vercel Project Settings → Environment Variables에 등록한 뒤 다시 배포
 Web 설정은 공개 설정이고 `FIREBASE_SERVICE_ACCOUNT_JSON`은 서버 전용 비밀값이다. JSON 키는 Vercel 환경변수에서만 관리하며 Git이나 PR 본문에 올리지 않는다. `/api/firebase-config`는 이 비밀값을 반환하지 않는다.
 
 `FIREBASE_AUTH_EMULATOR_HOST`와 `FIRESTORE_EMULATOR_HOST`는 Vercel에 등록하지 않는다. Analytics measurementId는 게임에 필요하지 않다.
+
+PostHog를 쓰려면 Production 범위에 `POSTHOG_PROJECT_KEY=phc_…`와 `POSTHOG_HOST=https://us.i.posthog.com` (EU 프로젝트는 `https://eu.i.posthog.com`)을 추가하고 재배포한다. Preview와 로컬은 기본 비활성이다. 자세한 절차와 수집 범위는 [분석 설정](ANALYTICS.md)을 참고한다.
 
 ## Firebase 설정과 배포 확인
 

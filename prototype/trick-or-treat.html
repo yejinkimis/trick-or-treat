@@ -511,6 +511,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 <div class="toast px" id="toast" role="status" hidden></div>
 <p class="veil" id="veil" aria-live="polite"></p>
 
+<!-- POSTHOG_ANALYTICS -->
 <script>
 const PAL = {
   k: '#1c1424', w: '#f3eff8', g: '#c7bfd6', W: '#e4dcec', o: '#f28a2e', O: '#b85d16', G: '#7cc04a', d: '#3f7a2c',
@@ -714,6 +715,14 @@ const S = {
   village: null, villages: {}, rankList: null, online: [],
   adminUsers: [], adminSelected: null,
 };
+const analyticsCall = (method, ...args) => { try { return window.gameAnalytics?.[method]?.(...args); } catch { /* 분석 오류는 플레이를 막지 않는다. */ } };
+const track = (event, properties) => analyticsCall('capture', event, properties);
+analyticsCall('setContext', () => ({
+  game_mode: S.mode, round_id: S.event?.id || 'practice', round_state: eventState(),
+  village: S.village, is_admin: S.isOwner,
+}));
+const modalOpenedAt = new Map();
+let movementTracked = false;
 const MAP = { canvas: document.createElement('canvas'), tiles: [], rows: 0, slots: [], grass: [], sig: '' };
 const ghosts = new Map();
 
@@ -982,6 +991,7 @@ async function travelTo(village, arrive = atSpawn) {
   try {
     await wait(300);
     await S.room.enterVillage(village);
+    track('village_changed', { destination_village: village });
     render();
     Object.assign(S.pos, arrive(), { moving: false });
     presenceDirty = true;
@@ -1012,6 +1022,7 @@ async function goToHouse(id) {
 async function visitHouse(id) {
   closeModal('crew');
   if (!(await goToHouse(id))) toast('그 크루의 집을 찾지 못했어요.');
+  else track('house_visited');
 }
 // '우리 집'은 어디에 있든 먼저 내 집 문 앞으로 데려다 주고 집 창을 연다.
 async function goHome() {
@@ -1049,7 +1060,11 @@ function update(dt) {
   if (S.target && !moved) { S.stuck += dt; if (S.stuck > 0.25) S.target = null; } else S.stuck = 0;
   if (moved !== p.moving) presenceDirty = true;
   p.moving = moved;
-  if (moved) { p.walk += dt; presenceDirty = true; hideHint(); }
+  if (moved) {
+    p.walk += dt; presenceDirty = true; hideHint();
+    analyticsCall('activity');
+    if (!movementTracked) { movementTracked = true; track('movement_started'); }
+  }
   const row = Math.floor(p.y / T);
   if (MAP.gates && moved && !S.busy && (row <= 0 || row >= MAP.rows - 1)) void travel(row <= 0 ? -1 : 1);
   sendPresence();
@@ -1078,6 +1093,7 @@ function openChat() {
   if (folds.chat) toggleFold('chat');
   $('#chatbar').hidden = false;
   $('#chatbox').hidden = false;
+  track('chat_opened');
   keys.clear();
   $('#chat-in').focus();
 }
@@ -1091,8 +1107,10 @@ function sendChat() {
   $('#chat-in').value = '';
   closeChat();
   if (!text) return;
-  if (S.room) S.room.emit('chat', { text }).catch(() => toast('말이 전달되지 않았어요. 잠시 뒤 다시 해 보세요.'));
-  else onChat({ data: { text }, sameTab: true, by: S.me });
+  if (S.room) S.room.emit('chat', { text })
+    .then(() => track('chat_sent', { message_length: text.length }))
+    .catch(() => { track('action_failed', { action: 'chat', status: 0 }); toast('말이 전달되지 않았어요. 잠시 뒤 다시 해 보세요.'); });
+  else { onChat({ data: { text }, sameTab: true, by: S.me }); track('chat_sent', { message_length: text.length }); }
   botReply();
 }
 // 채팅은 모든 마을이 함께 보고, 말풍선은 같은 마을에 있는 사람 머리 위에만 띄운다.
@@ -1519,8 +1537,10 @@ function bonk() {
   S.lastBonk = now;
   S.pos.f = g.x < S.pos.x ? -1 : 1;
   presenceDirty = true;
-  if (g.bot) { onBonk({ data: { to: S.nearPeer }, by: S.me }); return; }
-  S.room.emit('bonk', { to: g.peer }).catch(() => toast('뿅망치가 안 닿았어요. 잠시 뒤 다시 해 보세요.'));
+  if (g.bot) { onBonk({ data: { to: S.nearPeer }, by: S.me }); track('bonk_sent', { target_is_bot: true }); return; }
+  S.room.emit('bonk', { to: g.peer })
+    .then(() => track('bonk_sent', { target_is_bot: false }))
+    .catch(() => { track('action_failed', { action: 'bonk', status: 0 }); toast('뿅망치가 안 닿았어요. 잠시 뒤 다시 해 보세요.'); });
 }
 
 function onBonk(msg) {
@@ -1654,7 +1674,8 @@ async function harvest(p) {
   } else {
     saveMe({ pumpkins: have, basket: hadBasket || have >= BASKET_PUMPKINS });
   }
-  if (!hadBasket && hasBasket(S.me)) { toast('퀘스트 완료! 바구니 완성! 이제 친구 집에서 사탕을 가져올 수 있어요.'); alchemyTips(); }
+  track('pumpkin_collected', { pumpkins: have });
+  if (!hadBasket && hasBasket(S.me)) { track('basket_completed'); toast('퀘스트 완료! 바구니 완성! 이제 친구 집에서 사탕을 가져올 수 있어요.'); alchemyTips(); }
   else if (!hadBasket) toast(`호박 ${have}개. 바구니까지 ${BASKET_PUMPKINS - have}개 남았어요.`);
   else if (have === BREW_COST) toast(`호박 ${BREW_COST}개! 광장의 마녀 솥에서 연금술을 해 보세요.`);
   else if (have === PUMPKIN_HOLD_MAX) toast('바구니가 꽉 찼어요. 솥에 넣어 비워 보세요.');
@@ -1735,6 +1756,7 @@ async function brew() {
   } catch (error) {
     S.busy = false; renderAction(); toast(error.message); return;
   }
+  track('brew_completed', { candy_gain: gain });
   if (gain) {
     const head = { x: S.pos.x, y: S.pos.y - 26 };
     for (let i = 0; i < Math.min(gain, 5); i++) S.floats.push({ sprite: TILE_SPR.candy, x: CAUL.x + (i - 2) * 4, y: CAUL.y - 10 - i * 3, t: 0, life: 1.1, to: head });
@@ -1910,6 +1932,7 @@ const folds = (() => { try { return JSON.parse(localStorage.getItem(FOLD_KEY)) |
 function toggleFold(id) {
   folds[id] = !folds[id];
   try { localStorage.setItem(FOLD_KEY, JSON.stringify(folds)); } catch { /* 저장이 막혀도 이번 화면에서는 접힌다 */ }
+  track('panel_toggled', { panel: id, collapsed: folds[id] });
   renderHud();
 }
 function applyFold(el, id) {
@@ -2072,6 +2095,7 @@ async function buyDecor(key) {
     try { await gameRequest({ type: 'decor', item: key }); }
     catch (error) { toast(error.message); return; }
   } else saveMe({ decor: { ...(p.decor || {}), [key]: Date.now() } });
+  track('decor_purchased', { item: key, price: it.price });
   toast(`${it.name} 설치 완료! 사탕 ${it.price}개를 써서 순위에도 반영돼요.`);
 }
 
@@ -2147,6 +2171,7 @@ async function sendNote() {
     try { await gameRequest({ type: 'note', host: S.noteHost, text }); }
     catch (error) { toast(error.message); return; }
   } else saveMe({ notes: [...mine, { h: S.noteHost, text, at: Date.now() }].slice(-MAX_NOTES) });
+  track('note_sent', { message_length: text.length });
   $('#nt-text').value = '';
   renderNote();
   toast(`${nameOf(S.noteHost)}네 방명록에 남겼어요.`);
@@ -2851,6 +2876,7 @@ async function knock(slot) {
   if (!host || !me?.costume || S.busy || S.readOnly) return;
   if (eventState() === 'ended') { toast('이벤트가 끝나서 더는 문을 두드릴 수 없어요.'); return; }
   if (!hasBasket(S.me)) { toast(`호박 바구니부터 만들어요. 호박 ${BASKET_PUMPKINS}개면 돼요.`); return; }
+  track('knock_started');
   S.busy = true;
   S.target = null;
   renderAction();
@@ -2873,6 +2899,7 @@ async function knock(slot) {
     const challenge = S.mode === 'firebase'
       ? (await gameRequest({ type: 'knock-start', host: id })).challenge
       : { level: localLevel, seed: Math.floor(Math.random() * 0x100000000) };
+    track('candy_game_started', { level: challenge.level });
     const attempt = await candyGame(challenge);
     hit = attempt.won;
     if (S.mode === 'firebase') {
@@ -2894,6 +2921,10 @@ async function knock(slot) {
       const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
       saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS), knockAt: entry.at });
     }
+    track('knock_completed', {
+      outcome: hit ? 'win' : 'lose', level: challenge.level,
+      candy_moved: wasMoved(entry), duration_seconds: attempt.elapsedMs / 1000,
+    });
   } catch (error) {
     S.busy = false; renderAction(); toast(error.message); return;
   }
@@ -2923,6 +2954,7 @@ async function knock(slot) {
     }
   }
   const next = await choose([['again', '한 번 더 똑똑'], ['note', '방명록 쓰기'], ['bye', '그만 갈래']], { cancel: 'bye' });
+  track('knock_choice', { choice: next });
   $('#dialog').hidden = true;
   $('#dlg-choices').hidden = true;
   S.openDoor = null;
@@ -2982,10 +3014,21 @@ function openModal(id) {
   if (id === 'note') renderNote();
   if (id === 'sound') renderSound();
   $(`#${id}`).hidden = false;
+  if (!modalOpenedAt.has(id)) {
+    modalOpenedAt.set(id, performance.now());
+    track('modal_opened', { modal: id });
+  }
   keys.clear();
   if (id !== 'intro') $(`#${id} .pbtn`).focus();
 }
-function closeModal(id) { $(`#${id}`).hidden = true; canvas.focus({ preventScroll: true }); }
+function closeModal(id) {
+  $(`#${id}`).hidden = true;
+  if (modalOpenedAt.has(id)) {
+    track('modal_closed', { modal: id, duration_seconds: (performance.now() - modalOpenedAt.get(id)) / 1000 });
+    modalOpenedAt.delete(id);
+  }
+  canvas.focus({ preventScroll: true });
+}
 
 const INTRO_SPEED = 0.8;
 const INTRO_LINES = ['10월 31일, 할로윈 밤.', '마을 호박밭 한가운데서 호박 하나가 들썩거려요.', '쩍! 호박이 갈라지더니 새 주민이 태어났어요.'];
@@ -3001,6 +3044,7 @@ function showNameForm() {
 }
 function skipIntro() {
   if ($('#intro').hidden || !$('#in-form').hidden) return;
+  track('intro_skipped');
   introController?.abort();
   introController = null;
   if (['account', 'firebase'].includes(S.mode)) { completeAccountIntro(); return; }
@@ -3008,12 +3052,13 @@ function skipIntro() {
 }
 function completeAccountIntro() {
   saveMe({ introSeen: true });
-  $('#intro').hidden = true;
+  closeModal('intro');
   $('#wr-title').firstChild.textContent = `${nameOf(S.me)}, 오늘 뭐 입고 나가지`;
   openModal('wardrobe');
 }
 async function startIntro() {
   if (S.readOnly) return;
+  track('intro_started');
   introController?.abort();
   const controller = new AbortController();
   introController = controller;
@@ -3068,6 +3113,7 @@ function renameMe() {
   toast(`이제 ${nick}(으)로 불려요.`);
 }
 async function welcomeTips(creationMessage) {
+  track('tutorial_started');
   S.guideRunning = true;
   S.busy = true;
   keys.clear();
@@ -3083,6 +3129,7 @@ async function welcomeTips(creationMessage) {
   $('#dialog').hidden = true;
   S.guideRunning = false;
   saveMe({ guideSeen: true });
+  track('tutorial_completed');
   await toast(`새 퀘스트가 도착했습니다! ${$('#quest-title').textContent}`);
   await waitForToasts();
   S.busy = false;
@@ -3212,18 +3259,26 @@ document.addEventListener('click', (e) => {
     if (first) { S.guideRunning = true; S.busy = true; }
     const cur = S.players[S.me];
     saveMe({ costume: t.dataset.cos, joinedAt: cur?.joinedAt || Date.now() });
+    track('costume_selected', { costume: t.dataset.cos, first_selection: first });
     presenceDirty = true;
     closeModal('wardrobe');
     if (first) welcomeTips(`${COSTUMES[t.dataset.cos].name} 분장 완료. 마을에 우리 집도 생겼어요.`);
     else toast(`${COSTUMES[t.dataset.cos].name}로 갈아입었어요.`);
   } else if (t.dataset.door) {
     saveMe({ door: Number(t.dataset.door) });
+    track('roof_changed', { roof: Number(t.dataset.door) });
   } else if (t.id === 'ev-start') {
     const from = $('#ev-from').value ? new Date($('#ev-from').value).getTime() : Date.now();
     const to = $('#ev-to').value ? new Date($('#ev-to').value).getTime() : from + EVENT_MS;
     const scheduled = from > Date.now() + 60000;
     armOrRun(t, scheduled ? `${clockText(from)}~${clockText(to)} 예약할까요?` : '정말 시작? 모두 사탕 10개로 리셋돼요', async () => {
       if ((await saveEvent({ id: crypto.randomUUID?.() || String(Date.now()), startedAt: scheduled ? from : Date.now(), endsAt: to })) === false) return;
+      if (scheduled) {
+        track('round_scheduled', {
+          starts_in_seconds: Math.max(0, Math.round((from - Date.now()) / 1000)),
+          duration_seconds: Math.max(0, Math.round((to - from) / 1000)),
+        });
+      } else track('round_started');
       S.bonus = {};
       if (S.mode === 'live') S.db.doc('game/bonus').set({}).catch(() => {});
       toast(scheduled ? `이벤트를 ${clockText(from)}에 시작하도록 예약했어요.` : '이벤트 시작! 사탕을 모아요.');
@@ -3232,6 +3287,8 @@ document.addEventListener('click', (e) => {
     const cancel = Boolean(scheduledAt());
     armOrRun(t, cancel ? '예약을 취소할까요?' : '정말 지금 끝낼까요?', async () => {
       if ((await saveEvent(cancel ? null : { ...S.event, endsAt: Date.now() })) === false) return;
+      if (cancel) track('round_cancelled');
+      else track('round_stopped');
       toast(cancel ? '이벤트 예약을 취소했어요.' : '이벤트를 끝냈어요.');
     });
   }
@@ -3362,6 +3419,9 @@ async function gameRequest(action) {
         if (attempt || (error.status && error.status < 500)) throw error;
       }
     }
+  } catch (error) {
+    track('action_failed', { action: action.type, status: error.status || 0 });
+    throw error;
   } finally { S.pendingGame -= 1; }
 }
 
@@ -3370,6 +3430,7 @@ async function saveMural() {
   try {
     if (S.mode === 'firebase') await gameRequest({ type: 'mural', mural });
     else saveMe({ mural });
+    track('mural_saved', { painted_cells: mural.split('').filter((cell) => cell !== '.').length });
     toast('지붕에 그렸어요. 마을 지도에서 확인해 보세요.');
   } catch (error) { toast(error.message); }
 }
@@ -3640,6 +3701,7 @@ function toggleAuthMode(mode) {
   $('#auth-error').textContent = '';
   $('#auth-password').value = '';
   $('#auth-confirm').value = '';
+  track('auth_viewed', { auth_mode: next });
 }
 
 async function submitAccountForm(event) {
@@ -3651,11 +3713,13 @@ async function submitAccountForm(event) {
   const confirm = $('#auth-confirm').value;
   const error = $('#auth-error');
   if (signupMode && Array.from(password).length < 8) {
+    track('auth_failed', { auth_mode: 'signup', failure_reason: 'password_length', status: 0 });
     error.textContent = '비밀번호를 8자 이상 정해 주세요.';
     error.hidden = false;
     return;
   }
   if (signupMode && password !== confirm) {
+    track('auth_failed', { auth_mode: 'signup', failure_reason: 'password_mismatch', status: 0 });
     error.textContent = '비밀번호가 서로 달라요.';
     error.hidden = false;
     return;
@@ -3664,6 +3728,7 @@ async function submitAccountForm(event) {
   const button = $('#auth-submit');
   button.disabled = true;
   error.hidden = true;
+  track('auth_started', { auth_mode: signupMode ? 'signup' : 'login' });
   try {
     const result = await accountRequest(`/api/auth/${signupMode ? 'signup' : 'login'}`, {
       method: 'POST', body: JSON.stringify({ nickname, password }),
@@ -3674,8 +3739,9 @@ async function submitAccountForm(event) {
     const { profile } = await accountRequest('/api/auth/profile', { headers: { authorization: `Bearer ${token}` } });
     $('#auth-password').value = '';
     $('#auth-confirm').value = '';
-    await enterAccount(credential.user.uid, profile);
+    await enterAccount(credential.user.uid, profile, signupMode ? 'signup' : 'login');
   } catch (cause) {
+    track('auth_failed', { auth_mode: signupMode ? 'signup' : 'login', failure_reason: 'request_failed', status: cause.status || 0 });
     error.textContent = cause.message || '연결이 불안정해요. 잠시 뒤 다시 시도해 주세요.';
     error.hidden = false;
   } finally {
@@ -3704,8 +3770,10 @@ async function loadAccountClient() {
   return auth.currentUser;
 }
 
-async function enterAccount(uid, profile) {
+async function enterAccount(uid, profile, authMode = 'restore') {
   if (!profile || profile.uid !== uid) throw new Error('계정 정보를 확인할 수 없어요. 다시 로그인해 주세요.');
+  analyticsCall('identify', uid);
+  movementTracked = false;
   keys.clear();
   ghosts.clear();
   Object.assign(S, {
@@ -3723,6 +3791,8 @@ async function enterAccount(uid, profile) {
     'bot-test': { ...blankPlayer(), name: '테스트친구', costume: 'dracula', door: 3, joinedAt: 3 },
   };
   if (S.account?.firestore) await connectFirebaseGame(uid);
+  track('auth_completed', { auth_mode: authMode });
+  track('game_entered', { returning_player: Boolean(profile.guideSeen) });
   $('#auth').hidden = true;
   render();
   if (!profile.introSeen) { startIntro(); return; }
@@ -3739,6 +3809,9 @@ async function logoutAccount() {
     await saveAccountProfile(S.players[S.me]);
     await S.account.dispose?.();
     await S.account.authSdk.signOut(S.account.auth);
+    track('logout_completed');
+    analyticsCall('reset');
+    modalOpenedAt.clear();
     for (const id of MODALS) if (id !== 'auth') $(`#${id}`).hidden = true;
     S.me = null;
     S.players = {};
@@ -3812,10 +3885,11 @@ async function boot() {
       const token = await user.getIdToken();
       const { profile } = await accountRequest('/api/auth/profile', { headers: { authorization: `Bearer ${token}` } });
       await enterAccount(user.uid, profile);
-    } else showAuthGate();
+    } else { analyticsCall('reset'); showAuthGate(); }
   } catch {
     if (S.account) {
       await S.account.authSdk.signOut(S.account.auth).catch(() => {});
+      analyticsCall('reset');
       showAuthGate('자동 로그인을 마치지 못했어요. 다시 로그인해 주세요.');
     } else {
       showAuthGate('계정 연결을 불러오지 못했어요. 잠시 뒤 새로고침해 주세요.');
