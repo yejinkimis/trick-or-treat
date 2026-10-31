@@ -18,8 +18,10 @@ const DUEL_MAX_STAKE = 10, DUEL_INVITE_MS = 60 * 1000, DUEL_IDLE_MS = 30 * 1000,
 const DUEL_BONK_RANGE = 22, DUEL_BONK_COOLDOWN_MS = 600, DUEL_BONK_RESET_MS = 6000, DUEL_BONK_TO_STUN = 5;
 // 사탕 잡기에 실패하면 사탕은 그대로 두고 장난 하나를 당한다. 화면의 TRICKS와 이름이 같아야 한다.
 const TRICK_KINDS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
-const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 5 * 60 * 1000;
-const BREW_TABLE = [{ n: 2, weight: 80 }, { n: 5, weight: 14 }, { n: 10, weight: 5 }, { n: 20, weight: 1 }];
+const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 3 * 60 * 1000;
+// 이전 배포에서 기록한 솥 대기 시간은 버전 불일치로 한 번 초기화한다.
+const BREW_COOLDOWN_VERSION = 2;
+const BREW_TABLE = [{ n: 20, weight: 80 }, { n: 50, weight: 14 }, { n: 100, weight: 5 }, { n: 200, weight: 1 }];
 // 룰렛 가중치는 100,000 단위로 두어 +100의 0.05% 확률을 정확히 표현한다.
 // Firestore transactions allow 500 writes; reserve one for the event and one for the caller's receipt.
 const ROULETTE_SCALE = 100_000, ROULETTE_MAX_PLAYERS = 498;
@@ -386,11 +388,13 @@ async function action(authorization, input) {
       } else if (type === 'brew') {
         if (!hasBasket(player)) fail('호박 바구니부터 만들어요.');
         if ((player.pumpkins || 0) < BREW_COST) fail(`호박이 ${BREW_COST}개 있어야 솥에 넣을 수 있어요.`);
-        const wait = (player.brewAt || 0) + BREW_COOLDOWN_MS - now;
+        const wait = player.brewCooldownVersion === BREW_COOLDOWN_VERSION
+          ? (player.brewAt || 0) + BREW_COOLDOWN_MS - now
+          : 0;
         if (wait > 0) fail(`솥이 아직 식는 중이에요. ${Math.ceil(wait / 60000)}분 뒤 다시 끓일 수 있어요.`, 429);
         const gain = brewGain();
         const pumpkins = player.pumpkins - BREW_COST;
-        tx.update(playerRef, { round, candies: count + gain, basket: true, brewAt: now,
+        tx.update(playerRef, { round, candies: count + gain, basket: true, brewAt: now, brewCooldownVersion: BREW_COOLDOWN_VERSION,
           brews: [...(player.brews || []), { at: now, n: gain, round }].slice(-20) });
         privateUpdate = { pumpkins };
         result = { gain, candies: count + gain, pumpkins, brewAt: now };

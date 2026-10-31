@@ -701,19 +701,21 @@ const ITEMS = {
 };
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
 // 호박 연금술: 서버(server/game-service.cjs)와 같은 값이어야 한다.
-const PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 5 * 60 * 1000, BREW_COOLDOWN_MIN = BREW_COOLDOWN_MS / 60000;
-const BREW_TABLE = [{ n: 2, weight: 80 }, { n: 5, weight: 14 }, { n: 10, weight: 5 }, { n: 20, weight: 1 }];
+const PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 3 * 60 * 1000, BREW_COOLDOWN_MIN = BREW_COOLDOWN_MS / 60000;
+// 배포 때 버전을 올리면 이전 버전에서 기록한 대기 시간은 모두 초기화된다.
+const BREW_COOLDOWN_VERSION = 2;
+const BREW_TABLE = [{ n: 20, weight: 80 }, { n: 50, weight: 14 }, { n: 100, weight: 5 }, { n: 200, weight: 1 }];
 const BREW_MAX = Math.max(...BREW_TABLE.map((b) => b.n));
 const brewOdds = BREW_TABLE.map((b) => b.n ? `사탕 +${b.n}` : '꽝').join(' · ');
 const BREW_LINES = {
   0: '펑! 연기만 자욱해요… 호박이 전부 재가 됐어요.',
-  2: '보글보글… 사탕 2개가 떠올랐어요!',
-  5: '부글부글! 사탕 5개가 솟아올랐어요!',
-  10: '콰과광! 솥이 넘쳐흘러요! 사탕 10개!',
-  20: '…솥이 금빛으로 번쩍여요. 전설의 사탕 20개!!',
+  20: '보글보글… 사탕 20개가 떠올랐어요!',
+  50: '부글부글! 사탕 50개가 솟아올랐어요!',
+  100: '콰과광! 솥이 넘쳐흘러요! 사탕 100개!',
+  200: '…솥이 금빛으로 번쩍여요. 전설의 사탕 200개!!',
 };
-// 누가 연금술을 하면 몇 개든 화면 위 알림으로 차례로 띄워 솥을 홍보한다. 대박(10개 이상)은 더 오래 띄우고 채팅창에도 남긴다.
-const BREW_BIG = 10, BREW_NEWS_KEEP = 3;
+// 누가 연금술을 하면 몇 개든 화면 위 알림으로 차례로 띄워 솥을 홍보한다. 대박(100개 이상)은 더 오래 띄우고 채팅창에도 남긴다.
+const BREW_BIG = 100, BREW_NEWS_KEEP = 3;
 const brewNews = { queue: [], shown: new Set(), showing: false };
 function announceBrew(id, a) {
   const n = Number(a?.n);
@@ -1933,7 +1935,11 @@ const rainLine = () => {
   return rain && now < rain.at + rain.ms ? ` · 사탕 비 ${fmtLeft(rain.at + rain.ms - now)} 남음` : '';
 };
 const hasBasket = (id) => Boolean(id) && (S.players[id]?.basket === true || (S.players[id]?.pumpkins || 0) >= BASKET_PUMPKINS);
-const brewWait = (id) => Math.max(0, (S.players[id]?.brewAt || 0) + BREW_COOLDOWN_MS - Date.now());
+const brewWait = (id) => {
+  const player = S.players[id];
+  if (player?.brewCooldownVersion !== BREW_COOLDOWN_VERSION) return 0;
+  return Math.max(0, (player.brewAt || 0) + BREW_COOLDOWN_MS - Date.now());
+};
 function rollBrew() {
   let roll = Math.floor(Math.random() * 100);
   for (const { n, weight } of BREW_TABLE) {
@@ -1991,7 +1997,7 @@ async function alchemyTips() {
   S.target = null;
   renderAction();
   await say('', `호박은 바구니에 계속 모을 수 있어요. 최대 ${PUMPKIN_HOLD_MAX}개까지 들어가요.`, 'sys');
-  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 사탕 2개부터, 운이 좋으면 ${BREW_MAX}개까지 나와요!`, 'sys');
+  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 사탕 20개부터, 운이 좋으면 ${BREW_MAX}개까지 나와요!`, 'sys');
   await say('', `솥은 한 번 끓이면 ${BREW_COOLDOWN_MIN}분 동안 식혀야 해요. 노크 사이사이에 한 방을 노려 보세요.`, 'sys');
   $('#dialog').hidden = true;
   S.busy = false;
@@ -2045,12 +2051,12 @@ async function brew() {
       const result = await gameRequest({ type: 'brew' });
       gain = result.gain;
       rememberPrivate({ pumpkins: result.pumpkins });
-      S.players[S.me] = { ...S.players[S.me], pumpkins: result.pumpkins, basket: true, brewAt: result.brewAt, candies: result.candies, round: currentRound() };
+      S.players[S.me] = { ...S.players[S.me], pumpkins: result.pumpkins, basket: true, brewAt: result.brewAt, brewCooldownVersion: BREW_COOLDOWN_VERSION, candies: result.candies, round: currentRound() };
       render();
     } else {
       gain = rollBrew();
       const me = S.players[S.me], now = Date.now();
-      saveMe({ pumpkins: me.pumpkins - BREW_COST, basket: true, brewAt: now, brews: [...(me.brews || []), { at: now, n: gain }].slice(-20) });
+      saveMe({ pumpkins: me.pumpkins - BREW_COST, basket: true, brewAt: now, brewCooldownVersion: BREW_COOLDOWN_VERSION, brews: [...(me.brews || []), { at: now, n: gain }].slice(-20) });
       S.ledger = null;
       render();
     }
