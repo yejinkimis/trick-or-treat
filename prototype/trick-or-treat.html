@@ -866,7 +866,7 @@ const wasMoved = (k) => S.mode === 'firebase' ? k.moved === true : ledger().move
 function ranking() {
   const eligible = (list) => list.filter((r) => !(S.excluded || []).includes(r.id));
   if (S.mode === 'firebase' && eventState() === 'ended' && S.event.results) return eligible(S.event.results);
-  // 온라인 순위는 마을 구독에 없는 사람까지 필요하므로 서버가 3분마다 모아 주는 목록을 쓴다.
+  // 온라인 순위는 마을 구독에 없는 사람까지 필요하므로 서버가 1분마다 모아 주는 목록을 쓴다.
   if (S.mode === 'firebase') return eligible(S.rankList || []);
   return rankingOf(S.players);
 }
@@ -878,7 +878,7 @@ function rankingOf(players) {
     .map(([id, p]) => ({ id, n: count(id, p), costume: p.costume }))
     .sort((a, b) => b.n - a.n || nameOf(a.id).localeCompare(nameOf(b.id), 'ko'));
 }
-const RANK_REFRESH_MS = 3 * 60 * 1000;
+const RANK_REFRESH_MS = 60 * 1000;
 async function loadRanking({ quiet = false } = {}) {
   if (S.mode !== 'firebase' || S.rankLoading || Date.now() - (S.rankAt || 0) < 30000) return;
   S.rankLoading = true;
@@ -2039,14 +2039,14 @@ function applyFold(el, id) {
   button.setAttribute('aria-expanded', String(!folds[id]));
 }
 
-// 순위 창을 열지 않아도 1~3등과 내 순위가 보이게 한다. 온라인 순위는 서버가 3분마다 모은 목록이다.
+// 순위 창을 열지 않아도 1~3등과 내 순위가 보이게 한다. 온라인 순위는 서버가 1분마다 모은 목록이다.
 function renderBoard() {
   const list = ranking(), board = $('#board');
   board.hidden = !list.length || S.readOnly;
   if (board.hidden) return;
   const rank = list.findIndex((r) => r.id === S.me) + 1;
   applyFold(board, 'board');
-  const label = folds.board ? `사탕 순위 · ${rank ? `${list.length}명 중 ${rank}등` : `참가 ${list.length}명`}` : `사탕 순위 TOP 3${S.mode === 'firebase' ? ' (3분마다 갱신)' : ''}`;
+  const label = folds.board ? `사탕 순위 · ${rank ? `${list.length}명 중 ${rank}등` : `참가 ${list.length}명`}` : `사탕 순위 TOP 3${S.mode === 'firebase' ? ` (${RANK_REFRESH_MS / 60000}분마다 갱신)` : ''}`;
   if ($('#board-label').textContent !== label) $('#board-label').textContent = label;
   const html = list.slice(0, 3).map((r, i) => `<li${r.id === S.me ? ' class="mine"' : ''}><span>${i + 1}. ${esc(nameOf(r.id))}</span><b>${r.n}개</b></li>`).join('');
   if (html !== renderBoard.last) $('#board-list').innerHTML = renderBoard.last = html;
