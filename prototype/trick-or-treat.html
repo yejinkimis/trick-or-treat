@@ -60,6 +60,8 @@ img.px-img{image-rendering:pixelated;display:block}
 .board-me{color:var(--muted)}
 
 .quest[data-step="knock"],.quest[data-brew="ready"]{border-color:var(--gold)}
+.book-tabs .pbtn{flex:1}
+.book-tabs .pbtn[aria-pressed="true"]{background:var(--panel);color:var(--gold);border-color:var(--gold)}
 #quest-detail{white-space:pre-line;word-break:keep-all}
 .me .status{grid-column:1/-1;font-size:.8rem;color:var(--muted)}
 
@@ -308,6 +310,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <div class="field">
         <span class="lab">문 앞 방명록</span>
+        <div class="row book-tabs" role="group" aria-label="방명록 보기"><button class="pbtn" type="button" data-book-tab="note" aria-pressed="true">방명록</button><button class="pbtn" type="button" data-book-tab="knock" aria-pressed="false">사탕 기록</button></div>
         <ul class="book" id="book"></ul>
       </div>
     </div>
@@ -398,6 +401,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <span class="note" id="nt-count">0 / 80</span>
       <button class="pbtn hot" id="nt-send" type="button">남기기</button>
     </div>
+    <div class="row book-tabs" role="group" aria-label="방명록 보기"><button class="pbtn" type="button" data-book-tab="note" aria-pressed="true">방명록</button><button class="pbtn" type="button" data-book-tab="knock" aria-pressed="false">사탕 기록</button></div>
     <ul class="book" id="nt-book"></ul>
   </div>
 </div>
@@ -657,7 +661,7 @@ function rng(seed) {
 const S = {
   mode: 'loading', db: null, user: null, room: null, me: null, players: {}, names: {},
   account: null, accountProfile: null,
-  readOnly: false, busy: false, guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null,
+  readOnly: false, busy: false, bookTab: 'note', guideRunning: false, seenAt: Date.now(), event: null, isOwner: false, ledger: null,
   candyControl: null, localKnockStreaks: { challenger: null, round: null, byHost: {} },
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
@@ -1880,8 +1884,10 @@ function visitsTo(host) {
   return visits;
 }
 
+// 사람이 쓴 방명록과 노크로 남는 사탕 기록을 탭으로 나눠 보여 준다.
 function guestbookHtml(host) {
-  const items = visitsTo(host).map(({ v, at, knock, note }) => knock
+  for (const tab of document.querySelectorAll('[data-book-tab]')) tab.setAttribute('aria-pressed', String(tab.dataset.bookTab === S.bookTab));
+  const items = visitsTo(host).filter(({ knock }) => (S.bookTab === 'knock') === Boolean(knock)).map(({ v, at, knock, note }) => knock
     ? { at, v, c: knock.c, line: bookLine(knock) }
     : { at, v, c: note.c, line: esc(String(note.text).slice(0, NOTE_MAX)) });
   items.sort((a, b) => b.at - a.at);
@@ -1889,7 +1895,7 @@ function guestbookHtml(host) {
     ? items.slice(0, 40).map((it) => `<li><img class="px-img" src="${spriteUrl(COSTUMES[it.c] ? it.c : 'plain', 2)}" alt="">
         <div><b class="guest-name">${esc(nameOf(it.v))}</b><br><span class="guest-message">${it.line}</span></div>
         <time>${ago(it.at)}</time></li>`).join('')
-    : '<li class="note">아직 아무도 안 왔어요. 문 앞이 조용해요.</li>';
+    : `<li class="note">${S.bookTab === 'knock' ? '아직 문을 두드린 사람이 없어요.' : '아직 남긴 글이 없어요. 문 앞이 조용해요.'}</li>`;
 }
 
 async function buyDecor(key) {
@@ -3005,6 +3011,7 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'mural-save') saveMural();
   else if (t.id === 'wr-rename') renameMe();
   else if (t.dataset.buy) buyDecor(t.dataset.buy);
+  else if (t.dataset.bookTab) { S.bookTab = t.dataset.bookTab; if (!$('#note').hidden) renderNote(); else renderHouse(); }
   else if (t.dataset.cos) {
     const first = !myCostume();
     if (first) { S.guideRunning = true; S.busy = true; }
