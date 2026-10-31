@@ -3214,7 +3214,7 @@ function miniPlan(game, level, seed) {
     return { items, need: items.length - (7 - L), allowed: 7 - L, end: items[items.length - 1].to };
   }
   if (game === 'spell') {
-    const step = 650 - L * 30, items = Array.from({ length: 3 + L }, () => ({ k: between(0, 3) }));
+    const step = 450 - L * 30, items = Array.from({ length: 5 + L }, () => ({ k: between(0, 3) }));
     items.forEach((item, i) => { item.t = 1000 + i * step; });
     const open = 1000 + items.length * step;
     return { items, step, open, need: items.length, allowed: 0, end: open + 4000 + items.length * 1000 };
