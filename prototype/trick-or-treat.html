@@ -624,6 +624,16 @@ function announceBrew(id, a) {
   brewNews.queue.push({ text, big });
   showBrewNews();
 }
+// 새 크루가 처음 분장해 집이 생기면 모든 마을에 알리고 채팅창에도 남긴다. 들어온 본인에게는 환영 안내가 따로 있다.
+function announceNewcomer(id, a) {
+  if (!a?.uid || brewNews.shown.has(id)) return;
+  brewNews.shown.add(id);
+  if (a.uid === S.me) return;
+  const who = cleanNick(a.nick) || nameOf(a.uid), where = a.v ? villageLabel(Number(a.v)) : '마을';
+  addChat([{ id: `join-${id}`, name: '마을 소식', text: `새 크루 ${who}님이 ${where}에 이사 왔어요!`, at: Number(a.at) || Date.now() }]);
+  brewNews.queue.push({ text: `새 크루 ${who}님이 ${where}에 이사 왔어요! 반갑게 맞아 주세요`, big: true });
+  showBrewNews();
+}
 async function showBrewNews() {
   if (brewNews.showing) return;
   brewNews.showing = true;
@@ -3606,7 +3616,9 @@ async function connectFirebaseGame(uid) {
   // 공지 규칙이 아직 게시되지 않았어도 게임은 그대로 되도록 읽기 실패는 조용히 넘긴다.
   stops.push(rt.onChildAdded(rt.query(rt.ref(a.database, 'announcements'), rt.limitToLast(1)), (snapshot) => {
     const data = snapshot.val();
-    if (data?.kind === 'brew' && Number(data.at) >= joined - 5000) announceBrew(snapshot.key, data);
+    if (Number(data?.at) < joined - 5000) return;
+    if (data?.kind === 'brew') announceBrew(snapshot.key, data);
+    else if (data?.kind === 'join') announceNewcomer(snapshot.key, data);
   }, () => {}));
   const receive = (snapshot) => {
     const data = snapshot.val();

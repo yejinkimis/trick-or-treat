@@ -3,7 +3,7 @@ const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
 const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, CHALLENGE_MAX_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
-const { readVillagePlan } = require('./village.cjs');
+const { readVillagePlan, announceNewcomer } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
@@ -109,7 +109,9 @@ async function session(authorization) {
   const { db } = services();
   const ref = db.collection('gamePlayers').doc(profile.uid);
   const privateRef = db.collection('gamePrivate').doc(profile.uid);
+  let newcomer = null;
   const village = await db.runTransaction(async (tx) => {
+    newcomer = null;
     const now = Date.now();
     const [existing, privateDoc, eventDoc] = await Promise.all([tx.get(ref), tx.get(privateRef), tx.get(db.doc('game/event'))]);
     const event = eventDoc.exists ? eventDoc.data() : null;
@@ -120,11 +122,13 @@ async function session(authorization) {
     const home = prior?.village || plan.villageOf.get(profile.uid);
     plan.write(profile.uid);
     const placed = home && !prior?.village ? { village: home } : {};
+    if (placed.village) newcomer = { uid: profile.uid, nick: profile.nick, village: home };
     if (!privateDoc.exists) tx.set(privateRef, privateState(privateDoc, prior, Date.now()));
     if (!existing.exists) tx.create(ref, { ...profile, readyAt, knocks: [], notes: [], guests: [], decor: {}, candies: 10, round: 'practice', ...placed });
     else tx.update(ref, { ...profile, ...(profile.costume && !prior.readyAt ? { readyAt } : {}), ...placed, ...refill });
     return home || plan.latest;
   }, { maxAttempts: 20 });
+  if (newcomer) await announceNewcomer(services().database, newcomer);
   return { isAdmin: isAdmin(profile.uid), uid: profile.uid, village };
 }
 

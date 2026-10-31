@@ -2,7 +2,7 @@ const { randomBytes, randomUUID, scrypt, timingSafeEqual, createHash } = require
 const { promisify } = require('node:util');
 const { services } = require('./firebase-admin.cjs');
 const { AuthError } = require('./errors.cjs');
-const { readVillagePlan } = require('./village.cjs');
+const { readVillagePlan, announceNewcomer } = require('./village.cjs');
 
 const scryptAsync = promisify(scrypt);
 const SCRYPT = Object.freeze({ N: 32768, r: 8, p: 1, keyLength: 64 });
@@ -237,7 +237,9 @@ async function updateProfile(authorization, value) {
   const patch = validateProfilePatch(value);
   const firebase = services();
   const ref = firebase.db.collection('profiles').doc(uid);
+  let newcomer = null;
   await firebase.db.runTransaction(async (transaction) => {
+    newcomer = null;
     const snapshot = await transaction.get(ref);
     const playerRef = firebase.db.collection('gamePlayers').doc(uid);
     const player = await transaction.get(playerRef);
@@ -252,7 +254,9 @@ async function updateProfile(authorization, value) {
       ...(patch.costume && !prior.readyAt ? { readyAt } : {}),
       ...(plan ? { village: plan.villageOf.get(uid) } : {}),
     });
+    if (plan && player.exists) newcomer = { uid, nick: prior.nick, village: plan.villageOf.get(uid) };
   }, { maxAttempts: 20 });
+  if (newcomer) await announceNewcomer(firebase.database, newcomer);
   const snapshot = await ref.get();
   return publicProfile(uid, snapshot.data());
 }
