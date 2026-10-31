@@ -1645,9 +1645,11 @@ async function harvest(p) {
       fieldShown = '';
       render();
       toast(error.message);
+      if (error.status === 409) void reloadPrivate();
       return;
     } finally { S.harvesting = false; }
     have = saved.pumpkins;
+    rememberPrivate({ pumpkins: have, field: saved.field });
     S.players[S.me] = { ...S.players[S.me], pumpkins: have, basket: saved.basket, field: saved.field }; render();
   } else {
     saveMe({ pumpkins: have, basket: hadBasket || have >= BASKET_PUMPKINS });
@@ -1694,6 +1696,7 @@ async function brew() {
     if (S.mode === 'firebase') {
       const result = await gameRequest({ type: 'brew' });
       gain = result.gain;
+      rememberPrivate({ pumpkins: result.pumpkins });
       S.players[S.me] = { ...S.players[S.me], pumpkins: result.pumpkins, basket: true, brewAt: result.brewAt, candies: result.candies, round: currentRound() };
       render();
     } else {
@@ -3303,6 +3306,20 @@ async function enterBanned(message = '이 계정은 게임 이용이 제한됐�
   } finally { leavingBanned = false; }
 }
 
+// 비공개 문서는 내 요청으로만 바뀌므로 구독하지 않고 접속할 때 한 번 읽는다. 그 뒤로는 서버 응답으로 고쳐 두어
+// 호박을 딸 때마다 구독 때문에 문서를 다시 읽지 않게 한다. 다른 탭에서 바뀌어 어긋나면 다시 읽는다.
+async function reloadPrivate() {
+  const a = S.account, uid = S.me;
+  try {
+    const snapshot = await a.firestoreSdk.getDoc(a.firestoreSdk.doc(a.firestore, 'gamePrivate', uid));
+    if (S.me === uid) S.ownPrivate = snapshot.exists() ? snapshot.data() : null;
+  } catch { if (S.me === uid) S.ownPrivate = null; }
+  applyFirebasePlayers();
+}
+function rememberPrivate(patch) {
+  S.ownPrivate = { ...S.ownPrivate, ...patch };
+}
+
 async function gameRequest(action) {
   const uid = S.me, user = S.account?.auth.currentUser;
   if (!user || user.uid !== uid) throw new Error('다시 로그인해 주세요.');
@@ -3345,7 +3362,8 @@ async function saveDoodle() {
 function applyFirebasePlayers() {
   const round = currentRound();
   // 내 호박 수와 밭은 나만 읽는 비공개 문서에서 온다. 공개 문서의 호박 수는 예전 값일 수 있다.
-  const own = S.ownPlayer && { ...S.ownPlayer, ...(S.ownPrivate ? { pumpkins: S.ownPrivate.pumpkins, field: S.ownPrivate.field } : {}), ...unsavedOwnFields() };
+  const mine = S.ownPrivate || {};
+  const own = S.ownPlayer && { ...S.ownPlayer, ...('pumpkins' in mine ? { pumpkins: mine.pumpkins } : {}), ...(mine.field ? { field: mine.field } : {}), ...unsavedOwnFields() };
   const source = { ...S.strangers, ...S.firebasePlayers, ...(own ? { [S.me]: own } : {}) };
   for (const p of Object.values(source)) for (const g of p.guests || []) if (g.nick && !S.names[g.v]) S.names[g.v] = cleanNick(g.nick);
   const next = Object.fromEntries(Object.entries(source).map(([uid, player]) => [uid, {
@@ -3556,11 +3574,7 @@ async function connectFirebaseGame(uid) {
         if (home && !placed) { placed = true; if (home !== S.village) void travelTo(home); }
         applyFirebasePlayers(); notifyKnocks(); resolve();
       }, (error) => { S.readOnly = true; toast('내 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
-      new Promise((resolve) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'gamePrivate', uid), { includeMetadataChanges: true }, (snapshot) => {
-        if (snapshot.metadata.fromCache) return;
-        S.ownPrivate = snapshot.exists() ? snapshot.data() : null;
-        applyFirebasePlayers(); resolve();
-      }, () => { S.ownPrivate = null; resolve(); }))),
+      reloadPrivate(),
       new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'game/event'), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         const previous = S.event?.id;

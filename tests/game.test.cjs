@@ -270,6 +270,36 @@ test('tutorial explains practice limits and unlocks the persistent quest after t
   assert.match(g.elements.get('toast').textContent, /새 퀘스트/);
 });
 
+test('my private document is read once and kept from server answers, and read again only when a harvest finds it stale', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; crypto = { randomUUID: () => 'harvest-request' };
+    var reads = 0, stored = { pumpkins: 7, field: [{ id: 'other-tab', s: 0, at: 0 }] };
+    S.account = { auth: { currentUser: { uid: 'me', getIdToken: async () => 'token' } }, firestore: {},
+      firestoreSdk: { doc: (db, ...path) => path.join('/'), getDoc: async (path) => { reads++; return { exists: () => path === 'gamePrivate/me', data: () => stored }; } } };
+    S.ownPlayer = { ...S.players.me, pumpkins: 0 }; S.firebasePlayers = {};
+    var answers = []; accountRequest = (url, options) => new Promise((resolve, reject) => answers.push({ body: JSON.parse(options.body), resolve, reject }));`);
+  await g.run('reloadPrivate()');
+  assert.equal(g.run('reads'), 1);
+  assert.equal(g.run('S.players.me.pumpkins'), 7);
+
+  g.run(`S.players.me.field = [{ id: 'ripe', s: 0, at: 0 }]; growPumpkins(0); var picking = harvest(S.pumpkins[0]);`);
+  await tick();
+  g.run(`answers[0].resolve({ pumpkins: 8, basket: true, field: [{ id: 'next', s: 1, at: Date.now() + 9000 }] })`);
+  await g.run('picking');
+  g.run('applyFirebasePlayers()');
+  assert.equal(g.run('S.players.me.pumpkins'), 8, 'a later village update keeps the count the server answered');
+  assert.equal(g.run('S.players.me.field[0].id'), 'next');
+  assert.equal(g.run('reads'), 1, 'no extra read after a harvest');
+
+  g.run(`S.players.me.field = [{ id: 'gone', s: 0, at: 0 }]; growPumpkins(0); picking = harvest(S.pumpkins[0]);`);
+  await tick();
+  g.run(`const gone = new Error('이미 없어진 호박이에요. 다른 호박을 따 주세요.'); gone.status = 409; answers[1].reject(gone);`);
+  await g.run('picking');
+  await tick();
+  assert.equal(g.run('reads'), 2, 'a pumpkin already taken in another tab reloads my private document');
+  assert.equal(g.run('S.players.me.field[0].id'), 'other-tab');
+});
+
 test('three harvests update progress, unlock knocking, and restore from saved player data', () => {
   const g = game(); g.players();
   assert.equal(g.run('hasBasket(S.me)'), false);
