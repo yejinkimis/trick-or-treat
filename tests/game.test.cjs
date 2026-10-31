@@ -1053,6 +1053,30 @@ test('the village map lists villages top to bottom in sign order and travels to 
   assert.equal(g.run('S.pos.y'), g.run('SPAWN.y'));
 });
 
+test('the three o\'clock refill is announced once per device after reconnecting, and waits for other dialogs', async () => {
+  const storage = memoryStorage();
+  const g = game({ storage }); g.players();
+  g.run(`globalThis.messages = []; say = async (who, text) => messages.push(text);`);
+  await g.finish(g.run('refillNotice()'));
+  assert.equal(g.run('messages.length'), 0, 'no refill, no popup');
+
+  g.run(`S.players.me.refill = { id: 'refill-1031-1500', at: 1, n: 7 }; S.busy = true;`);
+  const notice = g.run('refillNotice()');
+  await tick();
+  assert.equal(g.run('messages.length'), 0, 'it waits while another dialog is open');
+  g.run('S.busy = false');
+  await g.finish(notice);
+  assert.match(g.run('messages[0]'), /3시 사탕 보충! 사탕을 10개까지 채워 드렸어요\. \(\+7\)/);
+  assert.equal(g.run('S.busy'), false);
+  await g.finish(g.run('refillNotice()'));
+  assert.equal(g.run('messages.length'), 1, 'shown once on this device');
+
+  const other = game({ storage: memoryStorage() }); other.players();
+  other.run(`globalThis.messages = []; say = async (who, text) => messages.push(text); S.players.me.refill = { id: 'refill-1031-1500', at: 1, n: 10 };`);
+  await other.finish(other.run('refillNotice()'));
+  assert.equal(other.run('messages.length'), 1, 'another device shows it once too');
+});
+
 test('basket stays after harvesting more, alchemy tip explains the cauldron, and the bag caps at 100', async () => {
   const g = game(); g.players();
   g.run(`globalThis.messages = []; say = async (who, text) => messages.push(text);`);

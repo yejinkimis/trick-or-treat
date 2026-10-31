@@ -1677,6 +1677,32 @@ async function alchemyTips() {
   renderAction();
 }
 
+// 3시 사탕 보충을 받은 사람에게 다시 접속했을 때 한 번 알려 준다. 본 기록은 기기에만 남긴다.
+const REFILL_SEEN_KEY = 'trick-or-treat.refills';
+let refillShowing = false;
+async function refillNotice() {
+  const refill = S.players[S.me]?.refill, key = `${S.me}:${refill?.id}`;
+  if (!refill?.id || refillShowing) return;
+  let seen = [];
+  try { seen = JSON.parse(localStorage.getItem(REFILL_SEEN_KEY)) || []; } catch { /* 기록을 못 읽으면 한 번 더 보여 준다 */ }
+  if (seen.includes(key)) return;
+  refillShowing = true;
+  try {
+    await waitForToasts();
+    while (S.busy) await wait(1000);
+    try { localStorage.setItem(REFILL_SEEN_KEY, JSON.stringify([...seen, key])); } catch { /* 이번 화면에서만 한 번 보인다 */ }
+    S.busy = true;
+    keys.clear();
+    S.target = null;
+    renderAction();
+    await say('', `3시 사탕 보충! 사탕을 10개까지 채워 드렸어요. (+${refill.n})`, 'sys');
+    $('#dialog').hidden = true;
+    S.busy = false;
+    updateNear();
+    renderAction();
+  } finally { refillShowing = false; }
+}
+
 async function brew() {
   if (S.busy || S.readOnly || !myCostume()) return;
   if (eventState() === 'ended') { toast('이벤트가 끝나서 솥이 식었어요.'); return; }
@@ -3572,7 +3598,7 @@ async function connectFirebaseGame(uid) {
         // 분장을 처음 고른 순간 서버가 정한 마을이 지금 보던 마을과 다르면 그 마을로 옮긴다.
         const home = S.ownPlayer?.village;
         if (home && !placed) { placed = true; if (home !== S.village) void travelTo(home); }
-        applyFirebasePlayers(); notifyKnocks(); resolve();
+        applyFirebasePlayers(); notifyKnocks(); void refillNotice(); resolve();
       }, (error) => { S.readOnly = true; toast('내 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); }))),
       reloadPrivate(),
       new Promise((resolve, reject) => stops.push(fs.onSnapshot(fs.doc(a.firestore, 'game/event'), { includeMetadataChanges: true }, (snapshot) => {
