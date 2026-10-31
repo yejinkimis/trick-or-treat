@@ -20,7 +20,7 @@ const freshField = (now) => Array.from({ length: FIELD_SIZE }, () => plantPumpki
 const fieldOf = (player, now) => (Array.isArray(player.field) && player.field.length ? player.field : freshField(now));
 // 자주 바뀌는 호박·영수증·활동 기록은 본인만 읽는 비공개 문서에 둔다.
 // 마을 사람 모두가 구독하는 공개 문서를 덜 바꿔야 호박 하나에 마을 인원만큼 읽기가 생기지 않는다.
-const MAX_RECEIPTS = 20, MAX_ACTIVITY = 30;
+const MAX_RECEIPTS = 20, MAX_ACTIVITY = 100;
 const privateState = (doc, player, now) => (doc.exists ? doc.data() : {
   pumpkins: Number(player?.pumpkins) || 0, harvestAt: player?.harvestAt || 0, field: fieldOf(player || {}, now),
   harvestHours: player?.harvestHours || {}, receipts: [], activity: [],
@@ -159,6 +159,7 @@ async function action(authorization, input) {
     const count = balance(player, event, now);
     const type = input.type;
     let result = {};
+    let activityDetails = {};
     if (type === 'event-start' || type === 'event-stop') {
       if (!isAdmin(uid)) fail('운영자만 이벤트를 변경할 수 있어요.', 403);
       if (type === 'event-start') {
@@ -325,6 +326,7 @@ async function action(authorization, input) {
         tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
         tx.delete(lockRef);
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
+        activityDetails = { durationMs: outcome.at, candyDelta: result.candies - count, hostCandyDelta: result.hostCandies - hostCount };
       } else if (type === 'knock-leave') {
         const challengeDoc = await tx.get(challengeRef);
         const challenge = challengeDoc.exists ? challengeDoc.data() : null;
@@ -359,7 +361,10 @@ async function action(authorization, input) {
     }
     if (type !== 'knock-heartbeat') {
       const activity = { uid, type, at: now, round, ...(typeof input.host === 'string' && /^[a-f0-9]{32}$/.test(input.host) ? { host: input.host } : {}),
-        ...(type === 'knock-finish' && result.entry ? { host: result.entry.h, outcome: result.entry.r, moved: result.entry.moved, level: result.entry.level } : {}),
+        ...(type === 'harvest' ? { pumpkinDelta: 1 } : {}),
+        ...(type === 'brew' ? { candyDelta: result.gain, pumpkinDelta: -BREW_COST } : {}),
+        ...(type === 'decor' ? { item: input.item, candyDelta: -PRICES[input.item] } : {}),
+        ...(type === 'knock-finish' && result.entry ? { host: result.entry.h, outcome: result.entry.r, moved: result.entry.moved, level: result.entry.level, ...activityDetails } : {}),
         ...(type === 'knock-leave' ? { host: result.host, outcome: result.penalized ? 'lose' : 'quit', moved: false, level: result.level } : {}) };
       tx.set(privateRef, { ...mine, ...privateUpdate,
         receipts: [...(mine.receipts || []), { id: input.requestId, result }].slice(-MAX_RECEIPTS),

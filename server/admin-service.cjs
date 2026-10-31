@@ -30,18 +30,36 @@ async function searchUsers(authorization, query) {
     ]);
     const chatSnapshot = await services().database.ref(`chat/${p.id}`).get();
     const mine = privateDoc.exists ? privateDoc.data() : {};
-    const activity = [...(mine.activity || [])];
+    const activity = [];
     for (const item of p.knocks || []) activity.push({ uid: p.id, type: 'knock-finish', host: item.h, at: item.at, outcome: item.r, moved: item.moved, level: item.level });
     for (const item of p.brews || []) activity.push({ uid: p.id, type: 'brew', at: item.at });
     for (const item of p.notes || []) activity.push({ uid: p.id, type: 'note', host: item.h, at: item.at });
+    // 비공개 서버 기록은 상세 필드가 더 많으므로 오래된 공개 기록보다 나중에 병합한다.
+    activity.push(...(mine.activity || []));
     const recentActivity = [...new Map(activity.map((item) => [`${item.uid}:${item.type}:${item.at}:${item.host || ''}`, item])).values()]
       .sort((a, b) => b.at - a.at).slice(0, 30);
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const privateActivity = mine.activity || [];
+    const recentChallenges = privateActivity.filter((item) => item.type === 'knock-finish' && item.at >= dayAgo);
+    const wins = recentChallenges.filter((item) => item.outcome === 'win').length;
+    const durations = recentChallenges.filter((item) => Number.isFinite(item.durationMs)).map((item) => item.durationMs);
+    const candyDeltas = recentChallenges.filter((item) => Number.isFinite(item.candyDelta)).map((item) => item.candyDelta);
+    const challengeStats = {
+      periodHours: 24,
+      completed: recentChallenges.length,
+      wins,
+      successRate: recentChallenges.length ? Math.round(wins / recentChallenges.length * 100) : null,
+      averageDurationMs: durations.length ? Math.round(durations.reduce((sum, duration) => sum + duration, 0) / durations.length) : null,
+      candyDelta: candyDeltas.reduce((sum, value) => sum + value, 0),
+      candyDeltaKnownCount: candyDeltas.length,
+      sampleLimited: privateActivity.length >= 100,
+    };
     return {
       id: p.id, nick: p.nick || '이름 없음', costume: p.costume || null, village: p.village || null,
       candies: p.round === round ? p.candies : 10, pumpkins: Number(mine.pumpkins ?? p.pumpkins) || 0,
       rankExcluded: p.rankExcluded === true, houseHidden: p.houseHidden === true,
       banned: ban.exists && ban.data().banned === true,
-      banReason: ban.exists ? ban.data().reason || '' : '', activity: recentActivity,
+      banReason: ban.exists ? ban.data().reason || '' : '', activity: recentActivity, challengeStats,
       latestChat: chatSnapshot.exists() ? chatSnapshot.val() : null,
       notes: (p.notes || []).slice(-50).reverse().map((note) => ({ host: note.h, at: note.at, text: note.text })),
     };
@@ -55,6 +73,40 @@ async function watchAccounts(authorization) {
   const harvestHoursOf = new Map(privates.docs.map((doc) => [doc.id, doc.data().harvestHours]));
   const merged = players.docs.map((doc) => ({ id: doc.id, ...doc.data(), harvestHours: harvestHoursOf.get(doc.id) || doc.data().harvestHours }));
   return { users: watchList(merged, { now: Date.now(), prices: PRICES }) };
+}
+
+const ANNOUNCEMENT_MAX_CHARS = 240;
+async function getAnnouncement(authorization) {
+  await requireAdmin(authorization);
+  const { database } = services();
+  const snapshot = await database.ref('announcements/current').get();
+  return { announcement: snapshot.exists() ? snapshot.val() : null };
+}
+
+async function setAnnouncement(authorization, input) {
+  const actor = await requireAdmin(authorization);
+  const { db, database } = services();
+  const data = input && typeof input === 'object' ? input : {};
+  const currentRef = database.ref('announcements/current');
+  const now = Date.now();
+  if (data.action === 'withdraw') {
+    const current = await currentRef.get();
+    await currentRef.remove();
+    await db.collection('gameAdminActivity').doc(randomUUID()).set({
+      actor, target: 'all', type: 'announcement', detail: { action: 'withdraw', id: current.val()?.id || null }, at: now,
+    });
+    return { ok: true, announcement: null };
+  }
+  if (data.action !== 'publish') reject(400, 'invalid-announcement-action', '공지 작업을 확인해 주세요.');
+  const text = typeof data.text === 'string' ? data.text.replace(/\r\n?/gu, '\n').trim() : '';
+  const length = Array.from(text).length;
+  if (!text || length > ANNOUNCEMENT_MAX_CHARS) reject(400, 'invalid-announcement-text', `공지는 1~${ANNOUNCEMENT_MAX_CHARS}자로 작성해 주세요.`);
+  const announcement = { id: randomUUID(), text, at: now };
+  await currentRef.set(announcement);
+  await db.collection('gameAdminActivity').doc(randomUUID()).set({
+    actor, target: 'all', type: 'announcement', detail: { action: 'publish', id: announcement.id, textLength: length }, at: now,
+  });
+  return { ok: true, announcement };
 }
 
 async function moderate(authorization, input) {
@@ -134,4 +186,4 @@ async function moderate(authorization, input) {
   return { ok: true };
 }
 
-module.exports = { searchUsers, watchAccounts, moderate };
+module.exports = { searchUsers, watchAccounts, getAnnouncement, setAnnouncement, moderate };

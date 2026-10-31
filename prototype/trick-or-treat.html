@@ -197,6 +197,35 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .auth-switch{align-self:flex-end}
 #ad-detail{overflow-wrap:anywhere}
 #ad-detail>.field{margin-top:16px}
+.admin-profile{padding:12px;background:var(--panel-2);border:2px solid var(--edge)}
+.admin-selected{background:var(--panel);color:var(--gold);border-color:var(--gold)}
+.admin-status{display:flex;flex-wrap:wrap;gap:6px}
+.admin-chip{padding:4px 8px;background:var(--night);border:1px solid var(--panel-2);font-size:.8rem}
+.admin-chip.warn{color:var(--candy);border-color:var(--candy)}
+.admin-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.admin-metric{min-width:0;padding:9px;background:var(--panel-2);border:2px solid var(--edge)}
+.admin-metric small,.admin-metric b{display:block}
+.admin-metric small{color:var(--muted);font-size:.74rem}
+.admin-metric b{margin-top:4px;color:var(--gold);font-family:var(--f-px);font-size:.9rem;overflow-wrap:anywhere}
+.admin-disclaimer{margin:0;color:var(--muted);font-size:.8rem}
+.admin-activity-list li.admin-activity{display:block;padding:0}
+.admin-activity details{width:100%;min-width:0}
+.admin-activity summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 2px;cursor:pointer;list-style:none}
+.admin-activity summary::-webkit-details-marker{display:none}
+.admin-activity summary::after{content:'+';flex:none;color:var(--gold);font-family:var(--f-px)}
+.admin-activity details[open] summary::after{content:'−'}
+.admin-activity-main{flex:1;min-width:0}
+.admin-activity-title{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+.admin-activity-time{display:block;margin-top:3px;color:var(--muted);font-size:.76rem}
+.admin-badge{padding:2px 6px;background:var(--panel-2);font-size:.72rem}
+.admin-badge.win{color:var(--slime)}
+.admin-badge.lose{color:var(--candy)}
+.admin-activity-detail{padding:0 8px 12px}
+.admin-activity-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.admin-activity-facts span{padding:6px 8px;background:var(--night);font-size:.8rem;overflow-wrap:anywhere}
+.admin-old-record{color:var(--muted);font-size:.8rem}
+#announcement-text{white-space:pre-wrap;overflow-wrap:anywhere;padding:14px;background:var(--panel-2);border:2px solid var(--edge);min-height:90px}
+#ad-announcement-current{white-space:pre-wrap;overflow-wrap:anywhere;padding:8px;background:var(--panel-2)}
 
 .timing{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 24px);overflow:auto;padding:16px 18px;display:grid;gap:10px;text-align:center;user-select:none;box-shadow:0 0 0 100vmax rgba(11,8,16,.68),0 0 0 4px var(--edge),6px 6px 0 4px rgba(0,0,0,.4)}
 .t-title{margin:0;font-size:1.35rem;font-weight:400;color:var(--gold)}
@@ -233,6 +262,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
   .toast{top:auto;bottom:calc(110px + env(safe-area-inset-bottom,0px))}
   .timing{max-height:calc(100dvh - 24px);overflow:auto;padding:12px;gap:8px}
   .timing-track{height:min(36dvh,260px);min-height:160px}
+  .admin-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .admin-activity-facts{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
@@ -264,6 +295,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-crew" type="button">크루 찾기</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
   <button class="pbtn" id="open-online" type="button" hidden>마을 지도</button>
+  <button class="pbtn" id="open-announcement" type="button" aria-label="마을 공지" title="마을 공지" hidden>📣 공지</button>
   <button class="pbtn icon-btn" id="open-sound" type="button" aria-label="소리" title="소리"><img class="px-img" id="sound-icon" alt=""></button>
   <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
   <span class="tr-break" aria-hidden="true"></span>
@@ -376,6 +408,20 @@ textarea:focus{outline:none;border-color:var(--gold)}
   </div>
 </div>
 
+<div class="modal small" id="announcement" hidden>
+  <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="an-title">
+    <div class="sheet-head">
+      <h2 id="an-title">마을 공지</h2>
+      <button class="pbtn" type="button" data-close="announcement">닫기</button>
+    </div>
+    <p class="note" id="an-empty">현재 등록된 공지가 없어요.</p>
+    <div class="field" id="an-content" hidden>
+      <time class="note" id="an-time"></time>
+      <div id="announcement-text"></div>
+    </div>
+  </div>
+</div>
+
 <div class="modal" id="rank" hidden>
   <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="rk-title">
     <div class="sheet-head">
@@ -405,6 +451,13 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <button class="pbtn" type="button" data-close="admin">닫기</button>
     </div>
     <div class="row"><input id="ad-query" type="text" maxlength="40" placeholder="닉네임 또는 사용자 ID"><button class="pbtn hot" id="ad-search" type="button">검색</button><button class="pbtn" id="ad-watch" type="button">특이 계정</button></div>
+    <div class="field admin-announcement">
+      <span class="lab">📣 마을 공지</span>
+      <span class="note">보내면 모든 플레이어에게 실시간으로 전달돼요. 한 번에 하나만 유지되며, 새 공지를 보내거나 직접 내릴 때까지 보여요.</span>
+      <textarea id="ad-announcement-text" maxlength="480" rows="3" placeholder="마을에 알릴 내용을 적어 주세요." aria-label="마을 공지 내용"></textarea>
+      <div class="row"><small class="note" id="ad-announcement-count">0 / 240자</small><button class="pbtn hot" id="ad-announcement-publish" type="button">공지 보내기</button><button class="pbtn" id="ad-announcement-withdraw" type="button" disabled>공지 내리기</button></div>
+      <span class="note">현재 공지</span><div class="note" id="ad-announcement-current" aria-live="polite">현재 공지를 불러오는 중…</div>
+    </div>
     <ol class="book" id="ad-results"></ol>
     <div id="ad-detail" hidden></div>
   </div>
@@ -641,7 +694,7 @@ async function showBrewNews() {
   brewNews.showing = false;
 }
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'note', 'sound', 'auth', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'note', 'sound', 'announcement', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -751,7 +804,8 @@ const S = {
   pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1', doodleDraft: null, doodleColor: '1',
   myPeer: null, nearPeer: null, stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [],
   village: null, villages: {}, rankList: null, online: [],
-  adminUsers: [], adminSelected: null,
+  adminUsers: [], adminSelected: null, adminAnnouncement: undefined, adminAnnouncementWorking: false,
+  announcement: null, announcementUnread: false,
 };
 const analyticsCall = (method, ...args) => { try { return window.gameAnalytics?.[method]?.(...args); } catch { /* 분석 오류는 플레이를 막지 않는다. */ } };
 const track = (event, properties) => analyticsCall('capture', event, properties);
@@ -1959,6 +2013,11 @@ function renderHud() {
     <span class="status reward">${sharedGame() ? '최종 사탕 순위에 따라 실제 선물 지급' : '연습 중 · 선물 순위에 포함되지 않아요'}</span>`;
   $('#account-session').hidden = !['account', 'firebase'].includes(S.mode);
   $('#open-online').hidden = S.mode !== 'firebase';
+  const announcementButton = $('#open-announcement');
+  announcementButton.hidden = S.mode !== 'firebase' || !S.announcement;
+  announcementButton.textContent = S.announcementUnread ? '📣 새 공지' : '📣 공지';
+  announcementButton.classList.toggle('hot', S.announcementUnread);
+  announcementButton.setAttribute('aria-label', S.announcementUnread ? '새 마을 공지 확인' : '마을 공지 확인');
   renderBoard();
   renderVillagePanel();
   applyFold($('#chatbox'), 'chat');
@@ -2233,6 +2292,14 @@ function renderRanking() {
   if (!$('#ev-stop').dataset.armed) $('#ev-stop').textContent = canFinalize ? '결과 확정' : scheduledAt() ? '예약 취소' : '이벤트 종료';
 }
 
+function renderAnnouncement() {
+  const item = S.announcement;
+  $('#an-empty').hidden = Boolean(item);
+  $('#an-content').hidden = !item;
+  $('#an-time').textContent = item?.at ? new Date(item.at).toLocaleString('ko-KR') : '';
+  $('#announcement-text').textContent = item?.text || '';
+}
+
 // 크루 명단은 순위와 같은 서버 목록(혼자 노는 마을에서는 지도 위 집)에서 닉네임으로 찾는다.
 function renderCrew() {
   const query = $('#cr-search').value.trim().toLowerCase();
@@ -2253,6 +2320,27 @@ function renderCrew() {
 const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
 const adminSeconds = (ms) => ms == null ? '-' : `${(ms / 1000).toFixed(1)}초`;
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
+const adminDelta = (value) => Number.isFinite(value) ? `${signed(value)}개` : null;
+function renderAdminAnnouncement() {
+  const current = $('#ad-announcement-current');
+  current.textContent = S.adminAnnouncement === undefined ? '현재 공지를 불러오는 중…'
+    : S.adminAnnouncement ? S.adminAnnouncement.text : '현재 등록된 공지가 없어요.';
+  $('#ad-announcement-publish').disabled = S.adminAnnouncementWorking;
+  $('#ad-announcement-withdraw').disabled = S.adminAnnouncementWorking || !S.adminAnnouncement;
+  $('#ad-announcement-count').textContent = `${Array.from($('#ad-announcement-text').value).length} / 240자`;
+}
+function adminActivityDetails(item) {
+  const facts = [];
+  if (item.host) facts.push(`대상 UID · ${esc(item.host)}`);
+  if (Number.isFinite(item.level)) facts.push(`난이도 · ${item.level}단계`);
+  if (Number.isFinite(item.durationMs)) facts.push(`소요 시간 · ${adminSeconds(item.durationMs)}`);
+  if (Number.isFinite(item.candyDelta)) facts.push(`내 사탕 변화 · ${adminDelta(item.candyDelta)}`);
+  if (Number.isFinite(item.hostCandyDelta)) facts.push(`상대 사탕 변화 · ${adminDelta(item.hostCandyDelta)}`);
+  if (Number.isFinite(item.pumpkinDelta)) facts.push(`호박 변화 · ${adminDelta(item.pumpkinDelta)}`);
+  if (item.item) facts.push(`설치 장식 · ${esc(item.item)}`);
+  if (facts.length) return `<div class="admin-activity-facts">${facts.map((fact) => `<span>${fact}</span>`).join('')}</div>`;
+  return '<span class="admin-old-record">이전 기록 · 상세 정보를 저장하기 전의 활동이에요.</span>';
+}
 // 특이 계정은 참고 표시일 뿐이라, 숫자를 보고 운영자가 자세히 확인한 뒤 조치한다.
 function adminWatchHtml() {
   return S.adminWatch.length ? S.adminWatch.map((u) => `<li><div><b>${esc(u.nick)}</b>${u.banned ? ' · 밴' : ''}${u.flags.map((f) => ` <small class="flag">${esc(f)}</small>`).join('')}<br>
@@ -2263,19 +2351,58 @@ function adminWatchHtml() {
 }
 function renderAdmin() {
   const results = $('#ad-results'), detail = $('#ad-detail');
-  results.innerHTML = S.adminView === 'watch' ? adminWatchHtml() : S.adminUsers.map((user) => `<li><button class="pbtn" type="button" data-admin-target="${user.id}">${esc(user.nick)} · ${user.id.slice(0, 8)}${user.banned ? ' · 밴' : ''}</button></li>`).join('');
+  renderAdminAnnouncement();
+  results.innerHTML = S.adminView === 'watch' ? adminWatchHtml() : S.adminUsers.map((user) => `<li><button class="pbtn${S.adminSelected === user.id ? ' admin-selected' : ''}" type="button" data-admin-target="${user.id}" aria-pressed="${S.adminSelected === user.id}">${esc(user.nick)} · ${user.id.slice(0, 8)}${user.banned ? ' · 밴' : ''}</button></li>`).join('');
   const user = S.adminUsers.find((item) => item.id === S.adminSelected);
   detail.hidden = !user;
   if (!user) { detail.innerHTML = ''; return; }
+  const stats = user.challengeStats || {};
+  const rate = Number.isFinite(stats.successRate) ? `${stats.successRate}%` : '기록 없음';
+  const average = Number.isFinite(stats.averageDurationMs) ? adminSeconds(stats.averageDurationMs) : '기록 없음';
+  const candyTotal = stats.candyDeltaKnownCount ? `${signed(stats.candyDelta)}개` : '기록 없음';
+  const statsScope = stats.sampleLimited ? '최근 24시간 · 저장 기록 상한 도달' : '최근 24시간';
   const activity = user.activity.length
-    ? user.activity.map((item) => `<li><time>${new Date(item.at).toLocaleString('ko-KR')}</time><div>${esc(adminActivityLabel(item))}${item.host ? ` · 대상 ${esc(item.host.slice(0, 8))}` : ''}${item.moved ? ' · 사탕 이동' : ''}</div></li>`).join('')
+    ? user.activity.map((item) => {
+      const outcome = item.type === 'knock-finish' ? `<span class="admin-badge ${item.outcome === 'win' ? 'win' : 'lose'}">${item.outcome === 'win' ? '성공' : '실패'}</span>` : '';
+      return `<li class="admin-activity"><details><summary><span class="admin-activity-main"><span class="admin-activity-title">${esc(adminActivityLabel(item))}${outcome}${item.moved ? '<span class="admin-badge">사탕 이동</span>' : ''}</span><time class="admin-activity-time">${new Date(item.at).toLocaleString('ko-KR')}</time></span></summary><div class="admin-activity-detail">${adminActivityDetails(item)}</div></details></li>`;
+    }).join('')
     : '<li><div>기록된 활동이 없어요.</div></li>';
   const notes = user.notes.length
     ? user.notes.map((item) => `<li><div>${esc(item.text)}<small class="note"> · ${new Date(item.at).toLocaleString('ko-KR')}</small></div><button class="pbtn" type="button" data-admin-delete-note="${item.host}" data-admin-note-at="${item.at}">삭제</button></li>`).join('')
     : '<li><div>삭제할 방명록이 없어요.</div></li>';
-  detail.innerHTML = `<div class="field"><span class="lab">${esc(user.nick)} · ${esc(user.id)}</span><span class="note">사탕 ${user.candies}개 · 호박 ${user.pumpkins}개 · ${user.village ? `${user.village}번 마을` : '마을 미배정'}</span><span class="note">밴 ${user.banned ? `상태 · ${esc(user.banReason)}` : '아님'} · 순위 제외 ${user.rankExcluded ? '예' : '아니요'} · 집 숨김 ${user.houseHidden ? '예' : '아니요'}</span>
+  detail.innerHTML = `<div class="field admin-profile"><span class="lab">${esc(user.nick)}</span><span class="note">사용자 UID · ${esc(user.id)}</span><div class="admin-status"><span class="admin-chip">사탕 ${user.candies}개</span><span class="admin-chip">호박 ${user.pumpkins}개</span><span class="admin-chip">${user.village ? `${user.village}번 마을` : '마을 미배정'}</span><span class="admin-chip ${user.banned ? 'warn' : ''}">${user.banned ? `밴 · ${esc(user.banReason)}` : '밴 아님'}</span><span class="admin-chip">순위 제외 ${user.rankExcluded ? '예' : '아니요'}</span><span class="admin-chip">집 숨김 ${user.houseHidden ? '예' : '아니요'}</span></div>
     <div class="row"><button class="pbtn ${user.banned ? '' : 'hot'}" type="button" data-admin-action="${user.banned ? 'unban' : 'ban'}">${user.banned ? '밴 해제' : '밴'}</button><button class="pbtn" type="button" data-admin-action="rank" data-value="${!user.rankExcluded}">${user.rankExcluded ? '순위 포함' : '순위 제외'}</button><button class="pbtn" type="button" data-admin-action="house" data-value="${!user.houseHidden}">${user.houseHidden ? '집 복원' : '집 숨김'}</button></div></div>
-    <div class="field"><span class="lab">최근 채팅</span>${user.latestChat ? `<div class="shop-item"><div>${esc(user.latestChat.text || '')}</div><button class="pbtn" type="button" data-admin-action="delete-chat">삭제</button></div>` : '<span class="note">현재 채팅이 없어요.</span>'}</div><div class="field"><span class="lab">최근 활동</span><ol class="book">${activity}</ol></div><div class="field"><span class="lab">방명록</span><ol class="book">${notes}</ol></div>`;
+    <div class="field"><span class="lab">도전 현황 · ${statsScope}</span><div class="admin-metrics"><div class="admin-metric"><small>완료한 도전</small><b>${Number(stats.completed) || 0}회</b></div><div class="admin-metric"><small>성공률</small><b>${rate}</b></div><div class="admin-metric"><small>평균 소요 시간</small><b>${average}</b></div><div class="admin-metric"><small>도전자 사탕 변화</small><b>${candyTotal}</b></div></div><p class="admin-disclaimer">성공률은 참고 지표예요. 이 수치만으로 자동 밴하지 않고, 도전 기록을 함께 확인해 주세요.</p></div>
+    <div class="field"><span class="lab">최근 채팅</span>${user.latestChat ? `<div class="shop-item"><div>${esc(user.latestChat.text || '')}</div><button class="pbtn" type="button" data-admin-action="delete-chat">삭제</button></div>` : '<span class="note">현재 채팅이 없어요.</span>'}</div><div class="field"><span class="lab">최근 활동</span><ol class="book admin-activity-list">${activity}</ol></div><div class="field"><span class="lab">방명록</span><ol class="book">${notes}</ol></div>`;
+}
+async function loadAdminAnnouncement() {
+  if (!S.isOwner || S.mode !== 'firebase') return;
+  const token = await S.account.auth.currentUser.getIdToken();
+  const data = await accountRequest('/api/game/admin?view=announcement', { headers: { authorization: `Bearer ${token}` } });
+  S.adminAnnouncement = data.announcement;
+  renderAdminAnnouncement();
+}
+async function adminAnnouncementAction(action) {
+  if (!S.isOwner || S.adminAnnouncementWorking) return;
+  const text = $('#ad-announcement-text').value.trim();
+  if (action === 'publish' && !text) { toast('공지 내용을 적어 주세요.'); return; }
+  if (action === 'publish' && Array.from(text).length > 240) { toast('공지는 240자까지 쓸 수 있어요.'); return; }
+  S.adminAnnouncementWorking = true;
+  renderAdminAnnouncement();
+  try {
+    const token = await S.account.auth.currentUser.getIdToken();
+    const result = await accountRequest('/api/game/admin', {
+      method: 'POST', headers: { authorization: `Bearer ${token}` },
+      body: JSON.stringify({ type: 'announcement', action, text }),
+    });
+    S.adminAnnouncement = result.announcement;
+    if (action === 'publish') $('#ad-announcement-text').value = '';
+    renderAdminAnnouncement();
+    toast(action === 'publish' ? '마을에 공지를 보냈어요.' : '공지를 내렸어요.');
+  } finally {
+    S.adminAnnouncementWorking = false;
+    renderAdminAnnouncement();
+  }
 }
 async function loadAdminUsers() {
   if (!S.isOwner || S.mode !== 'firebase') return;
@@ -3089,7 +3216,12 @@ function openModal(id) {
   if (id === 'rank') { void loadRanking(); renderRanking(); }
   if (id === 'crew') { void loadRanking(); renderCrew(); }
   if (id === 'online') renderOnline();
-  if (id === 'admin') { Object.assign(S, { adminUsers: [], adminWatch: [], adminView: 'search', adminSelected: null }); renderAdmin(); }
+  if (id === 'admin') {
+    Object.assign(S, { adminUsers: [], adminWatch: [], adminView: 'search', adminSelected: null, adminAnnouncement: undefined });
+    renderAdmin();
+    void loadAdminAnnouncement().catch((error) => toast(error.message));
+  }
+  if (id === 'announcement') { S.announcementUnread = false; renderAnnouncement(); renderHud(); }
   if (id === 'note') renderNote();
   if (id === 'sound') renderSound();
   $(`#${id}`).hidden = false;
@@ -3304,6 +3436,9 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'open-rank' || t.id === 'board-open') openModal('rank');
   else if (t.id === 'open-crew') openModal('crew');
   else if (t.id === 'open-admin' && S.isOwner) openModal('admin');
+  else if (t.id === 'open-announcement') openModal('announcement');
+  else if (t.id === 'ad-announcement-publish') adminAnnouncementAction('publish').catch((error) => toast(error.message));
+  else if (t.id === 'ad-announcement-withdraw') adminAnnouncementAction('withdraw').catch((error) => toast(error.message));
   else if (t.dataset.fold) toggleFold(t.dataset.fold);
   else if (t.id === 'open-online') openModal('online');
   else if (t.id === 'open-sound') openModal('sound');
@@ -3386,6 +3521,7 @@ $('#chatbar').addEventListener('submit', (e) => { e.preventDefault(); sendChat()
 $('#chatlog').addEventListener('scroll', () => { if ($('#chatlog').scrollTop < 24) void chatHistory.loadOlder?.(); });
 $('#auth-form').addEventListener('submit', submitAccountForm);
 $('#cr-search').addEventListener('input', renderCrew);
+$('#ad-announcement-text').addEventListener('input', renderAdminAnnouncement);
 $('#chat-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeChat(); } });
 $('#in-name').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !isImeComposing(e)) {
@@ -3566,7 +3702,7 @@ async function connectFirebaseGame(uid) {
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
-  Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [] });
+  Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [], announcement: null, announcementUnread: false });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0;
   Object.assign(chatHistory, { more: false, oldest: null, loading: false, loadOlder: null }); renderChatLog();
   const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
@@ -3695,6 +3831,7 @@ async function connectFirebaseGame(uid) {
     if (ownRef) void rt.remove(ownRef).catch(() => {});
     void rt.remove(onlineRef).catch(() => {});
     rt.goOffline(a.database); S.room = null; S.village = null; S.online = [];
+    if (S.me === uid) { S.announcement = null; S.announcementUnread = false; renderHud(); }
   };
   const villageReady = joinVillage(session.village);
   const loadChat = async (before) => {
@@ -3728,6 +3865,21 @@ async function connectFirebaseGame(uid) {
       presenceDirty = true;
     } catch { toast('접속 상태를 저장하지 못했어요. 새로고침해 주세요.'); }
   }));
+  let announcementInitialized = false;
+  stops.push(rt.onValue(rt.ref(a.database, 'announcements/current'), (snapshot) => {
+    const value = snapshot.val();
+    const next = value && typeof value.id === 'string' && typeof value.text === 'string' && Number.isFinite(value.at)
+      ? { id: value.id, text: value.text, at: value.at } : null;
+    if (announcementInitialized && next?.id && next.id !== S.announcement?.id) {
+      S.announcementUnread = true;
+      toast('새 공지가 도착했어요. 📣 버튼에서 확인할 수 있어요.');
+    }
+    announcementInitialized = true;
+    S.announcement = next;
+    if (!next) S.announcementUnread = false;
+    if (!$('#announcement').hidden) renderAnnouncement();
+    renderHud();
+  }, () => {}));
   const sweep = setInterval(() => { refreshPeers(); refreshOnline(); }, 10000);
   const beat = setInterval(() => { if (S.networkConnected && !disposed) void writeOnline().catch(() => {}); }, PRESENCE_HEARTBEAT_MS);
   const rankTimer = setInterval(() => void loadRanking({ quiet: true }), RANK_REFRESH_MS);
