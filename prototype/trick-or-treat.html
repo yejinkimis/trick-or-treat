@@ -2017,7 +2017,7 @@ function renderHud() {
     loading: '마을 불러오는 중…',
     practice: '연습 모드 · 허수아비 집으로 연습해요. 저장되지 않아요',
     account: '연습 마을 · 사탕과 순위 기록은 저장되지 않아요',
-    firebase: S.networkConnected ? `${villageLabel(S.village)} ${online.size + 1}명 · 전체 ${Math.max(S.online.length, online.size + 1)}명 · 기록 저장 중` : '마을 연결 중…',
+    firebase: S.networkConnected ? `${villageLabel(S.village)} ${online.size + 1}명 · 전체 ${onlineTotal(onlineByVillage())}명 · 기록 저장 중` : '마을 연결 중…',
   }[S.mode] || (S.readOnly ? '구경만 가능 · 참여자(Contributor) 권한이 있어야 놀 수 있어요'
     : online.size ? `지금 마을에 ${online.size + 1}명` : '지금 마을엔 나 혼자');
   const fx = S.me ? activeFx(S.me) : null;
@@ -2071,19 +2071,33 @@ function renderBoard() {
   $('#board-me').textContent = rank ? `나 ${list.length}명 중 ${rank}등 · 사탕 ${list[rank - 1].n}개` : `참가 ${list.length}명`;
 }
 
+// 지금 있는 마을은 지도에 그려진 사람(나 포함)으로 세고, 다른 마을은 접속 기록으로 센다.
+// 접속 기록은 나간 뒤에도 최대 1분 남고 분장을 고르기 전인 사람도 들어 있어서, 지금 마을 숫자가 보이는 사람보다 많아지기 때문이다.
+function onlineByVillage() {
+  const here = new Set([S.me]);
+  for (const g of ghosts.values()) if (!g.bot && g.by) here.add(g.by);
+  const groups = new Map(S.village ? [[S.village, [...here]]] : []);
+  for (const { by, presence } of S.online) {
+    if (presence.v === S.village || here.has(by)) continue;
+    if (!groups.has(presence.v)) groups.set(presence.v, []);
+    groups.get(presence.v).push(by);
+  }
+  return groups;
+}
+const onlineTotal = (groups) => [...groups.values()].reduce((sum, people) => sum + people.length, 0);
+
 // 오른쪽 위에 마을이 어떻게 이어지는지와 마을마다 접속 인원을 늘 띄워 두고, 누르면 그 마을로 간다. 마을 지도 창과 같은 기록을 쓴다.
 function renderVillagePanel() {
   const panel = $('#vmap');
-  const counts = new Map();
-  for (const { presence } of S.online) counts.set(presence.v, (counts.get(presence.v) || 0) + 1);
-  const total = Math.max(villageCount(), ...counts.keys());
+  const groups = onlineByVillage();
+  const total = Math.max(villageCount(), ...groups.keys());
   panel.hidden = S.mode !== 'firebase' || !total || S.readOnly;
   if (panel.hidden) return;
   applyFold(panel, 'vmap');
   const label = folds.vmap && S.village ? `마을 지도 · 지금 ${S.village}. ${villageLabel(S.village)}` : '마을 지도';
   if ($('#vmap-label').textContent !== label) $('#vmap-label').textContent = label;
   const nodes = Array.from({ length: total }, (_, i) => i + 1).map((v) => {
-    const row = `<span>${v}. ${esc(villageLabel(v))}${v === S.village ? ' · 여기' : ''}</span><b>${counts.get(v) || 0}명</b>`;
+    const row = `<span>${v}. ${esc(villageLabel(v))}${v === S.village ? ' · 여기' : ''}</span><b>${groups.get(v)?.length || 0}명</b>`;
     return v === S.village ? `<div class="vmap-node here" aria-current="true">${row}</div>` : `<button class="vmap-node" type="button" data-go="${v}">${row}</button>`;
   });
   const html = total === 1 ? nodes[0]
@@ -2095,11 +2109,7 @@ function renderVillagePanel() {
 // 마을 지도는 이미 받고 있는 마을 이름과 접속자 기록(마을 번호만)으로 그려서 추가 읽기가 없다.
 // 게임 속 표지판 방향 그대로 1번을 맨 위, 마지막 번호를 맨 아래에 세로 길로 놓는다.
 function renderOnline() {
-  const groups = new Map();
-  for (const { by, presence } of S.online) {
-    if (!groups.has(presence.v)) groups.set(presence.v, []);
-    groups.get(presence.v).push(by);
-  }
+  const groups = onlineByVillage();
   const total = Math.max(villageCount(), ...groups.keys());
   const nodes = Array.from({ length: total }, (_, i) => {
     const v = i + 1, here = v === S.village, people = groups.get(v)?.length || 0;
@@ -2111,7 +2121,7 @@ function renderOnline() {
       : `<p class="chain-end">▲ 1번에서 위로 가면 ${total}번</p>${nodes.join('<span class="chain-link" aria-hidden="true">▼</span>')}<p class="chain-end">▼ ${total}번에서 아래로 가면 1번</p>`;
   const list = [...groups.keys()].sort((a, b) => a - b).map((v) => `<li><div><b>${v}. ${esc(villageLabel(v))}</b>${v === S.village ? ' · 지금 여기' : ''}<br>
     <span class="guest-message">${groups.get(v).map((id) => esc(id === S.me ? `${nameOf(id)} (나)` : nameOf(id))).join(', ')}</span></div><time>${groups.get(v).length}명</time></li>`).join('');
-  $('#on-sub').textContent = `마을 ${total}개 · 접속 ${S.online.length}명`;
+  $('#on-sub').textContent = `마을 ${total}개 · 접속 ${onlineTotal(groups)}명`;
   // 접속 기록은 수시로 갱신되므로 내용이 바뀔 때만 다시 그려 누르려던 마을이 사라지지 않게 한다.
   if (chain !== renderOnline.chain) $('#on-chain').innerHTML = renderOnline.chain = chain;
   if (list !== renderOnline.list) $('#on-list').innerHTML = renderOnline.list = list;
