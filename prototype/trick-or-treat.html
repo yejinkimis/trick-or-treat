@@ -163,6 +163,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .rank .pbtn{font-size:.85rem;padding:7px 9px 6px}
 #cr-search{display:block;box-sizing:border-box;width:100%;margin:4px 0}
 .crew small{color:var(--muted);margin-left:6px}
+.crew .on{display:inline-block;width:8px;height:8px;margin-right:6px;background:var(--slime);box-shadow:0 0 0 2px var(--edge);vertical-align:middle}
 .auth .sheet{width:min(480px,100%)}
 .modal.small .sheet{width:min(420px,100%)}
 .pbtn.icon-btn{padding:8px 10px 7px}
@@ -1987,11 +1988,12 @@ function renderCrew() {
   const query = $('#cr-search').value.trim().toLowerCase();
   const crew = ranking().filter((r) => canVisit(r.id)).sort((a, b) => nameOf(a.id).localeCompare(nameOf(b.id), 'ko'));
   const shown = crew.filter((r) => !query || nameOf(r.id).toLowerCase().includes(query));
+  const online = new Set(S.online.map(({ by }) => by));
   $('#cr-sub').textContent = `크루 ${crew.length}명`;
   const html = shown.length
     ? shown.map((r) => `<li class="${r.id === S.me ? 'mine' : ''}">
         <img class="px-img" src="${spriteUrl(r.costume || S.players[r.id]?.costume || 'plain', 2)}" alt="">
-        <div><b>${esc(nameOf(r.id))}</b>${houseVillage(r.id) ? `<small>${esc(villageLabel(houseVillage(r.id)))}</small>` : ''}</div>
+        <div>${online.has(r.id) ? '<span class="on" role="img" aria-label="접속 중" title="접속 중"></span>' : ''}<b>${esc(nameOf(r.id))}</b>${houseVillage(r.id) ? `<small>${esc(villageLabel(houseVillage(r.id)))}</small>` : ''}</div>
         <button class="pbtn" type="button" data-visit="${esc(r.id)}">${r.id === S.me ? '우리 집' : '집 가기'}</button></li>`).join('')
     : `<li class="note">${query ? '그런 닉네임의 크루가 없어요.' : S.rankLoading ? '크루 명단을 불러오는 중…' : '아직 집이 있는 크루가 없어요.'}</li>`;
   // 명단이 갱신돼도 내용이 같으면 그대로 두어 누르려던 '집 가기' 버튼이 바뀌지 않게 한다.
@@ -3233,6 +3235,7 @@ async function connectFirebaseGame(uid) {
     for (const { by } of S.online) know(by);
     renderHud();
     if (!$('#online').hidden) renderOnline();
+    if (!$('#crew').hidden) renderCrew();
   };
   const seen = new Set(), joined = Date.now();
   const receive = (snapshot) => {
