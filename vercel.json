@@ -3,6 +3,12 @@
   "outputDirectory": "dist",
   "framework": null,
   "regions": ["icn1"],
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "*": false
+    }
+  },
   "redirects": [
     { "source": "/prototype/trick-or-treat.html", "destination": "/", "permanent": false }
   ]
