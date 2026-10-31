@@ -1081,25 +1081,47 @@ function onChat(msg) {
   if (here) chatBubbles.set(msg.sameTab ? 'me' : msg.peer, { id: msg.data?.id, text, until: Date.now() + CHAT_BUBBLE_MS });
   addChat([{ id: msg.data?.id, by: msg.sameTab ? S.me : msg.by, v: village, text, at: Number(msg.data?.at) || Date.now() }]);
 }
+const CHAT_KEY = /^-[\w-]{19}$/;
+const chatAtBottom = () => { const box = $('#chatlog'); return box.scrollHeight - box.scrollTop - box.clientHeight < 24; };
 function addChat(entries, { older = false } = {}) {
   const known = new Set(chatLog.map((c) => c.id).filter(Boolean));
   const fresh = entries.filter((c) => !c.id || !known.has(c.id));
   if (!fresh.length) return;
+  const newest = chatLog.at(-1)?.at ?? -Infinity;
+  const appended = !older && fresh.every((c) => c.at >= newest);
   chatLog.push(...fresh);
-  chatLog.sort((a, b) => a.at - b.at);
-  if (!older && chatLog.length > CHAT_KEEP) chatLog.splice(0, chatLog.length - CHAT_KEEP);
-  renderChatLog({ older });
+  if (!appended) chatLog.sort((a, b) => a.at - b.at);
+  // 맨 아래를 볼 때만 오래된 줄을 100줄씩 덜어 낸다. 덜어 낸 구간은 위로 스크롤하면 남은 첫 줄 앞부터 다시 받는다.
+  if (!older && chatLog.length > CHAT_KEEP + 100 && chatAtBottom()) {
+    chatLog.splice(0, chatLog.length - CHAT_KEEP);
+    const first = chatLog.find((c) => CHAT_KEY.test(c.id || ''));
+    if (first) Object.assign(chatHistory, { oldest: first.id, more: true });
+    renderChatLog();
+    return;
+  }
+  if (appended && renderChatLog.last !== undefined && !$('#chatbox').hidden) appendChatLines(fresh);
+  else renderChatLog({ older });
 }
 // 전체 탭은 모든 마을, 우리 마을 탭은 지금 있는 마을 채팅만 보여 준다. 다른 마을 채팅에는 마을 이름을 붙인다.
+const chatElsewhere = (c) => c.v !== undefined && c.v !== S.village;
+const chatShown = (c) => (S.chatTab || 'all') === 'all' || !chatElsewhere(c);
+const chatLine = (c) => `<p><b>${chatElsewhere(c) ? `<small>[${esc(villageLabel(c.v))}]</small> ` : ''}${esc(c.name || (c.by ? nameOf(c.by) : '이웃'))}</b>${esc(c.text)}</p>`;
+// 새 채팅은 기록을 얼마나 불러 뒀든 맨 아래에 그 줄만 붙인다. 전체를 다시 그리는 건 탭·마을이 바뀌거나 이전 기록을 받을 때뿐이다.
+function appendChatLines(fresh) {
+  const html = fresh.filter(chatShown).map(chatLine).join('');
+  if (!html) return;
+  const box = $('#chatlog'), atBottom = chatAtBottom();
+  box.insertAdjacentHTML('beforeend', html);
+  renderChatLog.last += html;
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
 function renderChatLog({ older = false } = {}) {
   const box = $('#chatlog'), tab = S.chatTab || 'all';
   $('#chatbox').hidden = !chatLog.length;
   for (const button of document.querySelectorAll('[data-chat-tab]')) button.setAttribute('aria-pressed', String(button.dataset.chatTab === tab));
-  const elsewhere = (c) => c.v !== undefined && c.v !== S.village;
-  const lines = chatLog.filter((c) => tab === 'all' || !elsewhere(c)).map((c) => `<p><b>${elsewhere(c) ? `<small>[${esc(villageLabel(c.v))}]</small> ` : ''}${esc(c.name || (c.by ? nameOf(c.by) : '이웃'))}</b>${esc(c.text)}</p>`);
-  const html = (chatHistory.more ? '<p class="more">위로 올리면 이전 채팅을 불러와요</p>' : '') + lines.join('');
+  const html = (chatHistory.more ? '<p class="more">위로 올리면 이전 채팅을 불러와요</p>' : '') + chatLog.filter(chatShown).map(chatLine).join('');
   if (html === renderChatLog.last) return;
-  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 24, fromBottom = box.scrollHeight - box.scrollTop;
+  const atBottom = chatAtBottom(), fromBottom = box.scrollHeight - box.scrollTop;
   box.innerHTML = renderChatLog.last = html;
   // 이전 채팅을 위에 붙일 때는 보던 줄이 그대로 있게 하고, 맨 아래를 보고 있었으면 새 채팅을 따라 내려간다.
   if (older) box.scrollTop = box.scrollHeight - fromBottom;

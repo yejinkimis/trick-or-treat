@@ -32,6 +32,7 @@ function game({ reducedMotion = true, storage } = {}) {
       getContext: () => drawing, toDataURL: () => 'data:image/png;base64,test',
       addEventListener(type, fn) { this.listeners[type] = fn; }, setPointerCapture() {}, focus() { document.activeElement = this; }, blur() { document.activeElement = null; },
       querySelector: () => element('', 'button'), querySelectorAll: () => [],
+      insertAdjacentHTML(position, markup) { this.innerHTML += markup; }, scrollTop: 0, scrollHeight: 0,
       firstChild: { textContent: '' },
     };
     Object.defineProperty(el, 'className', { get: () => [...classes].join(' '), set(value) { classes.clear(); value.split(/\s+/).forEach((x) => classes.add(x)); } });
@@ -915,6 +916,25 @@ test('the chat window keeps history in time order, pages older lines in, and fil
   assert.match(log(), /하나/);
   g.run(`toggleFold('chat')`);
   assert.equal(g.elements.get('chatbox').classList.contains('folded'), true);
+});
+
+test('a new chat line is appended without redrawing the history, and trimming keeps the place to page from', () => {
+  const g = game(); village(g);
+  const box = g.elements.get('chatlog');
+  g.run(`onChat({ data: { id: 'a1', text: '처음', v: 1, at: 100 }, by: 'near', peer: 'near:tab' })`);
+  box.innerHTML += '<i>그대로</i>';
+  g.run(`onChat({ data: { id: 'a2', text: '다음', v: 1, at: 200 }, by: 'near', peer: 'near:tab' })`);
+  assert.match(box.innerHTML, /<i>그대로<\/i><p><b>이웃<\/b>다음<\/p>$/, 'only the new line is added');
+
+  const lines = (from, count) => `Array.from({ length: ${count} }, (_, i) => ({ id: '-T' + String(${from} + i).padStart(18, '0'), by: 'near', v: 1, text: 'x', at: 1000 + ${from} + i }))`;
+  box.scrollHeight = 5000; box.scrollTop = 0;
+  g.run(`addChat(${lines(0, 1101)})`);
+  assert.equal(g.run('chatLog.length'), 1103, 'nothing is dropped while reading older lines');
+  box.scrollTop = 5000;
+  g.run(`addChat(${lines(1101, 1)})`);
+  assert.equal(g.run('chatLog.length'), 1000);
+  assert.equal(g.run('chatHistory.oldest'), '-T' + String(102).padStart(18, '0'), 'the next page starts right before the first line kept');
+  assert.equal(g.run('chatHistory.more'), true);
 });
 
 test('the village map lists villages top to bottom in sign order and travels to the chosen one', async () => {
