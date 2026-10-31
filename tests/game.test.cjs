@@ -819,6 +819,16 @@ test('visits from another village are read from the host document without double
   assert.equal(g.run('toasts.length'), 3);
   assert.match(g.run('toasts.at(-1)'), /먼집이 방명록에 글을 남겼어요: 또 올게/);
   assert.match(g.run('guestbookHtml(S.me)'), /또 올게/);
+  assert.doesNotMatch(g.run('guestbookHtml(S.me)'), /사탕 잡기에 성공/);
+  const press = (tab) => g.run(`document.listeners.click({ target: { classList: { contains: () => false }, closest: () => ({ id: '', dataset: { bookTab: '${tab}' } }) }, preventDefault() {} })`);
+  press('knock');
+  assert.equal(g.run('S.bookTab'), 'knock');
+  assert.equal((g.elements.get('book').innerHTML.match(/<li>/g) || []).length, 2);
+  assert.doesNotMatch(g.elements.get('book').innerHTML, /또 올게/);
+  g.run('S.players.me.guests = []; delete S.players.near.knocks; renderHouse()');
+  assert.match(g.elements.get('book').innerHTML, /아직 문을 두드린 사람이 없어요/);
+  press('note');
+  assert.match(g.elements.get('book').innerHTML, /아직 남긴 글이 없어요/);
 });
 
 test('online rankings come from the shared server list and are not refetched within thirty seconds', async () => {
