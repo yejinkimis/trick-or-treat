@@ -1661,6 +1661,7 @@ function frame(now) {
     noticeEventTurn();
     renderHud();
     renderAction();
+    S.account?.promptDuel?.();
     if (!$('#duel').hidden) renderDuelModal();
     const duel = activeOrRecentDuel();
     if (duel?.status === 'pending' || duel?.status === 'active') void expireDuelIfDue(duel);
@@ -2194,27 +2195,37 @@ function renderDuelModal() {
   S.duel = duel;
   if (duel && ['pending', 'active'].includes(duel.status)) void expireDuelIfDue(duel);
   const pending = Boolean(S.duelActionPending || S.readOnly || eventState() === 'ended');
+  const target = duelTarget();
+  const maxStake = Math.min(10, Math.max(0, candiesOf(S.me)));
+  // Keep selects and buttons alive between clock ticks and identical snapshots.
+  const renderKey = JSON.stringify([duel, pending, S.duelActionPending, duel ? null : target, duel ? null : maxStake]);
+  const updateClock = () => {
+    const clock = content.querySelector('[data-duel-clock]');
+    if (!clock || !duel) return;
+    const now = Date.now() + (Number(S.clockOffset) || 0);
+    clock.textContent = duel.status === 'active'
+      ? `다음 타격까지 ${fmtLeft(Math.max(0, duel.expiresAt - now))} · 최대 ${fmtLeft(Math.max(0, duel.hardDeadline - now))}`
+      : `남은 시간 ${fmtLeft(Math.max(0, duel.expiresAt - now))}`;
+  };
+  if (content.dataset.renderKey === renderKey) { updateClock(); return; }
   let html = '';
   if (duel?.status === 'pending' && duel.opponent === S.me) {
     const challenger = nameOf(duel.challenger);
     html = `<p class="note">${esc(challenger)} 님이 1대1 대전을 신청했어요. 두 사람 모두 ${duel.stake}개를 걸고, 이긴 사람이 ${duel.stake * 2}개를 가져가요. 수락하면 사탕이 먼저 맡겨져요.</p>
-      <p class="note">남은 시간 ${fmtLeft(Math.max(0, duel.expiresAt - (Date.now() + (Number(S.clockOffset) || 0))))}</p>
+      <p class="note" data-duel-clock></p>
       <div class="row"><button class="pbtn hot" type="button" data-duel-act="duel-accept" data-duel-id="${esc(duel.id)}" ${pending ? 'disabled' : ''}>수락하고 대전</button><button class="pbtn" type="button" data-duel-act="duel-decline" data-duel-id="${esc(duel.id)}" ${S.duelActionPending ? 'disabled' : ''}>거절</button></div>`;
   } else if (duel?.status === 'pending' && duel.challenger === S.me) {
     html = `<p class="note">${esc(nameOf(duel.opponent))} 님의 수락을 기다리는 중이에요. 수락하면 각자 ${duel.stake}개를 걸고 승자가 ${duel.stake * 2}개를 가져가요.</p>
-      <p class="note">남은 시간 ${fmtLeft(Math.max(0, duel.expiresAt - (Date.now() + (Number(S.clockOffset) || 0))))}</p>
+      <p class="note" data-duel-clock></p>
       <button class="pbtn" type="button" data-duel-act="duel-cancel" data-duel-id="${esc(duel.id)}" ${S.duelActionPending ? 'disabled' : ''}>신청 취소</button>`;
   } else if (duel?.status === 'active') {
     const opponent = duel.players?.find((id) => id !== S.me);
     const meHits = Number(duel.hits?.[S.me]?.count) || 0;
     const opponentHits = Number(duel.hits?.[opponent]?.count) || 0;
-    const now = Date.now() + (Number(S.clockOffset) || 0);
-    const remaining = Math.max(0, duel.expiresAt - now);
-    const hardRemaining = Math.max(0, duel.hardDeadline - now);
     html = `<p class="note">${esc(nameOf(opponent))} 님과 대전 중이에요. 먼저 상대를 5번 맞혀 기절시키세요.</p>
       <p>내 기절까지 <b>${Math.max(0, 5 - meHits)}대</b> · 상대 기절까지 <b>${Math.max(0, 5 - opponentHits)}대</b></p>
       <progress max="5" value="${Math.min(5, opponentHits)}" aria-label="상대를 맞힌 횟수"></progress>
-      <p class="note">${duel.stake * 2}개가 승자에게 가요 · 다음 타격까지 ${fmtLeft(remaining)} · 최대 ${fmtLeft(hardRemaining)}</p>`;
+      <p class="note">${duel.stake * 2}개가 승자에게 가요 · <span data-duel-clock></span></p>`;
   } else if (duel?.status === 'completed') {
     const won = duel.winner === S.me;
     html = `<p class="note">${won ? '이겼어요!' : '기절했어요. 다음엔 복수전이에요!'} ${esc(nameOf(duel.winner))} 님이 사탕 ${duel.stake * 2}개를 가져갔어요.</p>
@@ -2226,8 +2237,6 @@ function renderDuelModal() {
   } else if (duel?.status === 'cancelled') {
     html = `<p class="note">대전 신청을 취소했어요.</p><button class="pbtn" type="button" data-duel-act="duel-new">다시 신청</button>`;
   } else {
-    const target = duelTarget();
-    const maxStake = Math.min(10, Math.max(0, candiesOf(S.me)));
     html = target && maxStake > 0
       ? `<p class="note">상대: <b>${esc(target.nick)}</b> · ${esc(villageLabel(S.village))}. 각자 같은 수의 사탕을 걸고, 이긴 사람이 전부 가져가요.</p>
         <label for="du-stake">걸 사탕 수</label><select id="du-stake" ${pending ? 'disabled' : ''}>${Array.from({ length: maxStake }, (_, i) => i + 1).map((n) => `<option value="${n}"${n === Math.min(selectedStake, maxStake) ? ' selected' : ''}>${n}개씩 · 승자 ${n * 2}개</option>`).join('')}</select>
@@ -2235,6 +2244,8 @@ function renderDuelModal() {
       : `<p class="note">${target ? '대전에 걸 사탕이 없어요.' : '대전 신청을 하려면 같은 마을에서 상대 캐릭터 가까이 다가가세요. 수락 뒤 뿅망치 5대를 먼저 맞히면 승리해요.'}</p>`;
   }
   content.innerHTML = html;
+  content.dataset.renderKey = renderKey;
+  updateClock();
 }
 
 async function runDuelAction(type, details = {}) {
@@ -2243,6 +2254,7 @@ async function runDuelAction(type, details = {}) {
   renderDuelModal();
   try {
     await gameRequest({ type, ...details });
+    void S.account?.refreshDuels?.().catch(() => {});
     const messages = {
       'duel-offer': '대전을 신청했어요. 상대가 수락하면 사탕이 맡겨져요.',
       'duel-decline': '대전 신청을 거절했어요.',
@@ -4451,18 +4463,17 @@ async function connectFirebaseGame(uid) {
   Object.assign(chatHistory, { more: false, oldest: null, loading: false, loadOlder: null }); renderChatLog();
   const stops = [], villageStops = []; let disposed = false, peers = [], lastDuelPrompt = '', currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const duelsQuery = fs.query(fs.collection(a.firestore, 'gameDuels'), fs.where('players', 'array-contains', uid), fs.orderBy('updatedAt', 'desc'), fs.limit(20));
-  stops.push(fs.onSnapshot(duelsQuery, { includeMetadataChanges: true }, (snapshot) => {
-    if (snapshot.metadata.fromCache) return;
+  const receiveDuels = (duels) => {
+    if (disposed) return;
     const previousDuels = S.duels;
-    S.duels = snapshot.docs.map((doc) => doc.data());
+    S.duels = duels;
     S.duel = activeOrRecentDuel();
     const previousDuel = S.duels.length ? previousDuels.find((duel) => duel.id === S.duel?.id) : null;
     if (S.duel?.status === 'active') {
       const hitCount = Number(S.duel.hits?.[uid]?.count) || 0;
       if (hitCount > (Number(previousDuel?.hits?.[uid]?.count) || 0)) S.lastHit = Date.now();
       S.hits = hitCount;
-      if (previousDuel?.status === 'pending') startDuelCountdown(S.duel);
-      else if (!$('#duel').hidden) closeModal('duel');
+      if (previousDuel?.status !== 'active') startDuelCountdown(S.duel);
     } else if (S.duel?.status === 'completed' && S.duel.loser === uid && previousDuel?.status === 'active') {
       S.hits = 0;
       S.stunUntil = Date.now() + STUN_MS;
@@ -4471,11 +4482,41 @@ async function connectFirebaseGame(uid) {
       toast(`${nameOf(S.duel.winner)} 님에게 먼저 기절했어요. 사탕 ${S.duel.stake}개를 잃었어요.`);
     }
     if (!$('#duel').hidden) renderDuelModal();
+    a.promptDuel();
+    renderHud();
+  };
+  a.promptDuel = () => {
+    if (disposed) return;
+    S.duel = activeOrRecentDuel();
     const prompt = S.duel && ['pending', 'completed', 'expired'].includes(S.duel.status)
       && (S.duel.opponent === uid || S.duel.status !== 'pending') ? `${S.duel.id}:${S.duel.status}` : '';
-    if (prompt && prompt !== lastDuelPrompt) { lastDuelPrompt = prompt; openModal('duel'); }
-    renderHud();
-  }, () => toast('1대1 대전 정보를 받지 못했어요. 새로고침해 주세요.')));
+    if (prompt && prompt !== lastDuelPrompt && !S.busy) { openModal('duel'); lastDuelPrompt = prompt; }
+  };
+  let duelPollTimer = null, duelPollPending = false, duelFallback = false;
+  a.refreshDuels = async () => {
+    if (disposed || !duelFallback || duelPollPending) return;
+    duelPollPending = true;
+    try {
+      const token = await a.auth.currentUser.getIdToken();
+      const recentId = S.duel?.id;
+      const result = await accountRequest(`/api/game/duels${recentId ? `?duelId=${encodeURIComponent(recentId)}` : ''}`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      receiveDuels(result.duels);
+    } finally { duelPollPending = false; }
+  };
+  stops.push(fs.onSnapshot(duelsQuery, { includeMetadataChanges: true }, (snapshot) => {
+    if (!snapshot.metadata.fromCache) receiveDuels(snapshot.docs.map((doc) => doc.data()));
+  }, (error) => {
+    if (disposed) return;
+    duelFallback = true;
+    track('duel_subscription_failed', { code: error.code || 'unknown' });
+    // A rules/index deployment can lag behind the web release. Keep invitations usable.
+    const poll = () => a.refreshDuels().catch(() => {});
+    void poll();
+    duelPollTimer = setInterval(poll, 2000);
+  }));
+  stops.push(() => { clearInterval(duelPollTimer); delete a.refreshDuels; delete a.promptDuel; });
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
   let ownRef = null, disconnect = null;
   rt.goOnline(a.database);

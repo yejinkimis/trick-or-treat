@@ -2,7 +2,7 @@ const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { signup, login, updateProfile } = require('../server/auth-service.cjs');
-const { TRICK_KINDS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
+const { TRICK_KINDS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, duels, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
 const { searchUsers, watchAccounts, getAnnouncement, setAnnouncement, moderate } = require('../server/admin-service.cjs');
 after(() => services().database.goOffline());
@@ -115,6 +115,38 @@ async function player(prefix) {
   return { ...account, authorization, token };
 }
 const act = (p, data) => action(p.authorization, { requestId: randomUUID(), ...data });
+
+test('duel API delivers invitations and settled results only to participants without a client query', async () => {
+  const [a, b, outsider] = await Promise.all(['대전갑', '대전을', '대전외'].map(player));
+  process.env.GAME_ADMIN_UIDS = a.uid;
+  await act(a, { type: 'event-start' });
+  const { database, db } = services();
+  const sidA = randomUUID(), sidB = randomUUID();
+  const village = 1;
+  await Promise.all([
+    database.ref(`presence/${village}/${a.uid}/${sidA}`).set({ x: 100, y: 100, at: Date.now() }),
+    database.ref(`presence/${village}/${b.uid}/${sidB}`).set({ x: 105, y: 100, at: Date.now() }),
+  ]);
+  const offer = await act(a, { type: 'duel-offer', opponent: b.uid, stake: 3, village,
+    challengerPeer: `${a.uid}:${sidA}`, opponentPeer: `${b.uid}:${sidB}` });
+  assert.equal((await duels(b.authorization)).duels[0].id, offer.id);
+  assert.equal((await duels(a.authorization)).duels[0].status, 'pending');
+  assert.deepEqual((await duels(outsider.authorization, offer.id)).duels, []);
+  await assert.rejects(duels('Bearer invalid'), (error) => error.status === 401);
+  await act(b, { type: 'duel-accept', duelId: offer.id, village, peer: `${b.uid}:${sidB}` });
+  assert.equal((await duels(b.authorization)).duels[0].status, 'active');
+  for (let i = 0; i < 5; i++) {
+    await db.collection('gameDuels').doc(offer.id).update({ lastHitAt: {} });
+    await act(a, { type: 'duel-hit', duelId: offer.id, victim: b.uid,
+      attackerPeer: `${a.uid}:${sidA}`, victimPeer: `${b.uid}:${sidB}` });
+  }
+  const settled = (await duels(b.authorization, offer.id)).duels[0];
+  assert.equal(settled.status, 'completed');
+  assert.equal(settled.winner, a.uid);
+  assert.equal((await saved(a)).candies, 13);
+  assert.equal((await saved(b)).candies, 7);
+  await act(a, { type: 'event-stop' });
+});
 const saved = async (p) => (await services().db.collection('gamePlayers').doc(p.uid).get()).data();
 const secret = async (p) => (await services().db.collection('gamePrivate').doc(p.uid).get()).data();
 const harvest = async (p, extra = {}) => {
