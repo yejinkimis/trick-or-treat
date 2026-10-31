@@ -204,6 +204,18 @@ function refillOf(player, event, now, escrowedCandies = 0) {
     refill: { id: REFILL_ID, at: now, n: REFILL_CANDIES - have } };
 }
 
+// Read only the caller's current lock and last known duel, without a composite index.
+async function duels(authorization, recentId = null) {
+  const uid = await authenticatedUid(authorization);
+  const { db } = services();
+  if (recentId && !/^[A-Za-z0-9]{20}$/.test(recentId)) fail('대전 번호를 확인해 주세요.');
+  const lock = (await db.collection('gameDuelLocks').doc(uid).get()).data();
+  const ids = [...new Set([lock?.duelId, recentId].filter((id) => /^[A-Za-z0-9]{20}$/.test(id || '')))];
+  const docs = await Promise.all(ids.map((id) => db.collection('gameDuels').doc(id).get()));
+  return { duels: docs.filter((doc) => doc.exists && doc.data().players?.includes(uid))
+    .map((doc) => doc.data()).sort((a, b) => b.updatedAt - a.updatedAt) };
+}
+
 async function session(authorization) {
   const profile = await getProfile(authorization);
   const { db } = services();
@@ -705,4 +717,4 @@ async function action(authorization, input) {
   return done;
 }
 
-module.exports = { TRICK_KINDS, PRICES, ITEMS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, rouletteGain, rankRoulette, ROULETTE_ODDS, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { TRICK_KINDS, PRICES, ITEMS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, duels, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, rouletteGain, rankRoulette, ROULETTE_ODDS, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };

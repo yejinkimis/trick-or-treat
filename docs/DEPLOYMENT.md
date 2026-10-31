@@ -80,4 +80,6 @@ Firestore가 `asia-northeast3`(서울)에 있어서 `vercel.json`의 `regions`�
 
 배포 시 Firestore 규칙·복합 색인과 Realtime Database 규칙을 모두 갱신해야 한다. 관리자 서버는 기존 `FIREBASE_DATABASE_URL` 환경변수로 RTDB에 접근한다. Firebase 설정 배포는 Vercel 자동 배포에 포함되지 않는다. Firebase CLI에서는 `firebase deploy --only firestore:rules,firestore:indexes,database --project trick-or-treat-89de3`로 반영할 수 있다.
 
+대전 구독이 규칙 또는 색인 오류로 중단되면 화면은 인증된 `GET /api/game/duels`를 2초마다 호출한다. 이 API는 본인 대전 잠금과 마지막으로 확인한 대전만 읽고, 참가자 여부를 서버에서 다시 검사한다. 전체 대전 목록을 읽거나 다른 사람의 대전을 반환하지 않는다. Firebase 설정 반영 후 화면을 새로고침하면 실시간 구독을 다시 사용한다.
+
 순위 제외는 `game/moderation` 구독으로 화면에 반영된다. 순위에 다시 포함한 사용자의 점수가 서버/CDN 순위 저장본에 없으면 기존 3분 갱신 주기 뒤 나타난다. 계정 비활성화와 두 DB 변경은 순서대로 적용되므로 오류가 표시되면 사용자 상태를 조회하고 동일한 조치를 다시 적용한다. 운영자 조치는 비공개 `gameAdminActivity`에 기록한다.
