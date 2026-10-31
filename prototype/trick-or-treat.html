@@ -606,13 +606,29 @@ const BREW_LINES = {
   10: '콰과광! 솥이 넘쳐흘러요! 사탕 10개!',
   20: '…솥이 금빛으로 번쩍여요. 전설의 사탕 20개!!',
 };
-// 서버가 연금술 대박을 알리면 모든 마을 화면에 띄우고 채팅창에도 한 줄 남겨 솥을 홍보한다.
-function announceJackpot(id, a) {
+// 누가 연금술을 하면 몇 개든 화면 위 알림으로 차례로 띄워 솥을 홍보한다. 대박(10개 이상)은 더 오래 띄우고 채팅창에도 남긴다.
+const BREW_BIG = 10, BREW_NEWS_KEEP = 3;
+const brewNews = { queue: [], shown: new Set(), showing: false };
+function announceBrew(id, a) {
   const n = Number(a?.n);
-  if (!Number.isFinite(n)) return;
-  const who = a.uid === S.me ? '내가' : `${cleanNick(a.nick) || nameOf(a.uid)}님이`;
-  addChat([{ id: `jackpot-${id}`, name: '마녀 솥', text: `${who} 연금술로 사탕 ${n}개 대박!`, at: Number(a.at) || Date.now() }]);
-  if (a.uid !== S.me) toast(`대박! ${who} 연금술로 사탕 ${n}개를 뽑았어요. 광장 솥에 호박 ${BREW_COST}개를 넣어 보세요!`, { duration: 5000 });
+  if (!Number.isFinite(n) || brewNews.shown.has(id)) return;
+  brewNews.shown.add(id);
+  const big = n >= BREW_BIG, who = a.uid === S.me ? '내가' : `${cleanNick(a.nick) || nameOf(a.uid)}님이`;
+  if (big) addChat([{ id: `jackpot-${id}`, name: '마녀 솥', text: `${who} 연금술로 사탕 ${n}개 대박!`, at: Number(a.at) || Date.now() }]);
+  const text = big ? `대박! ${who} 연금술로 사탕 ${n}개를 뽑았어요! 광장 솥에 호박 ${BREW_COST}개를 넣어 보세요` : `${who} 연금술로 사탕 ${n}개를 받았어요 · 광장 솥에 호박 ${BREW_COST}개`;
+  // 한꺼번에 몰리면 오래된 작은 소식부터 버려, 화면에 소식이 끝없이 밀리지 않게 한다.
+  while (brewNews.queue.length >= BREW_NEWS_KEEP) {
+    const small = brewNews.queue.findIndex((item) => !item.big);
+    brewNews.queue.splice(small === -1 ? 0 : small, 1);
+  }
+  brewNews.queue.push({ text, big });
+  showBrewNews();
+}
+async function showBrewNews() {
+  if (brewNews.showing) return;
+  brewNews.showing = true;
+  for (let next; (next = brewNews.queue.shift());) await toast(next.text, { duration: next.big ? 5000 : 3000 });
+  brewNews.showing = false;
 }
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
 const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'note', 'sound', 'auth', 'intro'];
@@ -3590,7 +3606,7 @@ async function connectFirebaseGame(uid) {
   // 공지 규칙이 아직 게시되지 않았어도 게임은 그대로 되도록 읽기 실패는 조용히 넘긴다.
   stops.push(rt.onChildAdded(rt.query(rt.ref(a.database, 'announcements'), rt.limitToLast(1)), (snapshot) => {
     const data = snapshot.val();
-    if (data?.kind === 'brew' && Number(data.at) >= joined - 5000) announceJackpot(snapshot.key, data);
+    if (data?.kind === 'brew' && Number(data.at) >= joined - 5000) announceBrew(snapshot.key, data);
   }, () => {}));
   const receive = (snapshot) => {
     const data = snapshot.val();
