@@ -1102,16 +1102,20 @@ test('basket stays after harvesting more, alchemy tip explains the cauldron, and
   assert.match(g.elements.get('toast').textContent, /꽉 찼어요/);
 });
 
-test('a jackpot announcement shows a toast to everyone else and leaves a line in the chat window', () => {
+test('every brew shows in the top notice one at a time, and a jackpot stays longer and also goes to the chat window', async () => {
   const g = game(); village(g);
-  g.run(`announceJackpot('k1', { kind: 'brew', uid: 'far', nick: '먼집', n: 20, at: 5 })`);
-  assert.match(g.elements.get('toast').textContent, /대박! 먼집님이 연금술로 사탕 20개를 뽑았어요\. 광장 솥에 호박 10개를 넣어 보세요!/);
-  assert.match(g.elements.get('chatlog').innerHTML, /<b>마녀 솥<\/b>먼집님이 연금술로 사탕 20개 대박!/);
-  g.run(`toast(''); announceJackpot('k2', { kind: 'brew', uid: 'me', nick: '나', n: 10, at: 6 })`);
-  assert.doesNotMatch(g.elements.get('toast').textContent, /대박/, 'the brewer already saw the result');
-  assert.match(g.elements.get('chatlog').innerHTML, /내가 연금술로 사탕 10개 대박!/);
-  g.run(`announceJackpot('k1', { kind: 'brew', uid: 'far', nick: '먼집', n: 20, at: 5 })`);
-  assert.equal((g.elements.get('chatlog').innerHTML.match(/먼집님이/g) || []).length, 1, 'the same announcement is shown once');
+  const notice = g.elements.get('toast'), chat = () => g.elements.get('chatlog').innerHTML;
+  g.run(`announceBrew('k1', { kind: 'brew', uid: 'me', nick: '나', n: 2, at: 1 })`);
+  assert.equal(notice.hidden, false);
+  assert.equal(notice.textContent, '내가 연금술로 사탕 2개를 받았어요 · 광장 솥에 호박 10개');
+  assert.doesNotMatch(chat(), /마녀 솥/, 'small brews stay out of the chat');
+  g.run(`announceBrew('k2', { kind: 'brew', uid: 'far', nick: '먼집', n: 20, at: 2 }); announceBrew('k2', { kind: 'brew', uid: 'far', nick: '먼집', n: 20, at: 2 })`);
+  assert.equal(notice.textContent, '내가 연금술로 사탕 2개를 받았어요 · 광장 솥에 호박 10개', 'the next one waits its turn');
+  g.fire(3000); await tick();
+  assert.equal(notice.textContent, '대박! 먼집님이 연금술로 사탕 20개를 뽑았어요! 광장 솥에 호박 10개를 넣어 보세요');
+  assert.equal((chat().match(/먼집님이 연금술로 사탕 20개 대박!/g) || []).length, 1, 'shown once even if delivered twice');
+  g.fire(5000); await tick();
+  assert.equal(notice.hidden, true, 'a jackpot stays for five seconds, then the notice clears');
 });
 
 test('brewing spends ten pumpkins, adds rolled candy, keeps the basket and cools down', async () => {
