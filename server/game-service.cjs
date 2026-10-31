@@ -624,17 +624,19 @@ async function action(authorization, input) {
         const prior = pending.exists ? pending.data() : {};
         const priorAge = now - (prior.createdAt || 0);
         const priorIsUnfinished = prior.expiresAt ? prior.expiresAt > now : priorAge < STALE_CHALLENGE_MS;
+        // 창을 닫거나 나가기 요청이 닿지 않아 남은 내 도전은 새 노크를 막지 않고 여기서 끝낸다. 이전 도전은 더 정산할 수 없다.
+        let releasedLockRef = null;
         if (prior.round === round && !prior.used && priorIsUnfinished) {
           const priorLockRef = db.collection('gameHouseLocks').doc(prior.host);
           const priorLockDoc = prior.host === input.host ? lockDoc : await tx.get(priorLockRef);
           const priorLock = priorLockDoc.exists ? priorLockDoc.data() : null;
-          const lastSeen = priorLock?.heartbeatAt || priorLock?.createdAt || 0;
           const priorLockIsActive = priorLock?.challengeId === prior.id && priorLock.challengerUid === uid
             && priorLock.round === round && lockAlive(priorLock, now);
-          if (priorLockIsActive) fail('진행 중인 도전을 먼저 마쳐 주세요.', 429);
+          if (priorLockIsActive && prior.host !== input.host) releasedLockRef = priorLockRef;
         }
         const lock = lockDoc.exists ? lockDoc.data() : null;
-        const lockIsActive = lock?.round === round && lockAlive(lock, now);
+        const lockIsMine = lock?.challengerUid === uid && lock.challengeId === prior.id;
+        const lockIsActive = !lockIsMine && lock?.round === round && lockAlive(lock, now);
         if (lockIsActive) fail('이 집은 지금 다른 사람이 도전 중이에요.', 429);
         const nextLevelByHost = prior.streakRound === round && prior.nextLevelByHost && typeof prior.nextLevelByHost === 'object'
           ? { ...prior.nextLevelByHost } : {};
@@ -643,6 +645,7 @@ async function action(authorization, input) {
           id: randomUUID(), host: input.host, round, createdAt: now, used: false,
           level, seed: createCandySeed(), game: pickGame(input.games), nextLevelByHost, streakRound: round,
         };
+        if (releasedLockRef) tx.delete(releasedLockRef);
         tx.set(challengeRef, challenge);
         tx.set(lockRef, { challengeId: challenge.id, challengerUid: uid, round, createdAt: now, heartbeatAt: now });
         result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed, game: challenge.game } };
