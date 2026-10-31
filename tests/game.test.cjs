@@ -786,6 +786,18 @@ function village(g) {
     }; render();`);
 }
 
+test('online peers stay hidden until their costume is known instead of showing the plain character', () => {
+  const g = game(); village(g);
+  g.run(`var list = [
+      { by: 'near', peer: 'near:1', kind: 'viewer', presence: { x: 100, y: 100 } },
+      { by: 'newcomer', peer: 'newcomer:1', kind: 'viewer', presence: { x: 120, y: 100 } },
+    ];
+    S.room = { peers: () => list }; lastPeers = null; syncPeers();`);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify([...ghosts.values()].map((x) => [x.by, x.c]))')), [['near', 'witch']]);
+  g.run(`S.players.newcomer = { ...blankPlayer(), costume: 'mummy', village: 1 }; list = [...list]; syncPeers();`);
+  assert.deepEqual(JSON.parse(g.run('JSON.stringify([...ghosts.values()].map((x) => [x.by, x.c]))')), [['near', 'witch'], ['newcomer', 'mummy']]);
+});
+
 test('an online village shows only its own eight lots and wraps its gates around', () => {
   const g = game(); village(g);
   assert.deepEqual(JSON.parse(g.run('JSON.stringify(houseOwners())')), ['me', 'near']);
