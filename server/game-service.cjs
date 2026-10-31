@@ -56,10 +56,12 @@ function rouletteGain(tier, roll = randomInt(ROULETTE_SCALE)) {
   }
   return 0;
 }
-function rankRoulette(players) {
+function rankRoulette(players, escrow = new Map()) {
+  const total = (player) => player.n + (escrow.get(player.id) || 0);
+  const ranked = [...players].sort((a, b) => total(b) - total(a) || a.nick.localeCompare(b.nick, 'ko'));
   const topEnd = Math.ceil(players.length / 3), middleEnd = Math.ceil(players.length * 2 / 3);
-  return players.map((player, index) => {
-    const tier = player.n === 0 ? 'zero' : index < topEnd ? 'top' : index < middleEnd ? 'middle' : 'bottom';
+  return ranked.map((player, index) => {
+    const tier = total(player) === 0 ? 'zero' : index < topEnd ? 'top' : index < middleEnd ? 'middle' : 'bottom';
     const award = rouletteGain(tier);
     return { ...player, rank: index + 1, tier, award, before: player.n, after: player.n + award };
   });
@@ -161,18 +163,23 @@ let eventMemo = null;
 const rememberEvent = (event, at = Date.now()) => { eventMemo = { at, event }; return event; };
 const recentEvent = (now) => (eventMemo && now - eventMemo.at < EVENT_MEMO_MS ? eventMemo : null);
 // 접속자 수와 관계없이 전체 플레이어 읽기가 1분에 한 번을 넘지 않도록 서버와 CDN이 같은 결과를 나눠 준다.
-async function leaderboard(now = Date.now()) {
-  if (leaderboardMemo && now - leaderboardMemo.at < LEADERBOARD_MS) return leaderboardMemo;
+async function leaderboard(now = Date.now(), rouletteId = null) {
+  if (leaderboardMemo && now - leaderboardMemo.at < LEADERBOARD_MS
+    && (!rouletteId || leaderboardMemo.rouletteId === rouletteId)) return leaderboardMemo;
   const { db } = services();
-  const [eventDoc, players] = await Promise.all([db.doc('game/event').get(), db.collection('gamePlayers').get()]);
+  const eventDoc = await db.doc('game/event').get();
   const event = rememberEvent(eventDoc.exists ? eventDoc.data() : null);
+  // 실제 지급된 룰렛 ID만 새 캐시 주소로 허용해 임의 값으로 전체 읽기를 반복하지 못하게 한다.
+  if (rouletteId && event?.roulette?.id !== rouletteId) fail('룰렛 순위 정보를 확인해 주세요.');
+  const players = await db.collection('gamePlayers').get();
   const villageOf = new Map(players.docs.map((doc) => [doc.id, doc.data().village || null]));
   const ended = event && event.endsAt <= now;
   // 운영자가 누르지 않아도 끝난 이벤트의 결과는 종료 후 첫 순위 요청에서 한 번 고정해 기록해 둔다.
   const results = event?.results || (ended ? await freezeResults(db) : null);
   const excluded = new Set(players.docs.filter((doc) => doc.data().rankExcluded || doc.data().banned).map((doc) => doc.id));
   const ranked = (results || rankPlayers(players.docs, event, ended ? event.endsAt : Infinity)).filter((p) => !excluded.has(p.id));
-  leaderboardMemo = { at: now, round: roundOf(event, now), players: ranked.map((p) => ({ ...p, village: villageOf.get(p.id) || null })) };
+  leaderboardMemo = { at: now, round: roundOf(event, now), rouletteId: event?.roulette?.id || null,
+    players: ranked.map((p) => ({ ...p, village: villageOf.get(p.id) || null })) };
   return leaderboardMemo;
 }
 
@@ -202,6 +209,18 @@ function refillOf(player, event, now, escrowedCandies = 0) {
   if ((event && event.endsAt <= now) || player.refill?.id === REFILL_ID || have >= REFILL_CANDIES) return null;
   return { round: roundOf(event, now), candies: Math.max(0, REFILL_CANDIES - escrowedCandies),
     refill: { id: REFILL_ID, at: now, n: REFILL_CANDIES - have } };
+}
+
+// Read only the caller's current lock and last known duel, without a composite index.
+async function duels(authorization, recentId = null) {
+  const uid = await authenticatedUid(authorization);
+  const { db } = services();
+  if (recentId && !/^[A-Za-z0-9]{20}$/.test(recentId)) fail('대전 번호를 확인해 주세요.');
+  const lock = (await db.collection('gameDuelLocks').doc(uid).get()).data();
+  const ids = [...new Set([lock?.duelId, recentId].filter((id) => /^[A-Za-z0-9]{20}$/.test(id || '')))];
+  const docs = await Promise.all(ids.map((id) => db.collection('gameDuels').doc(id).get()));
+  return { duels: docs.filter((doc) => doc.exists && doc.data().players?.includes(uid))
+    .map((doc) => doc.data()).sort((a, b) => b.updatedAt - a.updatedAt) };
 }
 
 async function session(authorization) {
@@ -274,12 +293,21 @@ async function action(authorization, input) {
       if (!isAdmin(uid)) fail('운영자만 룰렛을 실행할 수 있어요.', 403);
       if (!event || event.results || now < event.startedAt || now >= event.endsAt) fail('진행 중인 이벤트에서만 룰렛을 실행할 수 있어요.');
       if (event.roulette?.id) fail('이번 이벤트 룰렛은 이미 끝났어요.');
-      const playerSnapshot = await tx.get(db.collection('gamePlayers'));
+      const [playerSnapshot, activeDuels] = await Promise.all([
+        tx.get(db.collection('gamePlayers')), tx.get(db.collection('gameDuels').where('status', '==', 'active')),
+      ]);
+      const escrow = new Map();
+      for (const doc of activeDuels.docs) {
+        const duel = doc.data();
+        if (duel.round !== round) continue;
+        for (const id of duel.players) escrow.set(id, (escrow.get(id) || 0) + duel.stake);
+      }
       const ranked = rankPlayers(playerSnapshot.docs, event, now);
       if (!ranked.length) fail('룰렛에 참여할 분장한 사람이 없어요.');
       if (ranked.length > ROULETTE_MAX_PLAYERS) fail(`한 번에 ${ROULETTE_MAX_PLAYERS}명까지 룰렛을 실행할 수 있어요.`);
       const rouletteId = randomUUID();
-      const drawn = rankRoulette(ranked);
+      // 맡긴 사탕은 순위·0개 판정에만 포함하고 지급할 잔액에는 다시 더하지 않는다.
+      const drawn = rankRoulette(ranked, escrow);
       const roulette = { id: rouletteId, at: now, count: drawn.length };
       for (const player of drawn) {
         tx.update(db.collection('gamePlayers').doc(player.id), {
@@ -705,4 +733,4 @@ async function action(authorization, input) {
   return done;
 }
 
-module.exports = { TRICK_KINDS, PRICES, ITEMS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, rouletteGain, rankRoulette, ROULETTE_ODDS, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { TRICK_KINDS, PRICES, ITEMS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, duels, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, rouletteGain, rankRoulette, ROULETTE_ODDS, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };

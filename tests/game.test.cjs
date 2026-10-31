@@ -41,6 +41,7 @@ function game({ reducedMotion = true, storage } = {}) {
     Object.defineProperty(el, 'innerHTML', {
       get: () => markup,
       set(value) {
+        el.htmlReplacements = (el.htmlReplacements || 0) + 1;
         markup = String(value);
         for (const match of markup.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
           elements.set(match[3], element(match[3], match[1], match[2]));
@@ -98,6 +99,63 @@ function game({ reducedMotion = true, storage } = {}) {
 test('HTML contains every static script target and JavaScript loads', () => {
   const g = game();
   for (const [, id] of source.matchAll(/\$\(['"]#([\w-]+)['"]\)/g)) assert.ok(g.elements.has(id), id);
+});
+
+test('duel clock ticks preserve the stake select, selected value and accept controls', () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.players.me.round = 'practice'; S.players.me.candies = 10;
+    S.nearPeer = 'host:peer'; ghosts.set('host:peer', { by: 'host', peer: 'host:peer' });
+    renderDuelModal();`);
+  const select = g.elements.get('du-stake');
+  select.value = '7';
+  for (let i = 0; i < 5; i++) g.run('renderDuelModal()');
+  assert.equal(g.elements.get('du-stake'), select, 'an open native select must not be detached by a clock tick');
+  assert.equal(select.value, '7');
+  g.run(`S.duels = [{ id: 'invite', players: ['host', 'me'], challenger: 'host', opponent: 'me',
+    stake: 3, status: 'pending', expiresAt: Date.now() + 60000 }]; renderDuelModal();`);
+  const content = g.elements.get('du-content');
+  const replacements = content.htmlReplacements;
+  g.run(`Date.now = () => S.duels[0].expiresAt - 30000; renderDuelModal();`);
+  assert.equal(content.htmlReplacements, replacements, 'countdown changes must not replace the accept button during a click');
+  g.run(`S.duelActionPending = true; renderDuelModal();`);
+  assert.equal(content.htmlReplacements, replacements + 1, 'a real action state change still disables controls');
+});
+
+test('denied duel subscription falls back to authenticated reads and queues invites while busy', async () => {
+  const g = game(); g.players();
+  // Exercise the actual subscription setup without booting the unrelated map/chat subscriptions.
+  const begin = source.indexOf('async function connectFirebaseGame(uid) {');
+  const end = source.indexOf('  const sid = crypto.randomUUID()', begin);
+  g.run(source.slice(begin, end) + '\n}');
+  g.run(`var subscriptionError, delivered = [];
+    S.mode = 'firebase'; S.busy = true; $('#duel').hidden = true;
+    S.account = { auth: { currentUser: { getIdToken: async () => 'token' } },
+      firestoreSdk: { collection() {}, where() {}, orderBy() {}, limit() {}, query() {},
+        onSnapshot(q, options, next, error) { subscriptionError = error; return () => {}; } } };
+    accountRequest = async (url, options) => {
+      if (url === '/api/game/session') return { village: 1, isAdmin: false };
+      if (options.headers.authorization !== 'Bearer token') throw new Error('missing authentication');
+      return { duels: JSON.parse(JSON.stringify(delivered)) };
+    };`);
+  await g.run(`connectFirebaseGame('me')`);
+  g.run(`delivered = [{ id: 'invite', players: ['host', 'me'], challenger: 'host', opponent: 'me',
+    stake: 3, status: 'pending', expiresAt: Date.now() + 60000 }];
+    subscriptionError({ code: 'permission-denied' });`);
+  await tick();
+  assert.equal(g.run('S.duel.status'), 'pending');
+  assert.equal(g.elements.get('duel').hidden, true, 'the invite waits while a knock is in progress');
+  g.run('S.busy = false; S.account.promptDuel()');
+  assert.equal(g.elements.get('duel').hidden, false);
+  assert.match(g.elements.get('du-content').innerHTML, /수락하고 대전/);
+  g.run(`delivered[0] = { ...delivered[0], status: 'active', hits: {}, hardDeadline: Date.now() + 90000 };`);
+  await g.run('S.account.refreshDuels()');
+  assert.equal(g.elements.get('duel').hidden, true);
+  assert.equal(g.elements.get('duel-start').hidden, false);
+  g.fire(900);
+  assert.equal(g.elements.get('duel-start-text').textContent, '땅!');
+  g.run("openModal('duel')");
+  await g.run('S.account.refreshDuels()');
+  assert.equal(g.elements.get('duel').hidden, false, 'an unchanged active snapshot must not close a manually opened window');
 });
 
 test('item purchases and uses cannot overlap or overwrite a newer inventory', async () => {
@@ -1123,6 +1181,27 @@ test('online rankings come from the shared server list and are not refetched wit
   g.run(`closeModal('rank'); openModal('rank')`);
   await tick();
   assert.equal(g.run('calls.length'), 1, 'reopening right away reuses the list');
+});
+
+test('roulette rankings use a new cache address and discard an older in-flight response', async () => {
+  const g = game(); village(g);
+  g.run(`var calls = [], finishOld;
+    S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() + 60000 };
+    S.rankAt = 0; S.rankList = null;
+    accountRequest = (url) => {
+      calls.push(url);
+      if (calls.length === 1) return new Promise(resolve => { finishOld = resolve; });
+      return Promise.resolve({ players: [{ id: 'me', nick: '나', costume: 'ghost', n: 30 }] });
+    };
+    loadRanking();
+    S.event.roulette = { id: '11111111-1111-4111-8111-111111111111' };
+    loadRanking({ quiet: true });
+    finishOld({ players: [{ id: 'me', nick: '나', costume: 'ghost', n: 10 }] });`);
+  await tick(); await tick();
+  assert.equal(g.run('calls.length'), 2);
+  assert.equal(g.run('calls[1]'), '/api/game/leaderboard?roulette=11111111-1111-4111-8111-111111111111');
+  assert.equal(g.run('ranking()[0].n'), 30);
+  assert.equal(g.run('S.rankLoading'), false);
 });
 
 test('chat reaches every village but shows a bubble only for people in the same village', () => {
