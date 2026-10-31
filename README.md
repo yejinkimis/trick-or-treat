@@ -4,13 +4,15 @@
 
 Vercel 운영 주소와 담당 계정, PR 미리보기·main 자동 배포 흐름, 환경변수는 [배포 및 운영 인계](docs/DEPLOYMENT.md)에 정리했다. 이 변경 배포 후 `/`로 접속할 수 있고 기존 `/prototype/trick-or-treat.html` 링크도 `/`로 연결된다.
 
+PostHog로 체류 시간과 주요 플레이 행동을 분석할 수 있다. 공개 수집 키를 등록한 Vercel Production 빌드에서만 기본 활성화한다. [분석 설정·이벤트 목록·대시보드 가이드](docs/ANALYTICS.md)를 참고한다.
+
 ## 혼자 돌려 보기
 
 `prototype/trick-or-treat.html`을 파일로 열면 연습 모드로 뜬다. 가짜 친구 두 집과 돌아다니는 봇(테스트친구)이 있고, 기록은 새로고침하면 사라진다. 계정 화면까지 보려면 아래 로컬 서버로 연다.
 
 ## 닉네임 계정과 로컬 개발
 
-게임 HTML은 계속 `prototype/trick-or-treat.html` 하나를 원본으로 쓴다. Vercel 배포용 `dist/index.html`은 빌드할 때 원본을 복사해서 만든다. 인증 API와 Firebase 설정은 별도 서버 파일에 둔다.
+게임 HTML은 계속 `prototype/trick-or-treat.html` 하나를 원본으로 쓴다. Vercel 배포용 `dist/index.html`은 빌드할 때 원본으로 만들고, 분석을 켰을 때 `client/`의 PostHog 번들을 함께 연결한다. 인증 API와 Firebase 설정은 별도 서버 파일에 둔다.
 
 Node.js 24와 Java 21이 필요하다. 패키지를 설치한 뒤 터미널 두 개에서 에뮬레이터와 게임 서버를 각각 실행한다. 로컬 서버는 항상 `demo-trick-or-treat` 에뮬레이터만 사용하며 실제 Firebase 프로젝트에는 연결하지 않는다.
 

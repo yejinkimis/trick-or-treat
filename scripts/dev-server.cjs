@@ -1,6 +1,7 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const { prepareSite } = require('./analytics-build.cjs');
 
 // The local server always points at an isolated demo project. It never reads a real Firebase project.
 process.env.NODE_ENV = 'development';
@@ -11,6 +12,7 @@ process.env.FIREBASE_DATABASE_EMULATOR_HOST = '127.0.0.1:9000';
 
 const root = path.resolve(__dirname, '..');
 const htmlPath = path.join(root, 'prototype', 'trick-or-treat.html');
+const analyticsBundle = prepareSite().analytics;
 const api = new Map([
   ['/api/firebase-config', require('../api/firebase-config.js')],
   ['/api/auth/signup', require('../api/auth/signup.js')],
@@ -27,6 +29,12 @@ const server = http.createServer((req, res) => {
   const handler = api.get(pathname);
   if (handler) { void handler(req, res); return; }
 
+  if (req.method === 'GET' && pathname === '/analytics.js' && analyticsBundle) {
+    res.writeHead(200, { 'content-type': 'application/javascript; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(analyticsBundle);
+    return;
+  }
+
   if (req.method === 'GET' && (pathname === '/' || pathname === '/prototype/trick-or-treat.html')) {
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
@@ -34,7 +42,9 @@ const server = http.createServer((req, res) => {
       'x-content-type-options': 'nosniff',
       'referrer-policy': 'same-origin',
     });
-    fs.createReadStream(htmlPath).pipe(res);
+    const html = fs.readFileSync(htmlPath, 'utf8').replace('<!-- POSTHOG_ANALYTICS -->',
+      analyticsBundle ? '<script src="/analytics.js"></script>' : '');
+    res.end(html);
     return;
   }
 

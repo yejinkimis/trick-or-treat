@@ -395,6 +395,8 @@ test('letting the progress bar empty fails without a candy transfer', async () =
 for (const won of [true, false]) {
   test(`full knock ${won ? 'success takes candy' : 'failure leaves candy but plays a trick'} and announces the result`, async () => {
     const g = game(); g.players();
+    const events = [];
+    g.window.gameAnalytics = { capture: (event, properties) => events.push({ event, properties }) };
     g.run(`S.players.me.pumpkins = 3; globalThis.messages = [];
       say = async (who, text) => messages.push(text); choose = async () => 'bye';
       candyGame = async () => ({ won: ${won}, inputs: [], elapsedMs: 4200 });`);
@@ -411,6 +413,11 @@ for (const won of [true, false]) {
       assert.match(g.run('messages.join(" ")'), new RegExp(g.run(`TRICKS['${kind}'].lines[1]`).replace(/[.!?()]/g, '\\$&')));
     }
     assert.equal(g.elements.get('quest').dataset.step, 'brew');
+    const completed = events.filter((event) => event.event === 'knock_completed');
+    assert.equal(completed.length, 1);
+    assert.equal(completed[0].properties.outcome, won ? 'win' : 'lose');
+    assert.equal(completed[0].properties.candy_moved, won);
+    assert.equal(completed[0].properties.duration_seconds, 4.2);
   });
 }
 
