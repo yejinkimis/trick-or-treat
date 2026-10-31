@@ -1053,8 +1053,9 @@ test('crew finder searches by nickname apart from the ranking and walks you to t
   const v = game(); village(v);
   v.run(`S.rankAt = Date.now(); S.rankList = [{ id: 'far', nick: '먼집', costume: 'cat', n: 12, village: 2 }, { id: 'me', nick: '나', costume: 'ghost', n: 9, village: 1 }];
     var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };
-    openModal('crew');`);
-  assert.match(v.elements.get('cr-list').innerHTML, /먼집<\/b><small>구리마을<\/small>/);
+    S.online = [{ by: 'far', presence: { v: 2 } }]; openModal('crew');`);
+  assert.match(v.elements.get('cr-list').innerHTML, /aria-label="접속 중" title="접속 중"><\/span><b>먼집<\/b><small>구리마을<\/small>/);
+  assert.match(v.elements.get('cr-list').innerHTML, /<div><b>나<\/b>/);
   assert.match(v.elements.get('cr-list').innerHTML, /data-visit="far">집 가기/);
   assert.match(v.elements.get('cr-list').innerHTML, /data-visit="me">우리 집/);
   v.run(`visitHouse('far')`);
