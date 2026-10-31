@@ -268,6 +268,7 @@ test('a replaced or previous-round challenge cannot release another challenger h
 });
 
 test('a body doodle is saved by the server, checked for shape, and readable by the neighbours', async () => {
+  await services().db.doc('game/event').delete();
   const [p, neighbour] = await Promise.all([player('낙'), player('서')]);
   const doodle = '.'.repeat(36) + '7777' + '.'.repeat(216);
   await act(p, { type: 'doodle', doodle });
@@ -284,6 +285,28 @@ test('a body doodle is saved by the server, checked for shape, and readable by t
     body: JSON.stringify({ fields: { doodle: { stringValue: doodle } } }),
   });
   assert.equal(write.status, 403, 'the doodle is only written through the server');
+});
+
+test('a harvest reuses the event another request just read, but an event stop on this server applies to the very next harvest', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, farmer] = await Promise.all([player('수확관'), player('농부')]);
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const { Transaction } = require('@google-cloud/firestore');
+  const { get } = Transaction.prototype;
+  const events = [];
+  Transaction.prototype.get = function (ref) { if (ref?.path === 'game/event') events.push(ref.path); return get.call(this, ref); };
+  try {
+    await act(admin, { type: 'event-start' });
+    await act(farmer, { type: 'mural', mural: '.'.repeat(288) });
+    events.length = 0;
+    await harvest(farmer);
+    assert.equal(events.length, 0, 'the harvest did not read the event document again');
+    await act(admin, { type: 'event-stop' });
+    await assert.rejects(harvest(farmer), /이벤트가 끝났어요/, 'the stop is seen at once on the same server');
+  } finally {
+    Transaction.prototype.get = get;
+    await services().db.doc('game/event').delete();
+  }
 });
 
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {

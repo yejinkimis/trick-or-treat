@@ -5,7 +5,7 @@ const {
   signup,
   validateProfilePatch, createEmulatorCustomToken,
 } = require('../server/auth-service.cjs');
-const { requestBody } = require('../server/api-handler.cjs');
+const { apiHandler, requestBody } = require('../server/api-handler.cjs');
 
 test('nickname policy normalizes Unicode and whitespace before comparison', () => {
   assert.deepEqual(cleanNickname('  ＨＡＬＬＯＷＥＥＮ   호박  '), {
@@ -16,6 +16,27 @@ test('nickname policy normalizes Unicode and whitespace before comparison', () =
   assert.throws(() => cleanNickname('가'.repeat(13)), /닉네임/);
   assert.throws(() => cleanNickname('👻호박'), /닉네임/);
   assert.throws(() => cleanNickname('관리자'), /닉네임/);
+});
+
+test('a Firestore quota error or a stuck request answers at once with a retry message instead of hanging', async () => {
+  const call = async (run, deadlineMs) => {
+    const res = { headers: {}, setHeader(k, v) { this.headers[k] = v; }, end(body) { this.body = JSON.parse(body); } };
+    await apiHandler(['GET'], run, deadlineMs)({ method: 'GET' }, res);
+    return res;
+  };
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    const exhausted = await call(async () => { throw Object.assign(new Error('Quota exceeded.'), { code: 8 }); });
+    assert.equal(exhausted.statusCode, 503);
+    assert.deepEqual(exhausted.body, { error: 'busy', message: '잠시 뒤 다시 시도해 주세요.' });
+    const started = Date.now();
+    const stuck = await call(() => new Promise(() => {}), 50);
+    assert.equal(stuck.statusCode, 503);
+    assert.equal(stuck.body.message, '잠시 뒤 다시 시도해 주세요.');
+    assert.ok(Date.now() - started < 1000, 'the answer comes at the deadline, not when Firestore gives up');
+    assert.equal((await call(async () => ({ body: { ok: true } }))).statusCode, 200);
+  } finally { console.error = errors; }
 });
 
 test('password limits count Unicode characters and UTF-8 bytes', () => {

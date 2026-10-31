@@ -56,12 +56,18 @@ async function finalResults(tx, db, event, cutoff) {
 
 const LEADERBOARD_MS = 3 * 60 * 1000;
 let leaderboardMemo = null;
+// 호박은 1.5초마다 딸 수 있어 가장 자주 오는 요청이다. 호박 따기만 다른 요청이 방금 읽은 이벤트를 10초 동안 다시 쓴다.
+// 이벤트가 시간이 되어 끝나는 건 기억한 종료 시각으로 바로 막히고, 운영자가 바꾼 이벤트는 늦어도 10초 뒤 반영된다.
+const EVENT_MEMO_MS = 10 * 1000;
+let eventMemo = null;
+const rememberEvent = (event, at = Date.now()) => { eventMemo = { at, event }; return event; };
+const recentEvent = (now) => (eventMemo && now - eventMemo.at < EVENT_MEMO_MS ? eventMemo : null);
 // 접속자 수와 관계없이 전체 플레이어 읽기가 3분에 한 번을 넘지 않도록 서버와 CDN이 같은 결과를 나눠 준다.
 async function leaderboard(now = Date.now()) {
   if (leaderboardMemo && now - leaderboardMemo.at < LEADERBOARD_MS) return leaderboardMemo;
   const { db } = services();
   const [eventDoc, players] = await Promise.all([db.doc('game/event').get(), db.collection('gamePlayers').get()]);
-  const event = eventDoc.exists ? eventDoc.data() : null;
+  const event = rememberEvent(eventDoc.exists ? eventDoc.data() : null);
   const villageOf = new Map(players.docs.map((doc) => [doc.id, doc.data().village || null]));
   const ended = event && event.endsAt <= now;
   // 운영자가 누르지 않아도 끝난 이벤트의 결과는 종료 후 첫 순위 요청에서 한 번 고정해 기록해 둔다.
@@ -115,14 +121,16 @@ async function action(authorization, input) {
   const eventRef = db.doc('game/event');
   const privateRef = db.collection('gamePrivate').doc(uid);
   const challengeRef = db.collection('gameChallenges').doc(uid);
-  return db.runTransaction(async (tx) => {
-    const [privateDoc, playerDoc, eventDoc] = await Promise.all([tx.get(privateRef), tx.get(playerRef), tx.get(eventRef)]);
+  const done = await db.runTransaction(async (tx) => {
+    const remembered = input.type === 'harvest' ? recentEvent(Date.now()) : null;
+    const [privateDoc, playerDoc, eventDoc] = await Promise.all([tx.get(privateRef), tx.get(playerRef), remembered ? null : tx.get(eventRef)]);
+    const event = remembered ? remembered.event : rememberEvent(eventDoc.exists ? eventDoc.data() : null);
     if (!playerDoc.exists) fail('다시 로그인해 주세요.', 401);
     const now = Date.now();
     const mine = privateState(privateDoc, playerDoc.data(), now);
     const receipt = (mine.receipts || []).find((item) => item.id === input.requestId);
     if (receipt) return receipt.result;
-    const player = { ...playerDoc.data(), pumpkins: mine.pumpkins }, event = eventDoc.exists ? eventDoc.data() : null;
+    const player = { ...playerDoc.data(), pumpkins: mine.pumpkins };
     if (player.banned) fail('이 계정은 게임 이용이 제한됐어요.', 403);
     const round = roundOf(event, now);
     let privateUpdate = {};
@@ -304,6 +312,9 @@ async function action(authorization, input) {
     }
     return result;
   }, { maxAttempts: 20 });
+  // 이벤트를 바꾼 서버는 기억해 둔 이벤트를 버려 바로 다음 호박 따기부터 새 이벤트를 읽게 한다.
+  if (input.type === 'event-start' || input.type === 'event-stop') eventMemo = null;
+  return done;
 }
 
 module.exports = { TRICK_KINDS, PRICES, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
