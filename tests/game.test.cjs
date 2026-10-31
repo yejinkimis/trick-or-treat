@@ -1482,3 +1482,56 @@ test('a scheduled event shows its start time, stays practice until then, and tur
   assert.match(g.elements.get('toast').textContent, /이벤트가 끝났어요/);
 });
 
+
+test('Escape and the exit button cancel immediately and use actual elapsed time when frames stall', async () => {
+  for (const exit of ['escape', 'button', 'button-key']) {
+    const g = game();
+    const result = g.run('candyGame({ level: 3, seed: 42 })');
+    g.setNow(5000);
+    if (exit === 'escape') g.run(`document.listeners.keydown({ key: 'Escape', code: 'Escape', target: null, preventDefault() {} })`);
+    else if (exit === 'button') g.elements.get('t-exit').listeners.click();
+    else g.run(`document.listeners.keydown({ key: 'Enter', code: 'Enter', target: { id: 't-exit' }, preventDefault() {} })`);
+    const attempt = await result;
+    assert.equal(attempt.quit, true);
+    assert.equal(attempt.elapsedMs, 5000);
+    assert.equal(g.elements.get('timing').hidden, true);
+    assert.equal(g.run('S.candyControl'), null);
+    assert.equal(g.frames.size, 0);
+  }
+});
+
+for (const elapsed of [4999, 5000, 5001]) {
+  test(`leaving after ${elapsed}ms preserves the house level and applies only the required penalty`, async () => {
+    const g = game(); g.players();
+    g.run(`S.players.me.basket = true;
+      S.localKnockStreaks = { challenger: 'me', round: currentRound(), byHost: { host: 3 } };
+      candyGame = async () => ({ quit: true, elapsedMs: ${elapsed} });
+      say = async () => { throw new Error('Exiting must return directly to the village'); };`);
+    await g.finish(g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`));
+    assert.equal(g.run('S.localKnockStreaks.byHost.host'), 3);
+    assert.equal(g.run('candiesOf("me")'), 10);
+    assert.equal(g.run('candiesOf("host")'), 10);
+    assert.equal(g.run('S.busy'), false);
+    assert.equal(g.run('S.players.me.knocks.length'), elapsed >= 5000 ? 1 : 0);
+    assert.equal(g.run('Boolean(activeFx("me"))'), elapsed >= 5000);
+  });
+}
+
+test('online exits settle through the leave action and display the server penalty decision', async () => {
+  for (const penalized of [false, true]) {
+    const g = game(); g.players();
+    g.run(`S.mode = 'firebase'; S.players.me.basket = true; globalThis.calls = [];
+      gameRequest = async (input) => {
+        calls.push(input.type);
+        if (input.type === 'knock-start') return { challenge: { id: 'challenge', level: 3 } };
+        if (input.type !== 'knock-leave') throw new Error('Wrong settlement');
+        return { penalized: ${penalized}, elapsedMs: 6000, candies: 10,
+          entry: { h: 'host', r: 'lose', at: Date.now(), round: currentRound(), k: 'slow', moved: false } };
+      };
+      candyGame = async () => ({ quit: true, elapsedMs: 0 });`);
+    await g.finish(g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`));
+    assert.deepEqual(Array.from(g.run('calls')), ['knock-start', 'knock-leave']);
+    assert.equal(g.run('Boolean(activeFx("me"))'), penalized);
+    assert.equal(g.run('S.busy'), false);
+  }
+});

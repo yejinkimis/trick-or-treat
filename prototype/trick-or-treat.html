@@ -198,7 +198,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 #ad-detail{overflow-wrap:anywhere}
 #ad-detail>.field{margin-top:16px}
 
-.timing{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(360px,calc(100vw - 32px));padding:16px 18px;display:grid;gap:10px;text-align:center;user-select:none;box-shadow:0 0 0 100vmax rgba(11,8,16,.68),0 0 0 4px var(--edge),6px 6px 0 4px rgba(0,0,0,.4)}
+.timing{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 24px);overflow:auto;padding:16px 18px;display:grid;gap:10px;text-align:center;user-select:none;box-shadow:0 0 0 100vmax rgba(11,8,16,.68),0 0 0 4px var(--edge),6px 6px 0 4px rgba(0,0,0,.4)}
 .t-title{margin:0;font-size:1.35rem;font-weight:400;color:var(--gold)}
 .t-subtitle{margin:0;color:var(--muted);font-size:.9rem}
 .t-subtitle.hurry{color:var(--candy)}
@@ -343,7 +343,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <div class="field">
         <span class="lab">사탕을 주고받는 경쟁 규칙</span>
-        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로지만 장난을 하나 당해요(30초~1분). 같은 집에서 이기면 다음 도전이 최대 5단계까지 어려워지고, 그 집에서 실패하면 1단계로 돌아가요. 다른 집 난이도는 따로 기억해요.</span>
+        <span class="note">먼저 마을에 자라는 호박 3개로 바구니를 만들어야 문을 두드릴 수 있어요. 모두 사탕 10개로 시작해요. 친구 집 문을 두드리면 사탕 잡기 도전이 시작돼요. 움직이는 사탕을 초록 바 안에 가두어 게이지를 채우면 그 집에서 사탕 1개를 가져와요. 실패하면 사탕은 그대로지만 장난을 하나 당해요(30초~1분). 같은 집에서 이기면 다음 도전이 최대 5단계까지 어려워지고, 일반 실패는 그 집 도전을 1단계로 돌려요. ESC로 나가면 단계는 유지돼요. 입장 후 5초 안에 나가면 취소되고, 5초가 지나면 실패로 처리돼 장난을 당해요. 다른 집 난이도는 따로 기억해요.</span>
       </div>
       <div class="field">
         <span class="lab">뿅망치 맞으면 당하는 장난</span>
@@ -497,6 +497,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <div class="catch-meter" id="catch-meter" role="progressbar" aria-label="사탕 잡기 진행도" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span id="t-progress"></span></div>
   <p class="timing-result" id="t-result" aria-live="polite"></p>
   <p class="timing-help">Space나 초록 바를 누르고 있으면 바가 올라가요. 놓으면 내려가요.</p>
+  <button class="pbtn" id="t-exit" type="button">도전 나가기 (Esc)</button>
+  <p class="note">5초 안에 나가면 단계와 사탕을 지켜요. 그 뒤에는 실패 장난을 당하지만 단계는 유지돼요.</p>
   <p class="note">사탕이 초록 바 안에 있으면 게이지가 차고, 벗어나면 줄어요.</p>
 </div>
 
@@ -582,7 +584,7 @@ const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
 const VILLAGE_BLOCKS = 2, GATE_XS = [12, 13];
 const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000;
-const CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5, CANDY_MAX_INPUTS = 1000, CANDY_TIME_LIMIT_MS = 90000;
+const CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5, CANDY_MAX_INPUTS = 1000, CANDY_TIME_LIMIT_MS = 90000, CANDY_EARLY_LEAVE_MS = 5000;
 const CANDY_BAR_UP_SPEED = .72, CANDY_BAR_DOWN_SPEED = .82, CANDY_BAR_ACCELERATION = 2.6, CANDY_BAR_BRAKING = 8;
 const DECOR = {
   lantern: { name: '호박등', price: 2, icon: 'lantern', line: '문 옆에서 빛나는 호박' },
@@ -2212,7 +2214,7 @@ function renderCrew() {
   if (html !== renderCrew.last) $('#cr-list').innerHTML = renderCrew.last = html;
 }
 
-const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
+const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
 const adminSeconds = (ms) => ms == null ? '-' : `${(ms / 1000).toFixed(1)}초`;
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
 // 특이 계정은 참고 표시일 뿐이라, 숫자를 보고 운영자가 자세히 확인한 뒤 조치한다.
@@ -2758,7 +2760,7 @@ function encodeCandyInputs(inputs) {
 
 function candyGame(challenge) {
   return new Promise((done) => {
-    const box = $('#timing'), track = $('#t-track'), bar = $('#t-bar'), candy = $('#t-candy');
+    const box = $('#timing'), track = $('#t-track'), bar = $('#t-bar'), candy = $('#t-candy'), exitButton = $('#t-exit');
     const meter = $('#catch-meter'), meterFill = $('#t-progress'), result = $('#t-result');
     const level = clamp(challenge?.level || 1, 1, CANDY_MAX_LEVEL);
     const currentCandy = challenge?.path
@@ -2777,6 +2779,7 @@ function candyGame(challenge) {
       : null;
 
     function setHeld(next) {
+      if (next === null) { finish(null); return; }
       if (finished || next === wantedHeld) return;
       const rounded = Math.ceil(Math.max(0, performance.now() - start) / CANDY_STEP_MS) * CANDY_STEP_MS;
       const previous = inputs[inputs.length - 1];
@@ -2831,6 +2834,12 @@ function candyGame(challenge) {
       if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
       S.candyControl = null;
       const trace = encodeCandyInputs(inputs.filter((input) => input.t <= simAt));
+      if (won === null) {
+        box.hidden = true;
+        done({ quit: true, inputs: trace, elapsedMs: Math.max(0, Math.floor(performance.now() - start)) });
+        return;
+      }
+      exitButton.disabled = true;
       box.classList.add(won ? 'hit' : 'miss');
       result.className = `timing-result ${won ? 'hit' : 'miss'}`;
       result.textContent = won ? '잡았다!' : timedOut ? '시간 초과!' : '놓쳤어!';
@@ -2860,6 +2869,7 @@ function candyGame(challenge) {
     candy.src = spriteUrl('candy', 2);
     result.className = 'timing-result';
     result.textContent = '';
+    exitButton.disabled = false;
     progress = .5;
     barY = (1 - barHeight) / 2;
     meter.setAttribute('aria-valuenow', '50');
@@ -2901,6 +2911,39 @@ async function knock(slot) {
       : { level: localLevel, seed: Math.floor(Math.random() * 0x100000000) };
     track('candy_game_started', { level: challenge.level });
     const attempt = await candyGame(challenge);
+    if (attempt.quit) {
+      let penalized = false;
+      let elapsedMs = attempt.elapsedMs;
+      if (S.mode === 'firebase') {
+        const result = await gameRequest({ type: 'knock-leave', challengeId: challenge.id });
+        penalized = result.penalized;
+        elapsedMs = result.elapsedMs;
+        if (penalized) {
+          entry = result.entry;
+          S.players[S.me] = { ...S.players[S.me], round: entry.round, candies: result.candies, knockAt: entry.at,
+            knocks: [...(S.players[S.me].knocks || []), entry].slice(-100) };
+          render();
+        }
+      } else if (elapsedMs >= CANDY_EARLY_LEAVE_MS) {
+        const at = Date.now(), trick = pick(Object.keys(TRICKS));
+        entry = { h: id, r: 'lose', at, c: me.costume, moved: false, level: challenge.level, abandoned: true, k: trick };
+        const kept = (S.players[S.me].knocks || []).filter((knock) => knock.at >= eventFrom());
+        saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS), knockAt: at });
+        penalized = true;
+      }
+      if (penalized) {
+        track('knock_completed', { outcome: 'lose', level: challenge.level, candy_moved: false, duration_seconds: elapsedMs / 1000 });
+      }
+      S.busy = false;
+      S.near = null;
+      updateNear();
+      renderAction();
+      canvas.focus({ preventScroll: true });
+      toast(penalized
+        ? '5초가 지나 중단도 실패로 처리됐어요. 장난을 당했지만 단계는 유지돼요.'
+        : '도전을 취소했어요. 사탕과 단계는 그대로예요.');
+      return;
+    }
     hit = attempt.won;
     if (S.mode === 'firebase') {
       const result = await gameRequest({ type: 'knock-finish', challengeId: challenge.id, inputs: attempt.inputs, elapsedMs: attempt.elapsedMs });
@@ -3165,6 +3208,16 @@ canvas.addEventListener('pointerdown', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (typingInField(e) || isImeComposing(e)) return;
+  if (S.candyControl && e.key === 'Escape') {
+    e.preventDefault();
+    S.candyControl(null);
+    return;
+  }
+  if (S.candyControl && e.target?.id === 't-exit' && ['Space', 'Enter'].includes(e.code)) {
+    e.preventDefault();
+    if (!e.repeat) S.candyControl(null);
+    return;
+  }
   if (S.candyControl && e.code === 'Space') {
     e.preventDefault();
     if (!e.repeat) S.candyControl(true);
@@ -3313,6 +3366,7 @@ $('#t-track').addEventListener('pointerdown', (e) => {
 $('#t-track').addEventListener('pointerup', (e) => { e.preventDefault(); S.candyControl?.(false); });
 $('#t-track').addEventListener('pointercancel', () => S.candyControl?.(false));
 $('#t-track').addEventListener('lostpointercapture', () => S.candyControl?.(false));
+$('#t-exit').addEventListener('click', () => S.candyControl?.(null));
 
 function notifyKnocks() {
   let latest = S.seenAt, knocked = false;

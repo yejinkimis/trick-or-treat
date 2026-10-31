@@ -728,3 +728,48 @@ test('when the end time passes nothing can change candy, and the results are fro
   await eventRef.delete();
 });
 
+
+test('leaving enforces the server five-second boundary, preserves levels and settles only once', async (t) => {
+  const [owner, visitor, host] = await Promise.all(['퇴관', '퇴도', '퇴집'].map(player));
+  process.env.GAME_ADMIN_UIDS = owner.uid;
+  await act(owner, { type: 'event-start' });
+  const { db } = services();
+  const playerRef = db.collection('gamePlayers').doc(visitor.uid);
+  const challengeRef = db.collection('gameChallenges').doc(visitor.uid);
+  const lockRef = db.collection('gameHouseLocks').doc(host.uid);
+  await playerRef.update({ basket: true });
+  const fixedNow = Date.now();
+  t.mock.method(Date, 'now', () => fixedNow);
+  try {
+    let failures = 0;
+    for (const elapsedMs of [4999, 5000, 5001]) {
+      await playerRef.update({ knockAt: 0 });
+      const { challenge } = await act(visitor, { type: 'knock-start', host: host.uid });
+      await challengeRef.update({ createdAt: fixedNow - elapsedMs, level: 3, nextLevelByHost: { [host.uid]: 3, other: 4 } });
+      const request = { type: 'knock-leave', challengeId: challenge.id, elapsedMs: 0, requestId: randomUUID() };
+      const left = await act(visitor, request);
+      assert.equal(left.penalized, elapsedMs >= 5000, 'client duration cannot bypass the server clock');
+      if (left.penalized) {
+        failures++;
+        assert.equal(left.entry.r, 'lose');
+        assert.ok(TRICK_KINDS.includes(left.entry.k));
+      }
+      assert.equal((await saved(visitor)).knocks.length, failures);
+      assert.equal(((await saved(visitor)).challenges || []).length, failures);
+      assert.equal((await lockRef.get()).exists, false);
+      assert.deepEqual((await challengeRef.get()).data().nextLevelByHost, { [host.uid]: 3, other: 4 });
+      assert.deepEqual(await act(visitor, request), left);
+      assert.equal((await saved(visitor)).knocks.length, failures, 'a retry must not apply another penalty');
+      await assert.rejects(act(visitor, { type: 'knock-finish', challengeId: challenge.id, inputs: [], elapsedMs: 6000 }), /끝났거나/);
+      await playerRef.update({ knockAt: 0 });
+      const restarted = await act(visitor, { type: 'knock-start', host: host.uid });
+      assert.equal(restarted.challenge.level, 3);
+      await act(visitor, { type: 'knock-leave', challengeId: restarted.challenge.id });
+      assert.equal((await saved(visitor)).candies, 10);
+      assert.equal(balance(await saved(host), (await db.doc('game/event').get()).data()), 10);
+    }
+  } finally {
+    t.mock.restoreAll();
+    await act(owner, { type: 'event-stop' });
+  }
+});
