@@ -943,7 +943,7 @@ test('chat reaches every village but shows a bubble only for people in the same 
   assert.equal(g.run(`chatBubbles.has('far:tab')`), false);
   assert.equal(g.run(`chatBubbles.has('near:tab')`), true);
   const log = g.elements.get('chatlog').innerHTML;
-  assert.match(log, /\[구리마을\]<\/small> 먼집<\/b>옆 마을 안녕/);
+  assert.match(log, /<small class="where">\[구리마을\]<\/small><b>먼집<\/b>옆 마을 안녕/);
   assert.match(log, /<b>이웃<\/b>여기 안녕/);
 });
 
@@ -954,7 +954,7 @@ test('the chat window keeps history in time order, pages older lines in, and fil
     addChat([{ id: 'c1', by: 'far', v: 2, text: '하나', at: 100 }, { id: 'c2', by: 'near', v: 1, text: '둘', at: 200 }, { id: 'c3', by: 'near', v: 1, text: '셋', at: 300 }], { older: true });`);
   const log = () => g.elements.get('chatlog').innerHTML;
   assert.equal(g.elements.get('chatbox').hidden, false);
-  assert.match(log(), /^<p class="more">위로 올리면 이전 채팅을 불러와요<\/p><p><b><small>\[구리마을\]<\/small> 먼집<\/b>하나<\/p><p><b>이웃<\/b>둘<\/p><p><b>이웃<\/b>셋<\/p>$/);
+  assert.match(log(), /^<p class="more">위로 올리면 이전 채팅을 불러와요<\/p><p><small class="where">\[구리마을\]<\/small><b>먼집<\/b>하나<\/p><p><b>이웃<\/b>둘<\/p><p><b>이웃<\/b>셋<\/p>$/);
   const press = (dataset) => g.run(`document.listeners.click({ target: { classList: { contains: () => false }, closest: () => (${JSON.stringify({ id: '', dataset })}) }, preventDefault() {} })`);
   press({ chatTab: 'here' });
   assert.doesNotMatch(log(), /하나/);
@@ -963,6 +963,18 @@ test('the chat window keeps history in time order, pages older lines in, and fil
   assert.match(log(), /하나/);
   g.run(`toggleFold('chat')`);
   assert.equal(g.elements.get('chatbox').classList.contains('folded'), true);
+});
+
+test('my own lines stand out, and opening chat shows the input inside the chat window even when folded or empty', () => {
+  const g = game(); village(g);
+  g.run(`toggleFold('chat'); openChat();`);
+  assert.equal(g.elements.get('chatbox').hidden, false, 'the window opens for the input even with no chat yet');
+  assert.equal(g.elements.get('chatbox').classList.contains('folded'), false, 'a folded window unfolds');
+  assert.equal(g.elements.get('chatbar').hidden, false);
+  g.run(`closeChat()`);
+  assert.equal(g.elements.get('chatbox').hidden, true, 'an empty window hides again');
+  g.run(`onChat({ data: { id: 'm1', text: '내 말', v: 1, at: 1 }, by: 'me', sameTab: true, peer: 'me:tab' })`);
+  assert.match(g.elements.get('chatlog').innerHTML, /<p class="mine"><b>나<\/b>내 말<\/p>/);
 });
 
 test('a new chat line is appended without redrawing the history, and trimming keeps the place to page from', () => {
