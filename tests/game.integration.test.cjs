@@ -445,11 +445,11 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   assert.equal((await saved(brewer)).basket, true);
   await ref.update({ pumpkins: 100 });
   await assert.rejects(harvest(brewer), /꽉 찼어요/);
-  await ref.update({ pumpkins: 29 });
-  await assert.rejects(act(brewer, { type: 'brew' }), /30개/);
-  await ref.update({ pumpkins: 55 });
+  await ref.update({ pumpkins: 9 });
+  await assert.rejects(act(brewer, { type: 'brew' }), /10개/);
+  await ref.update({ pumpkins: 35 });
   const result = await act(brewer, { type: 'brew' });
-  assert.ok([0, 2, 5, 10].includes(result.gain));
+  assert.ok([2, 5, 10, 20].includes(result.gain));
   assert.equal(result.candies, 10 + result.gain);
   const after = await saved(brewer);
   assert.equal((await secret(brewer)).pumpkins, 25);
@@ -459,6 +459,33 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   await assert.rejects(act(brewer, { type: 'brew' }), (error) => error.status === 429 && /분 뒤/.test(error.message));
   const { challenge } = await act(brewer, { type: 'knock-start', host: host.uid });
   assert.ok(challenge.id);
+});
+
+test('a brew of ten or more candies is announced to every village once, and smaller brews are not', async () => {
+  const brewer = await player('대박');
+  const privateRef = services().db.collection('gamePrivate').doc(brewer.uid), playerRef = services().db.collection('gamePlayers').doc(brewer.uid);
+  await playerRef.update({ basket: true });
+  const announcements = services().database.ref('announcements');
+  const mine = async () => Object.values((await announcements.get()).val() || {}).filter((a) => a.uid === brewer.uid);
+  // 대박은 6% 확률이라, 쿨타임을 풀어 가며 대박이 나올 때까지 끓인다(120번 안에 안 나올 확률은 0.1% 미만).
+  let jackpots = 0, requestId;
+  for (let i = 0; i < 120 && !jackpots; i++) {
+    await Promise.all([privateRef.update({ pumpkins: 10 }), playerRef.update({ brewAt: 0 })]);
+    requestId = randomUUID();
+    const { gain } = await action(brewer.authorization, { requestId, type: 'brew' });
+    if (gain >= 10) jackpots++;
+    else assert.equal((await mine()).length, 0, `a brew of ${gain} is not announced`);
+  }
+  assert.equal(jackpots, 1, 'a jackpot came up');
+  const [announced] = await mine();
+  assert.equal(announced.kind, 'brew');
+  assert.ok([10, 20].includes(announced.n));
+  assert.equal(announced.nick, (await playerRef.get()).data().nick);
+  await action(brewer.authorization, { requestId, type: 'brew' });
+  assert.equal((await mine()).length, 1, 'replaying the same request does not announce again');
+  const base = `http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}`, ns = 'ns=demo-trick-or-treat-default-rtdb';
+  assert.equal((await fetch(`${base}/announcements.json?${ns}&auth=${brewer.token}&orderBy="$key"&limitToLast=1`)).status, 200, 'players can read announcements');
+  assert.equal((await fetch(`${base}/announcements/fake.json?${ns}&auth=${brewer.token}`, { method: 'PUT', body: JSON.stringify({ kind: 'brew', n: 20 }) })).status, 401, 'players cannot fake one');
 });
 
 test('chat history lines can only be added together with a new rate-limited chat line', async () => {

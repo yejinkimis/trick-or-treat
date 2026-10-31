@@ -9,8 +9,10 @@ const { hourOf } = require('./watch.cjs');
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 // 사탕 잡기에 실패하면 사탕은 그대로 두고 장난 하나를 당한다. 화면의 TRICKS와 이름이 같아야 한다.
 const TRICK_KINDS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
-const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 5 * 60 * 1000;
-const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
+const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 5 * 60 * 1000;
+const BREW_TABLE = [{ n: 2, weight: 80 }, { n: 5, weight: 14 }, { n: 10, weight: 5 }, { n: 20, weight: 1 }];
+// 이만큼 이상 뽑으면 모든 마을 화면에 대박 공지를 띄워 연금술을 알린다.
+const JACKPOT_MIN = 10;
 const hasBasket = (player) => player.basket === true || (player.pumpkins || 0) >= BASKET_PUMPKINS;
 // 호박은 서버가 밭에 심어 둔 것만 딸 수 있다. 화면은 자리 번호(s)를 마을 풀밭 칸으로 바꿔 그린다.
 const MAX_CHALLENGE_LOG = 50, HARVEST_HOURS_KEPT = 25;
@@ -136,7 +138,9 @@ async function action(authorization, input) {
   const eventRef = db.doc('game/event');
   const privateRef = db.collection('gamePrivate').doc(uid);
   const challengeRef = db.collection('gameChallenges').doc(uid);
+  let jackpot = null;
   const done = await db.runTransaction(async (tx) => {
+    jackpot = null;
     const remembered = input.type === 'harvest' ? recentEvent(Date.now()) : null;
     const [privateDoc, playerDoc, eventDoc] = await Promise.all([tx.get(privateRef), tx.get(playerRef), remembered ? null : tx.get(eventRef)]);
     const event = remembered ? remembered.event : rememberEvent(eventDoc.exists ? eventDoc.data() : null);
@@ -211,6 +215,7 @@ async function action(authorization, input) {
           brews: [...(player.brews || []), { at: now, n: gain, round }].slice(-20) });
         privateUpdate = { pumpkins };
         result = { gain, candies: count + gain, pumpkins, brewAt: now };
+        if (gain >= JACKPOT_MIN) jackpot = { uid, nick: player.nick || '', n: gain, at: now };
       } else if (type === 'decor') {
         if (typeof input.item !== 'string' || !Object.hasOwn(PRICES, input.item)) fail('장식을 확인해 주세요.');
         const price = PRICES[input.item];
@@ -327,6 +332,8 @@ async function action(authorization, input) {
     }
     return result;
   }, { maxAttempts: 20 });
+  // 같은 요청을 다시 보내 영수증으로 돌려준 결과에는 공지를 또 띄우지 않는다. 공지가 실패해도 연금술 결과는 그대로다.
+  if (jackpot) await services().database.ref('announcements').push({ kind: 'brew', ...jackpot }).catch(() => {});
   // 이벤트를 바꾼 서버는 기억해 둔 이벤트를 버려 바로 다음 호박 따기부터 새 이벤트를 읽게 한다.
   if (input.type === 'event-start' || input.type === 'event-stop') eventMemo = null;
   return done;

@@ -593,15 +593,25 @@ const DECOR = {
 };
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
 // 호박 연금술: 서버(server/game-service.cjs)와 같은 값이어야 한다.
-const PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 5 * 60 * 1000, BREW_COOLDOWN_MIN = BREW_COOLDOWN_MS / 60000;
-const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
+const PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 5 * 60 * 1000, BREW_COOLDOWN_MIN = BREW_COOLDOWN_MS / 60000;
+const BREW_TABLE = [{ n: 2, weight: 80 }, { n: 5, weight: 14 }, { n: 10, weight: 5 }, { n: 20, weight: 1 }];
 const BREW_MAX = Math.max(...BREW_TABLE.map((b) => b.n));
 const brewOdds = BREW_TABLE.map((b) => b.n ? `사탕 +${b.n}` : '꽝').join(' · ');
 const BREW_LINES = {
   0: '펑! 연기만 자욱해요… 호박이 전부 재가 됐어요.',
   2: '보글보글… 사탕 2개가 떠올랐어요!',
   5: '부글부글! 사탕 5개가 솟아올랐어요!',
+  10: '콰과광! 솥이 넘쳐흘러요! 사탕 10개!',
+  20: '…솥이 금빛으로 번쩍여요. 전설의 사탕 20개!!',
 };
+// 서버가 연금술 대박을 알리면 모든 마을 화면에 띄우고 채팅창에도 한 줄 남겨 솥을 홍보한다.
+function announceJackpot(id, a) {
+  const n = Number(a?.n);
+  if (!Number.isFinite(n)) return;
+  const who = a.uid === S.me ? '내가' : `${cleanNick(a.nick) || nameOf(a.uid)}님이`;
+  addChat([{ id: `jackpot-${id}`, name: '마녀 솥', text: `${who} 연금술로 사탕 ${n}개 대박!`, at: Number(a.at) || Date.now() }]);
+  if (a.uid !== S.me) toast(`대박! ${who} 연금술로 사탕 ${n}개를 뽑았어요. 광장 솥에 호박 ${BREW_COST}개를 넣어 보세요!`, { duration: 5000 });
+}
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
 const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'note', 'sound', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
@@ -1690,7 +1700,7 @@ async function alchemyTips() {
   S.target = null;
   renderAction();
   await say('', `호박은 바구니에 계속 모을 수 있어요. 최대 ${PUMPKIN_HOLD_MAX}개까지 들어가요.`, 'sys');
-  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 꽝일 수도, 사탕 5개일 수도 있어요!`, 'sys');
+  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 사탕 2개부터, 운이 좋으면 ${BREW_MAX}개까지 나와요!`, 'sys');
   await say('', `솥은 한 번 끓이면 ${BREW_COOLDOWN_MIN}분 동안 식혀야 해요. 노크 사이사이에 한 방을 노려 보세요.`, 'sys');
   $('#dialog').hidden = true;
   S.busy = false;
@@ -3523,6 +3533,11 @@ async function connectFirebaseGame(uid) {
     if (!$('#crew').hidden) renderCrew();
   };
   const seen = new Set(), joined = Date.now();
+  // 공지 규칙이 아직 게시되지 않았어도 게임은 그대로 되도록 읽기 실패는 조용히 넘긴다.
+  stops.push(rt.onChildAdded(rt.query(rt.ref(a.database, 'announcements'), rt.limitToLast(1)), (snapshot) => {
+    const data = snapshot.val();
+    if (data?.kind === 'brew' && Number(data.at) >= joined - 5000) announceJackpot(snapshot.key, data);
+  }, () => {}));
   const receive = (snapshot) => {
     const data = snapshot.val();
     if (!data || seen.has(data.id) || data.at < joined - 5000) return;
