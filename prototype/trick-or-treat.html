@@ -3383,25 +3383,28 @@ async function connectFirebaseGame(uid) {
   const writePresence = () => rt.set(ownRef, { ...currentPresence, at: rt.serverTimestamp() });
   let presenceTree = {}, serverOffset = 0;
   const serverNow = () => Date.now() + serverOffset;
-  const asked = new Set();
-  let villageLoaded = false;
-  // 다른 마을 사람은 이 마을 구독에 없으니 분장과 이름만 처음 한 번 읽어 온다.
+  const asked = new Set(), reading = new Set();
+  let villageLoaded = false, visitors = new Set();
+  // 다른 마을 사람은 이 마을 구독에 없으니 문서를 따로 읽는다. 이름만 필요하면 처음 한 번,
+  // 이 마을에 들어온 손님이면 들어올 때마다 다시 읽어 그 사이 바꾼 분장·몸 낙서를 보여 준다.
   // 마을 문서가 오기 전에는 이 마을 사람도 모르는 사람으로 보여 헛읽기가 생기므로 기다린다.
-  const know = (by) => {
-    if (!villageLoaded || S.players[by] || asked.has(by)) return;
-    asked.add(by);
+  const know = (by, again = false) => {
+    if (!villageLoaded || by === uid || S.firebasePlayers[by] || reading.has(by) || (asked.has(by) && !again)) return;
+    asked.add(by); reading.add(by);
     fs.getDoc(fs.doc(a.firestore, 'gamePlayers', by)).then((doc) => {
       if (disposed || !doc.exists()) return;
       S.strangers[by] = doc.data();
       applyFirebasePlayers(); renderChatLog();
-    }).catch(() => asked.delete(by));
+    }).catch(() => asked.delete(by)).finally(() => reading.delete(by));
   };
   const refreshPeers = () => {
     peers = livePresence(presenceTree, serverNow()).map(({ by, id, presence }) => ({
       by, peer: `${by}:${id}`, sameTab: `${by}:${id}` === myPeer, isMe: by === uid, kind: 'viewer',
       presence: { ...presence, c: S.players[by]?.costume || 'plain' },
     }));
-    for (const { by } of peers) know(by);
+    const here = new Set(peers.map((p) => p.by));
+    for (const by of here) know(by, !visitors.has(by));
+    visitors = here;
     syncPeers();
   };
   let onlineTree = {};
@@ -3441,7 +3444,7 @@ async function connectFirebaseGame(uid) {
   const joinVillage = (n) => {
     villageStops.splice(0).forEach((stop) => stop());
     if (ownRef) { void disconnect.cancel().catch(() => {}); void rt.remove(ownRef).catch(() => {}); }
-    S.village = n; S.firebasePlayers = {}; presenceTree = {}; peers = []; villageLoaded = false;
+    S.village = n; S.firebasePlayers = {}; presenceTree = {}; peers = []; villageLoaded = false; visitors = new Set();
     renderChatLog();
     ghosts.clear(); chatBubbles.clear();
     ownRef = rt.ref(a.database, `presence/${n}/${uid}/${sid}`);
@@ -3463,7 +3466,7 @@ async function connectFirebaseGame(uid) {
       if (snapshot.metadata.fromCache) return;
       S.firebasePlayers = Object.fromEntries(snapshot.docs.map((doc) => [doc.id, doc.data()]));
       applyFirebasePlayers(); notifyKnocks();
-      if (!villageLoaded) { villageLoaded = true; for (const { by } of [...peers, ...S.online]) know(by); }
+      if (!villageLoaded) { villageLoaded = true; for (const { by } of peers) know(by, true); for (const { by } of S.online) know(by); }
       resolve();
     }, (error) => { S.readOnly = true; toast('마을 정보를 받지 못해요. 새로고침해 주세요.'); reject(error); })));
     return Promise.all([presenceReady, playersReady]);
