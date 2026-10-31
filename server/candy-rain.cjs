@@ -2,7 +2,7 @@
 // 각자 자기 화면에만 떨어져 마을이 작아도 서로 빼앗지 않는다.
 // 시각은 GAME_CANDY_RAIN_AT에 '시작 시각/분'을 쉼표로 이어 바꾼다. 분을 빼면 10분이다.
 const RAIN_MIN = 10, DROP_EVERY_MS = 4 * 1000, DROP_LIFE_MS = 20 * 1000, PICK_SLACK_MS = 2000;
-const DEFAULT_RAIN_AT = '2026-10-31T22:30:00+09:00/90';
+const DEFAULT_RAIN_AT = '2026-10-31T22:30:00+09:00/30';
 
 function scheduleOf(text, defaultMin) {
   return text.split(',').map((item) => {
