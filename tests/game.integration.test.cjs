@@ -589,7 +589,7 @@ test('chat history lines can only be added together with a new rate-limited chat
   assert.equal(await read(third), null);
 });
 
-test('the leaderboard is computed once per three minutes, shared through the CDN, and refuses cache-busting', async () => {
+test('the leaderboard is computed once per minute, shared through the CDN, and refuses cache-busting', async () => {
   const handler = require('../api/game/leaderboard.js');
   const call = async (url) => {
     const res = { headers: {}, setHeader(key, value) { this.headers[key] = value; }, end(body) { this.body = JSON.parse(body); } };
@@ -612,7 +612,7 @@ test('the leaderboard is computed once per three minutes, shared through the CDN
 
   const ok = await call('/api/game/leaderboard');
   assert.equal(ok.statusCode, 200);
-  assert.equal(ok.headers['cache-control'], 'public, max-age=0, s-maxage=180');
+  assert.equal(ok.headers['cache-control'], 'public, max-age=0, s-maxage=60');
   const busted = await call('/api/game/leaderboard?t=1');
   assert.equal(busted.statusCode, 400);
   assert.equal(busted.headers['cache-control'], 'no-store, max-age=0');

@@ -37,6 +37,16 @@ function game({ reducedMotion = true, storage } = {}) {
       firstChild: { textContent: '' },
     };
     Object.defineProperty(el, 'className', { get: () => [...classes].join(' '), set(value) { classes.clear(); value.split(/\s+/).forEach((x) => classes.add(x)); } });
+    let markup = '';
+    Object.defineProperty(el, 'innerHTML', {
+      get: () => markup,
+      set(value) {
+        markup = String(value);
+        for (const match of markup.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) {
+          elements.set(match[3], element(match[3], match[1], match[2]));
+        }
+      },
+    });
     return el;
   }
   for (const match of html.matchAll(/<(\w+)\b([^>]*\bid="([^"]+)"[^>]*)>/g)) elements.set(match[3], element(match[3], match[1], match[2]));
@@ -89,6 +99,90 @@ test('HTML contains every static script target and JavaScript loads', () => {
   const g = game();
   for (const [, id] of source.matchAll(/\$\(['"]#([\w-]+)['"]\)/g)) assert.ok(g.elements.has(id), id);
 });
+
+test('item purchases and uses cannot overlap or overwrite a newer inventory', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.players.me.round = 'practice'; S.players.me.candies = 10;
+    S.ownPrivate = { inventory: { 'house-ward': 1 } }; renderHouse();
+    var requests = [];
+    gameRequest = (input) => new Promise((resolve, reject) => requests.push({ input, resolve, reject }));
+    var purchase = buyItem('house-ward');`);
+  assert.equal(g.elements.get('item-buy-house-ward').disabled, true);
+  assert.equal(g.elements.get('item-use-house-ward').disabled, true);
+  await g.run(`buyItem('house-ward')`);
+  await g.run(`useItem('house-ward')`);
+  assert.equal(g.run('requests.length'), 1, 'rapid clicks cannot send overlapping inventory writes');
+  await g.run(`requests[0].resolve({ round: 'practice', candies: 5, inventory: { 'house-ward': 2 },
+    purchase: { item: 'house-ward', price: 5, at: Date.now() } }); purchase`);
+  assert.equal(g.run(`itemInventory()['house-ward']`), 2);
+  assert.equal(g.run(`candiesOf('me')`), 5);
+  assert.equal(g.elements.get('item-buy-house-ward').disabled, false);
+  assert.equal(g.elements.get('item-use-house-ward').disabled, false);
+  g.run(`var use = useItem('house-ward')`);
+  await g.run(`buyItem('house-ward')`);
+  await g.run(`useItem('house-ward')`);
+  assert.equal(g.run('requests.length'), 2, 'use shares the purchase lock');
+  await g.run(`requests[1].resolve({ inventory: { 'house-ward': 1 }, usedAt: Date.now(), guardUntil: Date.now() + 300000 }); use`);
+  assert.equal(g.run(`itemInventory()['house-ward']`), 1);
+  assert.equal(g.elements.get('item-buy-house-ward').disabled, false);
+  assert.equal(g.elements.get('item-use-house-ward').disabled, true, 'cooldown still applies after unlocking');
+});
+
+test('failed item actions unlock both buttons and allow another purchase', async () => {
+  const g = game(); g.players();
+  g.run(`S.mode = 'firebase'; S.players.me.round = 'practice'; S.players.me.candies = 10;
+    S.ownPrivate = { inventory: { 'house-ward': 1 } }; renderHouse();
+    gameRequest = async () => { throw new Error('잠시 뒤 다시 시도해 주세요.'); };`);
+  for (const action of ['buyItem', 'useItem']) {
+    await g.run(`${action}('house-ward')`);
+    assert.equal(g.elements.get('item-buy-house-ward').disabled, false);
+    assert.equal(g.elements.get('item-use-house-ward').disabled, false);
+    assert.equal(g.run(`itemInventory()['house-ward']`), 1);
+  }
+  g.run(`gameRequest = async () => ({ round: 'practice', candies: 5, inventory: { 'house-ward': 2 },
+    purchase: { item: 'house-ward', price: 5, at: Date.now() } });`);
+  await g.run(`buyItem('house-ward')`);
+  assert.equal(g.run(`itemInventory()['house-ward']`), 2);
+});
+
+test('practice items deduct candy, protect for five minutes and wait twenty minutes between uses', async () => {
+  const g = game(); g.players();
+  g.run('Date.now = () => 1800000000000; renderHouse()');
+  await g.run(`buyItem('house-ward')`);
+  assert.equal(g.run(`candiesOf('me')`), 5);
+  await g.run(`useItem('house-ward')`);
+  assert.equal(g.run('S.players.me.guardUntil'), 1800000300000);
+  await g.run(`buyItem('house-ward')`);
+  assert.equal(g.run(`candiesOf('me')`), 0);
+  for (const elapsed of [300000, 1199999]) {
+    g.run(`Date.now = () => ${1800000000000 + elapsed}`);
+    await g.run(`useItem('house-ward')`);
+    assert.equal(g.run(`itemInventory()['house-ward']`), 1);
+  }
+  g.run('Date.now = () => 1800001200000');
+  await g.run(`useItem('house-ward')`);
+  assert.equal(g.run(`itemInventory()['house-ward']`), 0);
+});
+
+for (const activeAtFinish of [true, false]) {
+  test(`local challenge ${activeAtFinish ? 'respects a newly activated ward' : 'allows transfers after the ward expires'}`, async () => {
+    const g = game(); g.players();
+    g.run(`Date.now = () => 1800000000000; S.players.me.pumpkins = 3;
+      say = async () => {}; choose = async () => 'bye';
+      candyGame = async () => {
+        S.players.host = { ...S.players.host, guardUntil: Date.now() ${activeAtFinish ? '+' : '-'} 300000 };
+        return { won: true, inputs: [], elapsedMs: 6000 };
+      };`);
+    await g.finish(g.run(`knock(MAP.slots.find((s) => s.owner === 'host'))`));
+    assert.equal(g.run(`candiesOf('host')`), activeAtFinish ? 10 : 9);
+    assert.equal(g.run(`candiesOf('me')`), activeAtFinish ? 10 : 11);
+    assert.equal(g.run('Boolean(S.players.me.knocks.at(-1).protected)'), activeAtFinish);
+    // 보호가 끝난 뒤 장부를 다시 계산해도 사탕이 뒤늦게 빠지지 않는다.
+    g.run('Date.now = () => 1800000600000; S.ledger = null');
+    assert.equal(g.run(`candiesOf('host')`), activeAtFinish ? 10 : 9);
+    assert.equal(g.run('wasMoved(S.players.me.knocks.at(-1))'), !activeAtFinish);
+  });
+}
 
 test('the wardrobe doodle paints only on the body, survives a costume change inside the new body, and hides under poop', () => {
   const g = game(); g.players();
@@ -1348,7 +1442,7 @@ test('the rank board shows the top three and my place, and the board and quest f
   assert.equal(g.elements.get('board').classList.contains('folded'), false);
   assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3');
   g.run(`const mode = S.mode; S.mode = 'firebase'; S.rankList = [{ id: 'me', n: 10, costume: 'pumpkin' }]; renderBoard(); S.mode = mode`);
-  assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3 (3분마다 갱신)');
+  assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3 (1분마다 갱신)');
   press({ id: '', dataset: { fold: 'quest' } });
   assert.equal(g.elements.get('quest').classList.contains('folded'), true);
   assert.match(g.elements.get('quest-label').textContent, /진행 중인 퀘스트 · 호박 바구니 만들기/);
@@ -1491,7 +1585,7 @@ test('the admin special-accounts view lists the numbers and flags and opens the 
   assert.match(html, /&lt;봇&gt;/);
   assert.match(html, /성공률 96%/);
   assert.match(html, /최단 4\.0초/);
-  assert.match(html, /사탕 \+25 \(노크 \+23, 연금술 \+5, 장식 -2, 털림 -1\)/);
+  assert.match(html, /사탕 \+25 \(노크 \+23, 연금술 \+5, 장식 -2, 아이템 0, 털림 -1\)/);
   assert.match(html, /부계정에게서 12번/);
   assert.match(html, /<small class="flag">성공률 높음<\/small>/);
   g.run(`var opened = inspectAdminTarget('${'b'.repeat(32)}')`);
