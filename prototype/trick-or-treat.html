@@ -1710,15 +1710,17 @@ function renderQuest() {
   const have = hasBasket(S.me) ? BASKET_PUMPKINS : Math.min(BASKET_PUMPKINS, p.pumpkins || 0);
   const ended = eventState() === 'ended';
   const knocked = Boolean(p.knockAt) || (p.knocks || []).some((k) => k.r === 'win' || k.r === 'lose');
-  const step = ended ? 'ended' : have < BASKET_PUMPKINS ? 'pumpkins' : !knocked ? 'knock' : 'compete';
+  const brewed = Boolean(p.brewAt) || Boolean(p.brews?.length);
+  const step = ended ? 'ended' : have < BASKET_PUMPKINS ? 'pumpkins' : !knocked ? 'knock' : !brewed ? 'brew' : 'compete';
   const pumpkins = p.pumpkins || 0, cooling = brewWait(S.me);
-  const brew = step !== 'compete' ? '' : cooling > 0 ? 'cooling' : pumpkins >= BREW_COST ? 'ready' : 'filling';
+  const brew = step !== 'brew' && step !== 'compete' ? '' : cooling > 0 ? 'cooling' : pumpkins >= BREW_COST ? 'ready' : 'filling';
   el.dataset.step = step;
   el.dataset.brew = brew;
   const brewStatus = { cooling: `솥이 식는 중 · ${Math.ceil(cooling / 60000)}분 뒤`, ready: '솥이 준비됐어요! 광장 솥으로 가세요', filling: `호박 ${pumpkins}/${BREW_COST}` }[brew];
   const content = {
     pumpkins: ['진행 중인 퀘스트', `호박 바구니 만들기 · ${have}/${BASKET_PUMPKINS}`, '주황색 호박 근처에서 ‘호박 따기’ 또는 Space를 누르세요.'],
     knock: ['퀘스트 완료! 다음 목표', '친구 집 문을 처음 두드려 보세요', '바구니 완성! 친구 집 문 앞에서 버튼이나 Space로 도전하세요.'],
+    brew: ['퀘스트 완료! 다음 목표', `광장 솥에서 연금술 해 보기 · ${Math.min(pumpkins, BREW_COST)}/${BREW_COST}`, brew === 'ready' ? '호박이 다 모였어요! 광장 솥으로 가세요.' : `호박 ${BREW_COST}개를 광장 솥에 넣으면 사탕이 최대\u00a0${BREW_MAX}개 나와요.`],
     compete: ['다음 목표', '사탕을 모아 순위를 올리세요', `친구 집 도전: 성공하면 사탕 +1\n연금술: 호박 ${BREW_COST}개를 광장 솥에 넣으면 사탕 최대\u00a0${BREW_MAX}개\n${brewStatus}`],
     ended: ['이벤트 종료', '최종 사탕 순위를 확인하세요', '순위 버튼에서 결과를 볼 수 있어요. 최종 순위에 따라 선물을 드려요.'],
   }[step];

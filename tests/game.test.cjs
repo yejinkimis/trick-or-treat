@@ -234,15 +234,28 @@ test('three harvests update progress, unlock knocking, and restore from saved pl
   const next = game(); next.run(`S.me = 'me'; S.players = ${saved}; renderQuest()`);
   assert.equal(next.elements.get('quest').dataset.step, 'knock');
   next.run(`S.players.me.knocks = [{ r: 'lose' }]; renderQuest()`);
+  assert.equal(next.elements.get('quest').dataset.step, 'brew');
+  next.run(`S.players.me.brews = [{ at: 1, n: 2 }]; renderQuest()`);
   assert.equal(next.elements.get('quest').dataset.step, 'compete');
   next.run(`S.event = { startedAt: 1, endsAt: 2 }; renderQuest()`);
   assert.equal(next.elements.get('quest').dataset.step, 'ended');
 });
 
-test('the next goal shows how close the cauldron is, when it is ready, and while it cools', () => {
+test('the first brew is a quest step, and the next goal then keeps showing the cauldron state', () => {
   const g = game(); g.players();
   g.run(`S.players.me.basket = true; S.players.me.knocks = [{ r: 'lose' }]; S.players.me.pumpkins = 12; renderQuest()`);
   const quest = g.elements.get('quest'), bar = g.elements.get('quest-progress'), detail = () => g.elements.get('quest-detail').textContent;
+  assert.equal(quest.dataset.step, 'brew');
+  assert.equal(quest.dataset.brew, 'filling');
+  assert.equal(bar.hidden, false);
+  assert.deepEqual([bar.max, bar.value], [30, 12]);
+  assert.equal(g.elements.get('quest-title').textContent, '광장 솥에서 연금술 해 보기 · 12/30');
+  assert.match(detail(), /호박 30개를 광장 솥에 넣으면 사탕이 최대\s5개 나와요/);
+  g.run('S.players.me.pumpkins = 30; renderQuest()');
+  assert.equal(quest.dataset.brew, 'ready');
+  assert.equal(bar.hidden, true);
+  assert.match(detail(), /호박이 다 모였어요! 광장 솥으로 가세요/);
+  g.run(`S.players.me.brewAt = Date.now() - 11 * 60 * 1000; S.players.me.pumpkins = 12; renderQuest()`);
   assert.equal(quest.dataset.step, 'compete');
   assert.equal(quest.dataset.brew, 'filling');
   assert.equal(bar.hidden, false);
@@ -319,7 +332,7 @@ for (const won of [true, false]) {
       assert.equal(g.run('activeFx("me")?.kind'), kind, 'and it is active right away');
       assert.match(g.run('messages.join(" ")'), new RegExp(g.run(`TRICKS['${kind}'].lines[1]`).replace(/[.!?()]/g, '\\$&')));
     }
-    assert.equal(g.elements.get('quest').dataset.step, 'compete');
+    assert.equal(g.elements.get('quest').dataset.step, 'brew');
   });
 }
 
