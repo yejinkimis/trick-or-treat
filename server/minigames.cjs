@@ -58,7 +58,7 @@ function miniPlan(game, level, seed) {
       item.x = line - Math.sign(b.x - a.x || 1) * (reach + .12);
       if (item.x < .06 || item.x > .94) { item.bad = false; item.x = line; }
     });
-    const allowed = Math.max(1, 4 - L);
+    const allowed = Math.max(0, 3 - L);
     return { items, fall, reach, speed, need: Math.max(1, items.filter((item) => !item.bad).length - allowed), allowed, end: items[items.length - 1].t };
   }
   return null;
