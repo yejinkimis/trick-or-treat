@@ -57,6 +57,11 @@ img.px-img{image-rendering:pixelated;display:block}
 .board li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .board li b{font-family:var(--f-px);font-weight:400;color:var(--gold);white-space:nowrap}
 .board li.mine span{color:var(--gold)}
+.tr-break{flex-basis:100%;height:0}
+.vmap{margin:0 0 0 auto;width:min(240px,100%)}
+.vmap li button{all:unset;box-sizing:border-box;display:flex;justify-content:space-between;gap:8px;width:100%;cursor:pointer}
+.vmap li button:hover span,.vmap li button:focus-visible span{color:var(--gold)}
+.vmap li.here span,.vmap li.here b{color:var(--gold)}
 .board-me{color:var(--muted)}
 
 .quest[data-step="knock"],.quest[data-brew="ready"]{border-color:var(--gold)}
@@ -205,6 +210,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 
 @media (max-width:560px){
   .tr{flex-direction:column;align-items:flex-end}
+  .tr-break,.vmap{display:none!important}
   .toast{top:auto;bottom:calc(110px + env(safe-area-inset-bottom,0px))}
   .timing{max-height:calc(100dvh - 24px);overflow:auto;padding:12px;gap:8px}
   .timing-track{height:min(36dvh,260px);min-height:160px}
@@ -241,6 +247,11 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-online" type="button" hidden>마을 지도</button>
   <button class="pbtn icon-btn" id="open-sound" type="button" aria-label="소리" title="소리"><img class="px-img" id="sound-icon" alt=""></button>
   <button class="pbtn" id="account-session" type="button" hidden>로그아웃</button>
+  <span class="tr-break" aria-hidden="true"></span>
+  <section class="px board vmap" id="vmap" aria-label="마을 지도" hidden>
+    <div class="panel-head"><span class="board-label" id="vmap-label">마을 지도</span><button class="fold" type="button" data-fold="vmap" aria-expanded="true">접기</button></div>
+    <ol id="vmap-list"></ol>
+  </section>
 </div>
 
 <button class="hud pbtn hot bonk" id="bonk-btn" type="button" hidden>뿅망치 (F)</button>
@@ -1762,6 +1773,7 @@ function renderHud() {
   $('#account-session').hidden = !['account', 'firebase'].includes(S.mode);
   $('#open-online').hidden = S.mode !== 'firebase';
   renderBoard();
+  renderVillagePanel();
 }
 
 // 퀘스트와 순위판을 접었는지는 이 기기에만 기억해 둔다.
@@ -1791,6 +1803,25 @@ function renderBoard() {
   const html = list.slice(0, 3).map((r, i) => `<li${r.id === S.me ? ' class="mine"' : ''}><span>${i + 1}. ${esc(nameOf(r.id))}</span><b>${r.n}개</b></li>`).join('');
   if (html !== renderBoard.last) $('#board-list').innerHTML = renderBoard.last = html;
   $('#board-me').textContent = rank ? `나 ${list.length}명 중 ${rank}등 · 사탕 ${list[rank - 1].n}개` : `참가 ${list.length}명`;
+}
+
+// 오른쪽 위에 마을마다 접속 인원을 늘 띄워 두고, 누르면 그 마을로 간다. 마을 지도 창과 같은 기록을 쓴다.
+function renderVillagePanel() {
+  const panel = $('#vmap');
+  const counts = new Map();
+  for (const { presence } of S.online) counts.set(presence.v, (counts.get(presence.v) || 0) + 1);
+  const total = Math.max(villageCount(), ...counts.keys());
+  panel.hidden = S.mode !== 'firebase' || !total || S.readOnly;
+  if (panel.hidden) return;
+  applyFold(panel, 'vmap');
+  const label = folds.vmap && S.village ? `마을 지도 · 지금 ${S.village}. ${villageLabel(S.village)}` : '마을 지도';
+  if ($('#vmap-label').textContent !== label) $('#vmap-label').textContent = label;
+  const html = Array.from({ length: total }, (_, i) => i + 1).map((v) => {
+    const row = `<span>${v}. ${esc(villageLabel(v))}${v === S.village ? ' · 여기' : ''}</span><b>${counts.get(v) || 0}명</b>`;
+    return v === S.village ? `<li class="here">${row}</li>` : `<li><button type="button" data-go="${v}">${row}</button></li>`;
+  }).join('');
+  // 매초 다시 그려도 내용이 같으면 그대로 두어 누르려던 마을 버튼이 바뀌지 않게 한다.
+  if (html !== renderVillagePanel.last) $('#vmap-list').innerHTML = renderVillagePanel.last = html;
 }
 
 // 마을 지도는 이미 받고 있는 마을 이름과 접속자 기록(마을 번호만)으로 그려서 추가 읽기가 없다.
