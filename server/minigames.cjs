@@ -18,15 +18,15 @@ function miniPlan(game, level, seed) {
   const between = (a, b) => a + Math.floor(random() * (b - a + 1));
   if (game === 'whack') {
     // 유령 사이에 똥이 섞여 나온다. 똥을 누르면 실수다.
-    const show = 900 - L * 100, items = [];
+    const show = 800 - L * 80, items = [];
     let t = 1000;
     for (let i = 0; i < 18 + L * 2; i++) {
       let k = between(0, 8);
       while (items.slice(-2).some((item) => item.k === k)) k = (k + 1) % 9;
-      items.push({ t, k, from: t, to: t + show, bad: i > 0 && random() < .3 });
-      t += between(600 - L * 60, 950 - L * 80);
+      items.push({ t, k, from: t, to: t + show, bad: i > 0 && random() < .35 });
+      t += between(550 - L * 60, 900 - L * 80);
     }
-    const allowed = Math.max(1, 5 - L);
+    const allowed = Math.max(1, 4 - L);
     return { items, need: items.filter((item) => !item.bad).length - allowed, allowed, end: items[items.length - 1].to };
   }
   if (game === 'spell') {
