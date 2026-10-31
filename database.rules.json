@@ -57,6 +57,9 @@
         "$other": { ".validate": false }
       }
     },
+    "announcements": {
+      ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true"
+    },
     "events": {
       "$village": {
         ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",

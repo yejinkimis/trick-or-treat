@@ -24,9 +24,9 @@ test('server replays candy-bar inputs instead of trusting a claimed result', () 
   assert.equal(evaluateCandyChallenge(challenge, [1, 1, 2, 0], 2000, 6000).valid, false);
 });
 
-test('alchemy rolls follow the 20/50/25/5 table', () => {
+test('alchemy rolls follow the 80/14/5/1 table and never come up empty', () => {
   const { brewGain } = require('../server/game-service.cjs');
-  assert.deepEqual([0, 19, 20, 69, 70, 94, 95, 99].map((roll) => brewGain(roll)), [0, 0, 2, 2, 5, 5, 5, 5]);
+  assert.deepEqual([0, 79, 80, 93, 94, 98, 99].map((roll) => brewGain(roll)), [2, 2, 5, 5, 10, 10, 20]);
 });
 
 const { WATCH, hourOf, summarize, watchList } = require('../server/watch.cjs');
