@@ -659,16 +659,14 @@ const ITEMS = {
 };
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
 // 호박 연금술: 서버(server/game-service.cjs)와 같은 값이어야 한다.
-const PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 5 * 60 * 1000, BREW_COOLDOWN_MIN = BREW_COOLDOWN_MS / 60000;
-const BREW_TABLE = [{ n: 2, weight: 80 }, { n: 5, weight: 14 }, { n: 10, weight: 5 }, { n: 20, weight: 1 }];
+const PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 5 * 60 * 1000, BREW_COOLDOWN_MIN = BREW_COOLDOWN_MS / 60000;
+const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
 const BREW_MAX = Math.max(...BREW_TABLE.map((b) => b.n));
 const brewOdds = BREW_TABLE.map((b) => b.n ? `사탕 +${b.n}` : '꽝').join(' · ');
 const BREW_LINES = {
   0: '펑! 연기만 자욱해요… 호박이 전부 재가 됐어요.',
   2: '보글보글… 사탕 2개가 떠올랐어요!',
   5: '부글부글! 사탕 5개가 솟아올랐어요!',
-  10: '콰과광! 솥이 넘쳐흘러요! 사탕 10개!',
-  20: '…솥이 금빛으로 번쩍여요. 전설의 사탕 20개!!',
 };
 // 누가 연금술을 하면 몇 개든 화면 위 알림으로 차례로 띄워 솥을 홍보한다. 대박(10개 이상)은 더 오래 띄우고 채팅창에도 남긴다.
 const BREW_BIG = 10, BREW_NEWS_KEEP = 3;
@@ -1797,7 +1795,7 @@ async function alchemyTips() {
   S.target = null;
   renderAction();
   await say('', `호박은 바구니에 계속 모을 수 있어요. 최대 ${PUMPKIN_HOLD_MAX}개까지 들어가요.`, 'sys');
-  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 사탕 2개부터, 운이 좋으면 ${BREW_MAX}개까지 나와요!`, 'sys');
+  await say('', `${BREW_COST}개를 모아 광장 가운데 마녀 솥에 넣으면 연금술이 시작돼요. 꽝일 수도, 사탕 5개일 수도 있어요!`, 'sys');
   await say('', `솥은 한 번 끓이면 ${BREW_COOLDOWN_MIN}분 동안 식혀야 해요. 노크 사이사이에 한 방을 노려 보세요.`, 'sys');
   $('#dialog').hidden = true;
   S.busy = false;

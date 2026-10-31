@@ -24,9 +24,17 @@ test('server replays candy-bar inputs instead of trusting a claimed result', () 
   assert.equal(evaluateCandyChallenge(challenge, [1, 1, 2, 0], 2000, 6000).valid, false);
 });
 
-test('alchemy rolls follow the 80/14/5/1 table and never come up empty', () => {
-  const { brewGain } = require('../server/game-service.cjs');
-  assert.deepEqual([0, 79, 80, 93, 94, 98, 99].map((roll) => brewGain(roll)), [2, 2, 5, 5, 10, 10, 20]);
+test('alchemy costs thirty pumpkins and rolls follow the original 20/50/30 table', () => {
+  const { brewGain, BREW_COST, BREW_COOLDOWN_MS } = require('../server/game-service.cjs');
+  assert.equal(BREW_COST, 30);
+  assert.equal(BREW_COOLDOWN_MS, 5 * 60 * 1000);
+  assert.deepEqual([0, 19, 20, 69, 70, 99].map((roll) => brewGain(roll)), [0, 0, 2, 2, 5, 5]);
+  const counts = {};
+  for (let roll = 0; roll < 100; roll++) {
+    const gain = brewGain(roll);
+    counts[gain] = (counts[gain] || 0) + 1;
+  }
+  assert.deepEqual(counts, { 0: 20, 2: 50, 5: 30 });
 });
 
 const { WATCH, hourOf, summarize, watchList } = require('../server/watch.cjs');

@@ -415,25 +415,25 @@ test('three harvests update progress, unlock knocking, and restore from saved pl
 
 test('the first brew is a quest step, and the next goal then keeps showing the cauldron state', () => {
   const g = game(); g.players();
-  g.run(`S.players.me.basket = true; S.players.me.knocks = [{ r: 'lose' }]; S.players.me.pumpkins = 6; renderQuest()`);
+  g.run(`S.players.me.basket = true; S.players.me.knocks = [{ r: 'lose' }]; S.players.me.pumpkins = 12; renderQuest()`);
   const quest = g.elements.get('quest'), bar = g.elements.get('quest-progress'), detail = () => g.elements.get('quest-detail').textContent;
   assert.equal(quest.dataset.step, 'brew');
   assert.equal(quest.dataset.brew, 'filling');
   assert.equal(bar.hidden, false);
-  assert.deepEqual([bar.max, bar.value], [10, 6]);
-  assert.equal(g.elements.get('quest-title').textContent, '광장 솥에서 연금술 해 보기 · 6/10');
-  assert.match(detail(), /호박 10개를 광장 솥에 넣으면 사탕이 최대\s20개 나와요/);
-  g.run('S.players.me.pumpkins = 10; renderQuest()');
+  assert.deepEqual([bar.max, bar.value], [30, 12]);
+  assert.equal(g.elements.get('quest-title').textContent, '광장 솥에서 연금술 해 보기 · 12/30');
+  assert.match(detail(), /호박 30개를 광장 솥에 넣으면 사탕이 최대\s5개 나와요/);
+  g.run('S.players.me.pumpkins = 30; renderQuest()');
   assert.equal(quest.dataset.brew, 'ready');
   assert.equal(bar.hidden, true);
   assert.match(detail(), /호박이 다 모였어요! 광장 솥으로 가세요/);
-  g.run(`S.players.me.brewAt = Date.now() - 11 * 60 * 1000; S.players.me.pumpkins = 6; renderQuest()`);
+  g.run(`S.players.me.brewAt = Date.now() - 11 * 60 * 1000; S.players.me.pumpkins = 12; renderQuest()`);
   assert.equal(quest.dataset.step, 'compete');
   assert.equal(quest.dataset.brew, 'filling');
   assert.equal(bar.hidden, false);
-  assert.deepEqual([bar.max, bar.value], [10, 6]);
-  assert.match(detail(), /친구 집 도전: 성공하면 사탕 \+1\n연금술: 호박 10개를 광장 솥에 넣으면 사탕 최대\s20개\n호박 6\/10/);
-  g.run('S.players.me.pumpkins = 10; renderQuest()');
+  assert.deepEqual([bar.max, bar.value], [30, 12]);
+  assert.match(detail(), /친구 집 도전: 성공하면 사탕 \+1\n연금술: 호박 30개를 광장 솥에 넣으면 사탕 최대\s5개\n호박 12\/30/);
+  g.run('S.players.me.pumpkins = 30; renderQuest()');
   assert.equal(quest.dataset.brew, 'ready');
   assert.equal(bar.hidden, true);
   assert.match(detail(), /솥이 준비됐어요! 광장 솥으로 가세요/);
@@ -1184,7 +1184,7 @@ test('basket stays after harvesting more, alchemy tip explains the cauldron, and
   for (let i = 0; i < 3; i++) g.run('S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])');
   await g.finish(g.run('alchemyTips()'));
   assert.equal(g.run('S.players.me.basket'), true);
-  assert.match(g.run('messages.join(" ")'), /10개를 모아 광장 가운데 마녀 솥/);
+  assert.match(g.run('messages.join(" ")'), /30개를 모아 광장 가운데 마녀 솥/);
   assert.equal(g.run('S.busy'), false);
   const told = g.run('messages.length');
   g.run('S.pumpkins = [{ x: 32, y: 32 }]; harvest(S.pumpkins[0])');
@@ -1212,29 +1212,39 @@ test('every brew shows in the top notice one at a time, and a jackpot stays long
   const notice = g.elements.get('toast'), chat = () => g.elements.get('chatlog').innerHTML;
   g.run(`announceBrew('k1', { kind: 'brew', uid: 'me', nick: '나', n: 2, at: 1 })`);
   assert.equal(notice.hidden, false);
-  assert.equal(notice.textContent, '내가 연금술로 사탕 2개를 받았어요 · 광장 솥에 호박 10개');
+  assert.equal(notice.textContent, '내가 연금술로 사탕 2개를 받았어요 · 광장 솥에 호박 30개');
   assert.doesNotMatch(chat(), /마녀 솥/, 'small brews stay out of the chat');
   g.run(`announceBrew('k2', { kind: 'brew', uid: 'far', nick: '먼집', n: 20, at: 2 }); announceBrew('k2', { kind: 'brew', uid: 'far', nick: '먼집', n: 20, at: 2 })`);
-  assert.equal(notice.textContent, '내가 연금술로 사탕 2개를 받았어요 · 광장 솥에 호박 10개', 'the next one waits its turn');
+  assert.equal(notice.textContent, '내가 연금술로 사탕 2개를 받았어요 · 광장 솥에 호박 30개', 'the next one waits its turn');
   g.fire(3000); await tick();
-  assert.equal(notice.textContent, '대박! 먼집님이 연금술로 사탕 20개를 뽑았어요! 광장 솥에 호박 10개를 넣어 보세요');
+  assert.equal(notice.textContent, '대박! 먼집님이 연금술로 사탕 20개를 뽑았어요! 광장 솥에 호박 30개를 넣어 보세요');
   assert.equal((chat().match(/먼집님이 연금술로 사탕 20개 대박!/g) || []).length, 1, 'shown once even if delivered twice');
   g.fire(5000); await tick();
   assert.equal(notice.hidden, true, 'a jackpot stays for five seconds, then the notice clears');
 });
 
-test('brewing spends ten pumpkins, adds rolled candy, keeps the basket and cools down', async () => {
+test('practice alchemy uses the restored 20/50/30 odds and maximum reward of five', () => {
+  const g = game();
+  const { brewGain, BREW_COST } = require('../server/game-service.cjs');
+  assert.equal(g.run('BREW_COST'), BREW_COST);
+  assert.equal(g.run('BREW_MAX'), 5);
+  for (let roll = 0; roll < 100; roll++) {
+    assert.equal(g.run(`Math.random = () => ${(roll + 0.5) / 100}; rollBrew()`), brewGain(roll));
+  }
+});
+
+test('brewing spends thirty pumpkins, adds rolled candy, keeps the basket and cools down', async () => {
   const g = game(); g.players();
   g.run(`globalThis.messages = []; say = async (who, text) => messages.push(text); Math.random = () => 0.5;
-    S.players.me.pumpkins = 5; S.players.me.basket = true; S.nearCauldron = true; renderAction();`);
+    S.players.me.pumpkins = 20; S.players.me.basket = true; S.nearCauldron = true; renderAction();`);
   assert.equal(g.elements.get('act-btn').disabled, true);
-  assert.equal(g.elements.get('act-sub').textContent, '호박 10개를 넣으면 사탕 +2 · 사탕 +5 · 사탕 +10 · 사탕 +20 중 하나');
+  assert.equal(g.elements.get('act-sub').textContent, '호박 30개를 넣으면 꽝 · 사탕 +2 · 사탕 +5 중 하나');
   g.run('S.players.me.pumpkins = 60; renderAction()');
   assert.equal(g.elements.get('act-btn').disabled, false);
-  assert.match(g.elements.get('act-title').textContent, /마녀 솥 · 호박 60\/10/);
+  assert.match(g.elements.get('act-title').textContent, /마녀 솥 · 호박 60\/30/);
   await g.finish(g.run('brew()'));
   assert.equal(g.run('candiesOf("me")'), 12);
-  assert.equal(g.run('S.players.me.pumpkins'), 50);
+  assert.equal(g.run('S.players.me.pumpkins'), 30);
   assert.equal(g.run('hasBasket("me")'), true);
   assert.match(g.run('messages.join(" ")'), /사탕 2개가 떠올랐어요/);
   g.run('S.players.me.pumpkins = 60; S.nearCauldron = true; renderAction()');

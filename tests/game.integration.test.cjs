@@ -490,14 +490,14 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   assert.equal((await saved(brewer)).basket, true);
   await ref.update({ pumpkins: 100 });
   await assert.rejects(harvest(brewer), /꽉 찼어요/);
-  await ref.update({ pumpkins: 9 });
-  await assert.rejects(act(brewer, { type: 'brew' }), /10개/);
+  await ref.update({ pumpkins: 29 });
+  await assert.rejects(act(brewer, { type: 'brew' }), /30개/);
   await ref.update({ pumpkins: 35 });
   const result = await act(brewer, { type: 'brew' });
-  assert.ok([2, 5, 10, 20].includes(result.gain));
+  assert.ok([0, 2, 5].includes(result.gain));
   assert.equal(result.candies, 10 + result.gain);
   const after = await saved(brewer);
-  assert.equal((await secret(brewer)).pumpkins, 25);
+  assert.equal((await secret(brewer)).pumpkins, 5);
   assert.equal(after.basket, true);
   assert.equal(after.brews.at(-1).n, result.gain);
   await ref.update({ pumpkins: 60 });
@@ -521,7 +521,7 @@ test('a newcomer is announced once when their house is placed, and later logins 
 test('every brew is announced to every village once, and players can read but not fake announcements', async () => {
   const brewer = await player('솥홍보');
   const privateRef = services().db.collection('gamePrivate').doc(brewer.uid), playerRef = services().db.collection('gamePlayers').doc(brewer.uid);
-  await Promise.all([playerRef.update({ basket: true }), privateRef.update({ pumpkins: 10 })]);
+  await Promise.all([playerRef.update({ basket: true }), privateRef.update({ pumpkins: 30 })]);
   const announcements = services().database.ref('announcements');
   const mine = async () => Object.values((await announcements.get()).val() || {}).filter((a) => a.kind === 'brew' && a.uid === brewer.uid);
   const requestId = randomUUID();
