@@ -72,7 +72,6 @@ test('a challenge still undecided at ninety seconds ends as a loss', () => {
 const { miniPlan, pickGame, evaluateChallenge } = require('../server/minigames.cjs');
 const encode = (taps) => { let prev = 0; return taps.flatMap(({ t, v }) => { const tick = Math.ceil(t / 20); const out = [tick - prev, v]; prev = tick; return out; }); };
 function bestPlay(game, plan) {
-  if (game === 'rhythm') return plan.items.map((item) => ({ t: item.t, v: item.k }));
   if (game === 'whack') return plan.items.map((item) => ({ t: item.from + 100, v: item.k }));
   if (game === 'spell') return plan.items.map((item, i) => ({ t: plan.open + 300 * (i + 1), v: item.k }));
   const taps = [];
@@ -88,7 +87,7 @@ function bestPlay(game, plan) {
 }
 
 test('every mini game is won by clean play and lost by doing nothing, on every level', () => {
-  for (const game of ['rhythm', 'whack', 'spell', 'catch']) {
+  for (const game of ['whack', 'spell', 'catch']) {
     for (let level = 1; level <= 5; level++) {
       for (const seed of [1, 99, 123456, 0xfffffff0]) {
         const plan = miniPlan(game, level, seed);
@@ -111,14 +110,14 @@ test('mini games wait for the end, reject impossible input and fall back to fish
   assert.equal(evaluateChallenge(challenge, [], 9000, 5000).valid, false);
   const spammed = evaluateChallenge(challenge, Array.from({ length: 200 }, (_, i) => (i % 2 ? (i >> 1) % 9 : 1)), 4000, 100000);
   assert.deepEqual([spammed.finished, spammed.won], [true, false]);
-  const fishing = evaluateChallenge({ game: 'rhythm', level: 1, seed: 1, createdAt: 1000, path: [{ t: 0, y: .05 }, { t: 30000, y: .05 }] }, [1, 1], 6000, 8000);
+  const fishing = evaluateChallenge({ game: 'spell', level: 1, seed: 1, createdAt: 1000, path: [{ t: 0, y: .05 }, { t: 30000, y: .05 }] }, [1, 1], 6000, 8000);
   assert.equal(fishing.won, true);
 });
 
 test('the server only picks games the knocking page can play', () => {
   assert.equal(pickGame(undefined), 'fish');
   const seen = new Set(Array.from({ length: 200 }, () => pickGame(['rhythm', 'whack', 'spell', 'catch', 'nope'])));
-  assert.deepEqual([...seen].sort(), ['catch', 'fish', 'rhythm', 'spell', 'whack']);
+  assert.deepEqual([...seen].sort(), ['catch', 'fish', 'spell', 'whack']);
   process.env.GAME_MINIGAMES = 'whack';
-  try { assert.equal(pickGame(['rhythm', 'whack']), 'whack'); } finally { delete process.env.GAME_MINIGAMES; }
+  try { assert.equal(pickGame(['spell', 'whack']), 'whack'); } finally { delete process.env.GAME_MINIGAMES; }
 });

@@ -244,10 +244,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .timing-help{margin:0;color:var(--muted);font-size:.84rem}
 .mg-stage{position:relative;width:100%;height:min(42dvh,300px);min-height:200px;margin:2px auto;background:var(--night);border:3px solid var(--text);overflow:hidden;touch-action:none;user-select:none;box-sizing:border-box}
 .mg-stage button{font:inherit;color:var(--text);touch-action:none}
-.mg-lane{position:absolute;top:0;bottom:0;width:33.34%;padding:0;background:none;border:0;border-right:2px dashed rgba(255,255,255,.14);cursor:pointer}
-.mg-lane:last-of-type{border-right:0} .mg-lane.on{background:rgba(255,255,255,.12)}
 .mg-key{position:absolute;bottom:4px;left:0;right:0;color:var(--muted);font-size:.8rem;pointer-events:none}
-.mg-line{position:absolute;left:0;right:0;top:82%;height:4px;margin-top:-2px;background:var(--gold);pointer-events:none}
 .mg-sprite{position:absolute;transform:translate(-50%,-50%);image-rendering:pixelated;pointer-events:none}
 .mg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;height:100%;padding:6px;box-sizing:border-box}
 .mg-hole{position:relative;padding:0;background:var(--panel-2);border:2px solid var(--text);overflow:hidden;cursor:pointer}
@@ -673,7 +670,7 @@ const ROOF_DARK = [null, '#b85d16', '#4c2d78', '#3f7a2c', '#8a1f2c', '#2c2536'];
 const T = 16, COLS = 26, HOUSE_XS = [2, 7, 15, 20], PLAZA_H = 5, BLOCK_H = 6;
 const VILLAGE_BLOCKS = 2, GATE_XS = [12, 13];
 const SPEED = 74, MAX_KNOCKS = 1500, START_CANDIES = 10, EVENT_MS = 24 * 60 * 60 * 1000;
-const MINI_GAMES = ['rhythm', 'whack', 'spell', 'catch'];
+const MINI_GAMES = ['whack', 'spell', 'catch'];
 const CANDY_STEP_MS = 20, CANDY_MAX_LEVEL = 5, CANDY_MAX_INPUTS = 1000, CANDY_TIME_LIMIT_MS = 90000, CANDY_EARLY_LEAVE_MS = 5000;
 const CANDY_BAR_UP_SPEED = .72, CANDY_BAR_DOWN_SPEED = .82, CANDY_BAR_ACCELERATION = 2.6, CANDY_BAR_BRAKING = 8;
 const DECOR = {
@@ -2903,9 +2900,6 @@ const SFX = {
   trick(ctx, out, at) {
     [520, 470, 430, 390, 350].forEach((freq, i) => tone(ctx, out, { type: 'square', freq, at: at + i * 0.13, duration: 0.1, peak: 0.1, vibrato: 12 }));
   },
-  beat(ctx, out, at) {
-    tone(ctx, out, { freq: [150, 50], at, duration: 0.12, peak: 0.5 });
-  },
   pop(ctx, out, at) {
     tone(ctx, out, { type: 'square', freq: [700, 1400], at, duration: 0.06, peak: 0.12 });
   },
@@ -3208,15 +3202,6 @@ function miniPlan(game, level, seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
   const between = (a, b) => a + Math.floor(random() * (b - a + 1));
-  if (game === 'rhythm') {
-    const half = (500 - L * 20) / 2, w = 170 - L * 15, items = [];
-    let t = 2000;
-    for (let i = 0; i < 16 + L * 2; i++) {
-      items.push({ t, k: between(0, 2), from: t - w, to: t + w });
-      t += random() < .1 + L * .1 ? half : half * 2;
-    }
-    return { items, need: items.length - (7 - L), allowed: 7 - L, end: items[items.length - 1].to };
-  }
   if (game === 'whack') {
     const show = 1100 - L * 100, items = [];
     let t = 1000;
@@ -3317,19 +3302,16 @@ function miniJudge(game, plan, taps, until) {
 }
 
 const MINI_INFO = {
-  rhythm: { title: '호박 리듬 노크!', help: '호박이 노란 선에 닿을 때 그 줄을 눌러요. 키보드는 ← ↓ → 또는 A S D.' },
   whack: { title: '유령 잡기!', help: '무덤에서 튀어나온 유령을 눌러요. 빈 무덤을 누르면 실수예요. 키보드는 Q W E / A S D / Z X C.' },
   spell: { title: '마녀 주문 외우기!', help: '빛나는 순서를 외웠다가 똑같이 눌러요. 키보드는 1 2 3 4.' },
   catch: { title: '사탕 받기!', help: '사탕은 받고 똥은 피해요. ← → 또는 A D, 화면 왼쪽·오른쪽을 누르고 있어도 돼요.' },
 };
 const MINI_KEYS = {
-  rhythm: { ArrowLeft: 0, KeyA: 0, ArrowDown: 1, ArrowUp: 1, KeyS: 1, Space: 1, ArrowRight: 2, KeyD: 2 },
   whack: { KeyQ: 0, KeyW: 1, KeyE: 2, KeyA: 3, KeyS: 4, KeyD: 5, KeyZ: 6, KeyX: 7, KeyC: 8,
     Numpad7: 0, Numpad8: 1, Numpad9: 2, Numpad4: 3, Numpad5: 4, Numpad6: 5, Numpad1: 6, Numpad2: 7, Numpad3: 8 },
   spell: { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Numpad1: 0, Numpad2: 1, Numpad3: 2, Numpad4: 3 },
 };
 const SPELL_PADS = [['pumpkin', 4], ['candy', 5], ['batA', 6], ['star', 8]];
-const RHYTHM_FALL_MS = 1500, RHYTHM_LINE = .82;
 
 function miniImg(key, scale, className) {
   const img = document.createElement('img');
@@ -3350,32 +3332,6 @@ function miniButton(className, label, onPress) {
 
 // 게임마다 무대를 한 번 만들고, 매 프레임 판정 결과(judged)로 위치·표시만 바꾼다.
 const MINI_VIEWS = {
-  rhythm(stage, plan, tap) {
-    const lanes = [0, 1, 2].map((k) => {
-      const lane = miniButton('mg-lane', `${k + 1}번 줄`, () => tap(k));
-      lane.style.left = `${k * 100 / 3}%`;
-      lane.append(Object.assign(document.createElement('span'), { className: 'mg-key', textContent: ['←', '↓', '→'][k] }));
-      stage.append(lane);
-      return lane;
-    });
-    stage.append(Object.assign(document.createElement('div'), { className: 'mg-line' }));
-    const notes = plan.items.map((item) => {
-      const img = miniImg('pumpkin', 2, 'mg-sprite');
-      img.style.left = `${(item.k + .5) * 100 / 3}%`;
-      stage.append(img);
-      return img;
-    });
-    return {
-      draw(now, judged) {
-        plan.items.forEach((item, i) => {
-          const ahead = item.t - now, show = !judged.state[i] && ahead < RHYTHM_FALL_MS && now < item.to + 120;
-          notes[i].hidden = !show;
-          if (show) notes[i].style.top = `${(1 - ahead / RHYTHM_FALL_MS) * RHYTHM_LINE * 100}%`;
-        });
-      },
-      flash(k) { lanes[k].classList.add('on'); setTimeout(() => lanes[k].classList.remove('on'), 90); },
-    };
-  },
   whack(stage, plan, tap) {
     const grid = Object.assign(document.createElement('div'), { className: 'mg-grid' });
     const holes = Array.from({ length: 9 }, (_, k) => {
@@ -3480,7 +3436,7 @@ function miniGame(challenge) {
     const plan = miniPlan(game, level, challenge.seed ?? Math.floor(Math.random() * 0x100000000));
     const box = $('#mini'), stage = $('#mg-stage'), result = $('#mg-result'), exitButton = $('#mg-exit');
     const taps = [], start = performance.now();
-    let judged = miniJudge(game, plan, [], 0), finished = false, raf = 0, beatsUntil = 0, shown = '';
+    let judged = miniJudge(game, plan, [], 0), finished = false, raf = 0, shown = '';
     const heartbeatTimer = challenge?.id && S.mode === 'firebase'
       ? setInterval(() => { gameRequest({ type: 'knock-heartbeat', challengeId: challenge.id }).catch(() => {}); }, 15000)
       : null;
@@ -3498,18 +3454,6 @@ function miniGame(challenge) {
     stage.replaceChildren();
     stage.className = `mg-stage mg-${game}`;
     const view = MINI_VIEWS[game](stage, plan, tap);
-
-    // 리듬게임은 노트마다 북소리를 조금 앞서 예약해, 화면과 소리를 맞춘다.
-    function scheduleBeats(now) {
-      if (game !== 'rhythm' || !sound.sfx) return;
-      const out = soundOut();
-      if (!out || out.ctx.state !== 'running') return;
-      for (const item of plan.items) {
-        if (item.t <= beatsUntil || item.t > now + 400) continue;
-        SFX.beat(out.ctx, out.master, out.ctx.currentTime + Math.max(0, item.t - now) / 1000);
-      }
-      beatsUntil = now + 400;
-    }
 
     function finish(won, at, timedOut = false) {
       if (finished) return;
@@ -3543,7 +3487,6 @@ function miniGame(challenge) {
       judged = miniJudge(game, plan, taps, until);
       if (judged.hits > before.hits) playSfx(game === 'whack' ? 'hit' : 'pop');
       if (judged.misses > before.misses && !judged.finished) playSfx('oops');
-      scheduleBeats(now);
       draw(now);
       if (judged.finished) { finish(judged.won, judged.at); return; }
       if (until >= CANDY_TIME_LIMIT_MS) { finish(false, CANDY_TIME_LIMIT_MS, true); return; }

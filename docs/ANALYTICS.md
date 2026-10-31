@@ -36,7 +36,7 @@
 | 분장·지붕 색 | `costume_selected`, `roof_changed` | `costume`, `first_selection` / `roof`; 선택 사실이며 저장 성공 보장은 아님 |
 | 첫 이동 | `movement_started` | 로그인 후 첫 실제 이동 1회 |
 | 호박·바구니 | `pumpkin_collected`, `basket_completed` | 호박은 `pumpkins`; Firebase에서는 서버 성공 확인 후 |
-| 노크·미니게임 | `knock_started`, `candy_game_started`, `knock_completed`, `knock_choice` | 미니게임 `level`·`game`(fish·rhythm·whack·spell·catch), 완료 시 `outcome`, `candy_moved`, `duration_seconds`; 이후 `choice`: `again` / `note` / `bye` |
+| 노크·미니게임 | `knock_started`, `candy_game_started`, `knock_completed`, `knock_choice` | 미니게임 `level`·`game`(fish·whack·spell·catch), 완료 시 `outcome`, `candy_moved`, `duration_seconds`; 이후 `choice`: `again` / `note` / `bye` |
 | 연금술·구매 | `brew_completed`, `decor_purchased` | `candy_gain` / `item`, `price` |
 | 지붕 그림 저장 | `mural_saved` | `painted_cells` 개수만 |
 | 채팅·방명록 | `chat_opened`, `chat_sent`, `note_sent` | 전송 성공 시 `message_length`만 |

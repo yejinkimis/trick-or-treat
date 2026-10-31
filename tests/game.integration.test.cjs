@@ -229,7 +229,7 @@ test('a knock picks a random mini game the page can play and settles it on the s
   await act(visitor, { type: 'knock-leave', challengeId: old.id });
   process.env.GAME_MINIGAMES = 'whack';
   await new Promise((resolve) => setTimeout(resolve, 2100));
-  const { challenge } = await act(visitor, { type: 'knock-start', host: host.uid, games: ['rhythm', 'whack', 'spell', 'catch'] });
+  const { challenge } = await act(visitor, { type: 'knock-start', host: host.uid, games: ['whack', 'spell', 'catch'] });
   assert.equal(challenge.game, 'whack');
   await services().db.collection('gameChallenges').doc(visitor.uid).update({ createdAt: Date.now() - 30000 });
   let previous = 0;

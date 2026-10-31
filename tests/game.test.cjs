@@ -490,7 +490,7 @@ test('letting the progress bar empty fails without a candy transfer', async () =
 const minigames = require('../server/minigames.cjs');
 test('the page plans and judges every mini game exactly like the server', () => {
   const g = game();
-  for (const name of ['rhythm', 'whack', 'spell', 'catch']) {
+  for (const name of ['whack', 'spell', 'catch']) {
     for (const seed of [3, 4242, 0xfffffff0]) {
       const level = seed % 5 + 1, plan = minigames.miniPlan(name, level, seed);
       assert.deepEqual(JSON.parse(g.run(`JSON.stringify(miniPlan('${name}', ${level}, ${seed}))`)), JSON.parse(JSON.stringify(plan)));

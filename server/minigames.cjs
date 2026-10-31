@@ -2,8 +2,8 @@ const { randomInt } = require('node:crypto');
 const { STEP_MS, MAX_LEVEL, MAX_INPUTS, CHALLENGE_MAX_MS, evaluateCandyChallenge } = require('./candy-challenge.cjs');
 
 // 노크하면 이 중 하나가 랜덤으로 나온다. fish는 원래 있던 사탕 낚시다.
-const GAMES = ['fish', 'rhythm', 'whack', 'spell', 'catch'];
-const INPUT_MAX = { rhythm: 2, whack: 8, spell: 3, catch: 2 };
+const GAMES = ['fish', 'whack', 'spell', 'catch'];
+const INPUT_MAX = { whack: 8, spell: 3, catch: 2 };
 
 // 아래 miniPlan·miniJudge는 화면(prototype/trick-or-treat.html)에 같은 코드가 있다. 고치면 둘 다 고친다.
 function miniPlan(game, level, seed) {
@@ -16,15 +16,6 @@ function miniPlan(game, level, seed) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
   const between = (a, b) => a + Math.floor(random() * (b - a + 1));
-  if (game === 'rhythm') {
-    const half = (500 - L * 20) / 2, w = 170 - L * 15, items = [];
-    let t = 2000;
-    for (let i = 0; i < 16 + L * 2; i++) {
-      items.push({ t, k: between(0, 2), from: t - w, to: t + w });
-      t += random() < .1 + L * .1 ? half : half * 2;
-    }
-    return { items, need: items.length - (7 - L), allowed: 7 - L, end: items[items.length - 1].to };
-  }
   if (game === 'whack') {
     const show = 1100 - L * 100, items = [];
     let t = 1000;
