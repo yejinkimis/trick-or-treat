@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const { signup, login, updateProfile } = require('../server/auth-service.cjs');
 const { TRICK_KINDS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance } = require('../server/game-service.cjs');
 const { services } = require('../server/firebase-admin.cjs');
-const { searchUsers, watchAccounts, moderate } = require('../server/admin-service.cjs');
+const { searchUsers, watchAccounts, getAnnouncement, setAnnouncement, moderate } = require('../server/admin-service.cjs');
 after(() => services().database.goOffline());
 
 test('admin moderation enforces permissions, bans existing sessions, hides houses and removes matching content', async (t) => {
@@ -78,6 +78,29 @@ test('admin review shows recent challenge detail and keeps high success rate as 
   assert.equal(detail.candyDelta, 1);
   assert.equal(detail.hostCandyDelta, -1);
   await act(admin, { type: 'event-stop' });
+});
+
+test('only admins can publish announcements and signed-in players can read them but not write them', async () => {
+  const [admin, visitor] = await Promise.all(['공운', '공플'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  await assert.rejects(setAnnouncement(visitor.authorization, { action: 'publish', text: '운영 안내' }), (error) => error.status === 403);
+  await assert.rejects(getAnnouncement(visitor.authorization), (error) => error.status === 403);
+  await assert.rejects(setAnnouncement(admin.authorization, { action: 'publish', text: '   ' }), (error) => error.status === 400);
+  await assert.rejects(setAnnouncement(admin.authorization, { action: 'publish', text: '가'.repeat(241) }), (error) => error.status === 400);
+
+  const published = await setAnnouncement(admin.authorization, { action: 'publish', text: '  오늘 밤 10시에 이벤트를 시작합니다.  ' });
+  assert.equal(published.announcement.text, '오늘 밤 10시에 이벤트를 시작합니다.');
+  const base = `http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}`;
+  const url = `${base}/announcements/current.json?ns=demo-trick-or-treat-default-rtdb&auth=${visitor.token}`;
+  const read = await fetch(url);
+  assert.equal(read.status, 200);
+  assert.equal((await read.json()).text, published.announcement.text);
+  const deniedWrite = await fetch(url, { method: 'PUT', body: JSON.stringify({ id: 'spoof', text: '가짜 공지', at: Date.now() }) });
+  assert.equal(deniedWrite.status, 401);
+
+  const withdrawn = await setAnnouncement(admin.authorization, { action: 'withdraw' });
+  assert.equal(withdrawn.announcement, null);
+  assert.equal((await (await fetch(url)).json()), null);
 });
 
 async function player(prefix) {

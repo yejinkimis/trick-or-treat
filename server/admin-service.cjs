@@ -75,6 +75,40 @@ async function watchAccounts(authorization) {
   return { users: watchList(merged, { now: Date.now(), prices: PRICES }) };
 }
 
+const ANNOUNCEMENT_MAX_CHARS = 240;
+async function getAnnouncement(authorization) {
+  await requireAdmin(authorization);
+  const { database } = services();
+  const snapshot = await database.ref('announcements/current').get();
+  return { announcement: snapshot.exists() ? snapshot.val() : null };
+}
+
+async function setAnnouncement(authorization, input) {
+  const actor = await requireAdmin(authorization);
+  const { db, database } = services();
+  const data = input && typeof input === 'object' ? input : {};
+  const currentRef = database.ref('announcements/current');
+  const now = Date.now();
+  if (data.action === 'withdraw') {
+    const current = await currentRef.get();
+    await currentRef.remove();
+    await db.collection('gameAdminActivity').doc(randomUUID()).set({
+      actor, target: 'all', type: 'announcement', detail: { action: 'withdraw', id: current.val()?.id || null }, at: now,
+    });
+    return { ok: true, announcement: null };
+  }
+  if (data.action !== 'publish') reject(400, 'invalid-announcement-action', '공지 작업을 확인해 주세요.');
+  const text = typeof data.text === 'string' ? data.text.replace(/\r\n?/gu, '\n').trim() : '';
+  const length = Array.from(text).length;
+  if (!text || length > ANNOUNCEMENT_MAX_CHARS) reject(400, 'invalid-announcement-text', `공지는 1~${ANNOUNCEMENT_MAX_CHARS}자로 작성해 주세요.`);
+  const announcement = { id: randomUUID(), text, at: now };
+  await currentRef.set(announcement);
+  await db.collection('gameAdminActivity').doc(randomUUID()).set({
+    actor, target: 'all', type: 'announcement', detail: { action: 'publish', id: announcement.id, textLength: length }, at: now,
+  });
+  return { ok: true, announcement };
+}
+
 async function moderate(authorization, input) {
   const actor = await requireAdmin(authorization);
   const { db, auth, database } = services();
@@ -152,4 +186,4 @@ async function moderate(authorization, input) {
   return { ok: true };
 }
 
-module.exports = { searchUsers, watchAccounts, moderate };
+module.exports = { searchUsers, watchAccounts, getAnnouncement, setAnnouncement, moderate };

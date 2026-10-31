@@ -58,7 +58,10 @@
       }
     },
     "announcements": {
-      ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true"
+      ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",
+      "current": {
+        ".write": false
+      }
     },
     "events": {
       "$village": {
