@@ -2318,7 +2318,7 @@ function renderDuelModal() {
   if (duel && ['pending', 'active'].includes(duel.status)) void expireDuelIfDue(duel);
   const pending = Boolean(S.duelActionPending || S.readOnly || eventState() === 'ended');
   const target = duelTarget();
-  const maxStake = Math.min(10, Math.max(0, candiesOf(S.me)));
+  const maxStake = Math.max(0, candiesOf(S.me));
   // Keep selects and buttons alive between clock ticks and identical snapshots.
   const renderKey = JSON.stringify([duel, pending, S.duelActionPending, duel ? null : target, duel ? null : maxStake]);
   const updateClock = () => {
@@ -2361,7 +2361,7 @@ function renderDuelModal() {
   } else {
     html = target && maxStake > 0
       ? `<p class="note">상대: <b>${esc(target.nick)}</b> · ${esc(villageLabel(S.village))}. 각자 같은 수의 사탕을 걸고, 이긴 사람이 전부 가져가요.</p>
-        <label for="du-stake">걸 사탕 수</label><select id="du-stake" ${pending ? 'disabled' : ''}>${Array.from({ length: maxStake }, (_, i) => i + 1).map((n) => `<option value="${n}"${n === Math.min(selectedStake, maxStake) ? ' selected' : ''}>${n}개씩 · 승자 ${n * 2}개</option>`).join('')}</select>
+        <label for="du-stake">걸 사탕 수</label><select id="du-stake" ${pending ? 'disabled' : ''}>${Array.from({ length: maxStake }, (_, i) => i + 1).map((n) => `<option value="${n}"${n === Math.min(selectedStake, maxStake) ? ' selected' : ''}>${n}개씩${n === maxStake ? ' (전재산)' : ''} · 승자 ${n * 2}개</option>`).join('')}</select>
         <button class="pbtn hot" type="button" data-duel-act="duel-offer" data-opponent="${esc(target.id)}" data-peer="${esc(target.peer)}" ${pending ? 'disabled' : ''}>대전 신청</button>`
       : `<p class="note">${target ? '대전에 걸 사탕이 없어요.' : '대전 신청을 하려면 같은 마을에서 상대 캐릭터 가까이 다가가세요. 수락 뒤 뿅망치 5대를 먼저 맞히면 승리해요.'}</p>`;
   }

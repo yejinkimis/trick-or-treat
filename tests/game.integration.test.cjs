@@ -119,16 +119,18 @@ const act = (p, data) => action(p.authorization, { requestId: randomUUID(), ...d
 test('duel API delivers invitations and settled results only to participants without a client query', async () => {
   const [a, b, outsider] = await Promise.all(['대전갑', '대전을', '대전외'].map(player));
   process.env.GAME_ADMIN_UIDS = a.uid;
-  await act(a, { type: 'event-start' });
+  const { event } = await act(a, { type: 'event-start' });
   const { database, db } = services();
+  await Promise.all([a, b].map((p) => db.collection('gamePlayers').doc(p.uid).update({ round: event.id, candies: 40 })));
   const sidA = randomUUID(), sidB = randomUUID();
   const village = 1;
   await Promise.all([
     database.ref(`presence/${village}/${a.uid}/${sidA}`).set({ x: 100, y: 100, at: Date.now() }),
     database.ref(`presence/${village}/${b.uid}/${sidB}`).set({ x: 105, y: 100, at: Date.now() }),
   ]);
-  const offer = await act(a, { type: 'duel-offer', opponent: b.uid, stake: 3, village,
-    challengerPeer: `${a.uid}:${sidA}`, opponentPeer: `${b.uid}:${sidB}` });
+  const peers = { village, challengerPeer: `${a.uid}:${sidA}`, opponentPeer: `${b.uid}:${sidB}` };
+  await assert.rejects(act(a, { type: 'duel-offer', opponent: b.uid, stake: 41, ...peers }), /41개 있어야/);
+  const offer = await act(a, { type: 'duel-offer', opponent: b.uid, stake: 40, ...peers });
   assert.equal((await duels(b.authorization)).duels[0].id, offer.id);
   assert.equal((await duels(a.authorization)).duels[0].status, 'pending');
   assert.deepEqual((await duels(outsider.authorization, offer.id)).duels, []);
@@ -146,8 +148,8 @@ test('duel API delivers invitations and settled results only to participants wit
   const settled = (await duels(b.authorization, offer.id)).duels[0];
   assert.equal(settled.status, 'completed');
   assert.equal(settled.winner, a.uid);
-  assert.equal((await saved(a)).candies, 13);
-  assert.equal((await saved(b)).candies, 7);
+  assert.equal((await saved(a)).candies, 80, 'a whole bag can be staked');
+  assert.equal((await saved(b)).candies, 0);
   await act(a, { type: 'event-stop' });
 });
 const saved = async (p) => (await services().db.collection('gamePlayers').doc(p.uid).get()).data();
@@ -203,10 +205,12 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   await services().db.collection('gamePlayers').doc(winner.uid).update({ knockAt: 0 });
   await assert.rejects(act(winner, { type: 'knock-start', host: host.uid }), (error) => error.status === 429 && /다른 사람이 도전 중/.test(error.message));
   await services().db.collection('gamePlayers').doc(waiting.uid).update({ knockAt: 0 });
-  await assert.rejects(act(waiting, { type: 'knock-start', host: host.uid }), (error) => error.status === 429 && /진행 중인 도전/.test(error.message));
+  const restarted = (await act(waiting, { type: 'knock-start', host: host.uid })).challenge;
+  assert.notEqual(restarted.id, secondChallenge.id, 'knocking again ends the challenge left behind instead of blocking');
+  await assert.rejects(act(waiting, { type: 'knock-finish', challengeId: secondChallenge.id, inputs: [], elapsedMs: 2800 }), /끝났거나/);
   await services().db.collection('gameChallenges').doc(waiting.uid).update({ createdAt: Date.now() - 4000,
     path: [{ t: 0, y: .05 }, { t: 3000, y: .05 }] });
-  const secondLoss = await act(waiting, { type: 'knock-finish', challengeId: secondChallenge.id, inputs: [], elapsedMs: 2800 });
+  const secondLoss = await act(waiting, { type: 'knock-finish', challengeId: restarted.id, inputs: [], elapsedMs: 2800 });
   assert.equal(secondLoss.entry.moved, false);
   assert.equal(secondLoss.hostCandies, 0);
   await assert.rejects(act(first, { type: 'candies', candies: 999 }), /지원하지/);
@@ -310,20 +314,18 @@ test('event stop and a winning candy transfer are serialized at the round bounda
   await assert.rejects(act(visitor, { type: 'knock-finish', ...attempt }), /이벤트가 끝났|도전이 끝났/);
 });
 
-test('two tabs cannot start separate challenges or double-settle while the host spends their remaining candy', async () => {
+test('a second knock ends the challenge left behind, and one challenge cannot double-settle while the host spends their remaining candy', async () => {
   const [owner, visitor, firstHost, secondHost] = await Promise.all(['검관', '검도', '검집', '검옆'].map(player));
   process.env.GAME_ADMIN_UIDS = owner.uid;
   const { event } = await act(owner, { type: 'event-start' });
   const db = services().db;
   await db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
-  const hosts = [firstHost, secondHost];
-  const starts = await Promise.allSettled(hosts.map((host) => act(visitor, { type: 'knock-start', host: host.uid })));
-  assert.equal(starts.filter((r) => r.status === 'fulfilled').length, 1);
-  assert.equal(starts.filter((r) => r.status === 'rejected' && r.reason.status === 429).length, 1);
-  const selected = starts.findIndex((r) => r.status === 'fulfilled');
-  const host = hosts[selected], unusedHost = hosts[1 - selected];
-  const challenge = starts[selected].value.challenge;
-  assert.equal((await db.collection('gameHouseLocks').doc(unusedHost.uid).get()).exists, false);
+  const left = (await act(visitor, { type: 'knock-start', host: firstHost.uid })).challenge;
+  await db.collection('gamePlayers').doc(visitor.uid).update({ knockAt: 0 });
+  const challenge = (await act(visitor, { type: 'knock-start', host: secondHost.uid })).challenge;
+  const host = secondHost;
+  assert.equal((await db.collection('gameHouseLocks').doc(firstHost.uid).get()).exists, false, 'the house left behind is free again');
+  await assert.rejects(act(visitor, { type: 'knock-finish', challengeId: left.id, inputs: [1, 1], elapsedMs: 6000 }), /끝났거나/);
   await db.collection('gameChallenges').doc(visitor.uid).update({ createdAt: Date.now() - 6000,
     path: [{ t: 0, y: .05 }, { t: 6000, y: .05 }] });
   await db.collection('gamePlayers').doc(host.uid).update({ round: event.id, candies: 2 });
