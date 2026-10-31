@@ -14,7 +14,7 @@ const ITEMS = Object.freeze({
   'house-ward': Object.freeze({ price: 5, durationMs: 5 * 60 * 1000, cooldownMs: 20 * 60 * 1000 }),
 });
 const ITEM_INVENTORY_MAX = 99, MAX_ITEM_PURCHASES = 200;
-const DUEL_MAX_STAKE = 10, DUEL_INVITE_MS = 60 * 1000, DUEL_IDLE_MS = 30 * 1000, DUEL_MAX_MS = 90 * 1000;
+const DUEL_INVITE_MS = 60 * 1000, DUEL_IDLE_MS = 30 * 1000, DUEL_MAX_MS = 90 * 1000;
 const DUEL_BONK_RANGE = 22, DUEL_BONK_COOLDOWN_MS = 600, DUEL_BONK_RESET_MS = 6000, DUEL_BONK_TO_STUN = 5;
 // 사탕 잡기에 실패하면 사탕은 그대로 두고 장난 하나를 당한다. 화면의 TRICKS와 이름이 같아야 한다.
 const TRICK_KINDS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
@@ -440,7 +440,8 @@ async function action(authorization, input) {
         const stake = input.stake;
         const village = input.village;
         if (typeof targetUid !== 'string' || !/^[a-f0-9]{32}$/.test(targetUid) || targetUid === uid) fail('대전 상대를 확인해 주세요.');
-        if (!Number.isSafeInteger(stake) || stake < 1 || stake > DUEL_MAX_STAKE) fail(`사탕은 1개부터 ${DUEL_MAX_STAKE}개까지 걸 수 있어요.`);
+        // 가진 사탕 전부까지 걸 수 있다. 가진 수는 아래에서 두 사람 모두 확인한다.
+        if (!Number.isSafeInteger(stake) || stake < 1) fail('걸 사탕 수를 확인해 주세요.');
         if (!Number.isSafeInteger(village) || village < 1 || village > 9999) fail('같은 마을에 있는 사람에게만 대전을 신청할 수 있어요.');
         const targetRef = db.collection('gamePlayers').doc(targetUid);
         const senderLockRef = db.collection('gameDuelLocks').doc(uid);

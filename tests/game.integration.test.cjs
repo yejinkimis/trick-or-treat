@@ -119,16 +119,18 @@ const act = (p, data) => action(p.authorization, { requestId: randomUUID(), ...d
 test('duel API delivers invitations and settled results only to participants without a client query', async () => {
   const [a, b, outsider] = await Promise.all(['대전갑', '대전을', '대전외'].map(player));
   process.env.GAME_ADMIN_UIDS = a.uid;
-  await act(a, { type: 'event-start' });
+  const { event } = await act(a, { type: 'event-start' });
   const { database, db } = services();
+  await Promise.all([a, b].map((p) => db.collection('gamePlayers').doc(p.uid).update({ round: event.id, candies: 40 })));
   const sidA = randomUUID(), sidB = randomUUID();
   const village = 1;
   await Promise.all([
     database.ref(`presence/${village}/${a.uid}/${sidA}`).set({ x: 100, y: 100, at: Date.now() }),
     database.ref(`presence/${village}/${b.uid}/${sidB}`).set({ x: 105, y: 100, at: Date.now() }),
   ]);
-  const offer = await act(a, { type: 'duel-offer', opponent: b.uid, stake: 3, village,
-    challengerPeer: `${a.uid}:${sidA}`, opponentPeer: `${b.uid}:${sidB}` });
+  const peers = { village, challengerPeer: `${a.uid}:${sidA}`, opponentPeer: `${b.uid}:${sidB}` };
+  await assert.rejects(act(a, { type: 'duel-offer', opponent: b.uid, stake: 41, ...peers }), /41개 있어야/);
+  const offer = await act(a, { type: 'duel-offer', opponent: b.uid, stake: 40, ...peers });
   assert.equal((await duels(b.authorization)).duels[0].id, offer.id);
   assert.equal((await duels(a.authorization)).duels[0].status, 'pending');
   assert.deepEqual((await duels(outsider.authorization, offer.id)).duels, []);
@@ -146,8 +148,8 @@ test('duel API delivers invitations and settled results only to participants wit
   const settled = (await duels(b.authorization, offer.id)).duels[0];
   assert.equal(settled.status, 'completed');
   assert.equal(settled.winner, a.uid);
-  assert.equal((await saved(a)).candies, 13);
-  assert.equal((await saved(b)).candies, 7);
+  assert.equal((await saved(a)).candies, 80, 'a whole bag can be staked');
+  assert.equal((await saved(b)).candies, 0);
   await act(a, { type: 'event-stop' });
 });
 const saved = async (p) => (await services().db.collection('gamePlayers').doc(p.uid).get()).data();
