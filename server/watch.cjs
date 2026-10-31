@@ -12,6 +12,8 @@ function summarize(player, { now, prices, nickOf }) {
   const taken = tries.filter((c) => c.m);
   const brewed = (player.brews || []).filter((b) => b.at >= since);
   const decor = Object.entries(player.decor || {}).filter(([, item]) => item?.at >= since);
+  const itemPurchases = (player.itemPurchases || []).filter((item) => item?.at >= since);
+  const itemSpend = itemPurchases.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
   const lost = (player.guests || []).filter((g) => g.r === 'win' && g.moved && g.at >= since);
   const harvestHours = Object.entries(player.harvestHours || {}).filter(([hour, n]) => Number(hour) >= sinceHour && n > 0);
   const hours = new Set([...tries.map((c) => hourOf(c.at)), ...brewed.map((b) => hourOf(b.at)), ...harvestHours.map(([hour]) => Number(hour))]);
@@ -30,12 +32,13 @@ function summarize(player, { now, prices, nickOf }) {
       brews: brewed.reduce((sum, b) => sum + (Number(b.n) || 0), 0),
       decor: -decor.reduce((sum, [key]) => sum + (prices[key] || 0), 0),
       lost: -lost.length,
+      ...(itemSpend ? { items: -itemSpend } : {}),
     },
     harvests: harvestHours.reduce((sum, [, n]) => sum + n, 0),
     activeHours: hours.size,
     topSource: sourceId ? { id: sourceId, nick: nickOf(sourceId), wins: sourceCount, share: sourceCount / taken.length } : null,
   };
-  stats.candy.net = stats.candy.knocks + stats.candy.brews + stats.candy.decor + stats.candy.lost;
+  stats.candy.net = stats.candy.knocks + stats.candy.brews + stats.candy.decor + (stats.candy.items || 0) + stats.candy.lost;
   const flags = [];
   if (stats.tries >= WATCH.minTries && stats.winRate >= WATCH.highWinRate) flags.push('성공률 높음');
   if (stats.activeHours >= WATCH.longHours) flags.push('오래 쉬지 않음');

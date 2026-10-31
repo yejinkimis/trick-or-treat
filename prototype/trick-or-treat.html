@@ -179,6 +179,9 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .shop-item div{flex:1;min-width:0}
 .shop-item b{display:block;font-weight:400}
 .shop-item small{color:var(--muted);font-size:.8rem}
+.shop-item .shop-actions{flex:0 0 auto;display:flex;gap:6px}
+.shop-actions .pbtn{font-size:.76rem;padding:6px 7px 5px;white-space:nowrap}
+.shop-item small.item-status{display:block;color:var(--gold)}
 .bonk{right:max(14px,env(safe-area-inset-right,0px));bottom:calc(100px + env(safe-area-inset-bottom,0px));background:var(--candy);font-size:1.1rem;padding:12px 16px 11px}
 .rank li.mine{background:var(--panel-2)}
 .rank .no{font-family:var(--f-px);font-weight:700;color:var(--gold);width:1.8em;text-align:center;flex:none}
@@ -372,6 +375,11 @@ textarea:focus{outline:none;border-color:var(--gold)}
         <span class="lab">꾸미기 상점</span>
         <span class="note">장식을 사면 보유 사탕이 줄고 순위에도 반영돼요. 선물은 이벤트 종료 시 남은 사탕 순위를 기준으로 드려요.</span>
         <div class="shop" id="shop"></div>
+      </div>
+      <div class="field">
+        <span class="lab">아이템 상점</span>
+        <span class="note">사탕으로 아이템을 사고 필요할 때 사용하세요. 구매한 아이템은 다음 이벤트에도 보유해요.</span>
+        <div class="shop" id="item-shop"></div>
       </div>
       <div class="field">
         <span class="lab">사탕을 주고받는 경쟁 규칙</span>
@@ -646,6 +654,9 @@ const DECOR = {
   cauldron: { name: '마녀 솥', price: 4, icon: 'cauldron', line: '집 옆에서 보글보글' },
   bats: { name: '박쥐 떼', price: 5, icon: 'batA', line: '지붕 위를 맴도는 박쥐 두 마리' },
 };
+const ITEMS = {
+  'house-ward': { name: '호박 수호 부적', price: 5, icon: 'star', line: '다른 주민의 노크 도전을 5분 동안 막아요.', durationMs: 5 * 60 * 1000, cooldownMs: 20 * 60 * 1000 },
+};
 const BASKET_PUMPKINS = 3, PUMPKIN_TILES_PER = 45, PUMPKIN_MIN = 4, PUMPKIN_MAX = 8;
 // 호박 연금술: 서버(server/game-service.cjs)와 같은 값이어야 한다.
 const PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 5 * 60 * 1000, BREW_COOLDOWN_MIN = BREW_COOLDOWN_MS / 60000;
@@ -844,13 +855,15 @@ function computeLedger() {
     if (p.costume) bal[vid] = START_CANDIES + Math.max(0, Math.floor(Number(S.bonus[vid]) || 0));
     for (const k of p.knocks || []) if ((k.r === 'win' || k.r === 'lose') && inWindow(k.at)) entries.push({ at: k.at, v: vid, k });
     for (const [item, at] of Object.entries(p.decor || {})) if (DECOR[item] && inWindow(at)) entries.push({ at, v: vid, item });
+    for (const purchase of p.itemPurchases || []) if (ITEMS[purchase.item] && inWindow(purchase.at)) entries.push({ at: purchase.at, v: vid, itemPurchase: purchase.item });
     for (const b of p.brews || []) if (inWindow(b.at)) entries.push({ at: b.at, v: vid, brew: Number(b.n) || 0 });
   }
   entries.sort((a, b) => a.at - b.at || a.v.localeCompare(b.v));
-  for (const { k, v, item, brew } of entries) {
+  for (const { k, v, item, itemPurchase, brew } of entries) {
     if (bal[v] === undefined) continue;
     if (brew !== undefined) { bal[v] += brew; continue; }
     if (item) { bal[v] = Math.max(0, bal[v] - DECOR[item].price); continue; }
+    if (itemPurchase) { bal[v] = Math.max(0, bal[v] - ITEMS[itemPurchase].price); continue; }
     // 실패는 장난만 받고 사탕은 옮기지 않는다.
     if (k.r !== 'win' || bal[k.h] === undefined) continue;
     if (bal[k.h] > 0) { bal[k.h] -= 1; bal[v] += 1; moved.add(k); }
@@ -1558,6 +1571,7 @@ function draw() {
   for (const s of MAP.slots) {
     if (s.owner) {
       const n = candiesOf(s.owner);
+      if ((Number(S.players[s.owner]?.guardUntil) || 0) > now) label('보호 중', s.hx * T + 32, s.hy * T - 14, '#79a6e6', 0.7);
       label(`${nameOf(s.owner)}네`, s.hx * T + 32, s.hy * T - 6, s.owner === S.me ? '#ffd166' : '#fff4e2');
       label(`사탕 ${n}`, s.hx * T + 32, s.hy * T + 3, n ? '#8bd450' : '#ff6fa8', 0.7);
     } else {
@@ -1603,6 +1617,7 @@ function frame(now) {
     noticeEventTurn();
     renderHud();
     renderAction();
+    if (!$('#house').hidden) refreshItemShop();
     if (!$('#rank').hidden) renderRanking();
   }
 }
@@ -1900,13 +1915,16 @@ function renderAction() {
     btn.disabled = false;
   } else {
     const ended = eventState() === 'ended';
+    const guardLeft = Math.max(0, (Number(S.players[n.owner]?.guardUntil) || 0) - Date.now());
+    const guarded = guardLeft > 0;
     $('#act-title').textContent = `${nameOf(n.owner)}네 집 · 사탕 ${candiesOf(n.owner)}개`;
     $('#act-sub').textContent = !myCostume() ? '코스튬부터 입어야 문을 두드릴 수 있어요'
       : ended ? '이벤트가 끝나서 문이 잠겼어요'
+      : guarded ? `호박 수호 부적이 작동 중 · ${fmtLeft(guardLeft)} 동안 노크를 막아요`
       : !hasBasket(S.me) ? `호박 바구니가 있어야 두드릴 수 있어요 · 호박 ${S.players[S.me]?.pumpkins || 0}/${BASKET_PUMPKINS}`
       : '성공하면 상대 사탕 1개 획득 · 실패하면 장난 당함';
-    btn.textContent = '똑똑 두드리기';
-    btn.disabled = S.readOnly || !myCostume() || ended || !hasBasket(S.me);
+    btn.textContent = guarded ? '수호 중' : '똑똑 두드리기';
+    btn.disabled = S.readOnly || !myCostume() || ended || guarded || !hasBasket(S.me);
   }
   box.hidden = false;
 }
@@ -2112,7 +2130,8 @@ function renderWardrobe() {
 const trickBook = (k) => TRICKS[k.k]?.book || (k.t ? `${k.t} 당함` : '장난 당함');
 function bookLine(k) {
   const fx = TRICKS[k.k] ? ` + ${TRICKS[k.k].book}` : '';
-  if (k.r === 'win') return wasMoved(k) ? '<span class="tag trick">털림</span> 사탕 잡기에 성공해 1개 가져감' : '<span class="tag treat">무사</span> 성공했지만 우리 집에 사탕이 없었음';
+  if (k.r === 'win') return k.protected ? '<span class="tag treat">수호</span> 호박 수호 부적이 사탕을 지킴'
+    : wasMoved(k) ? '<span class="tag trick">털림</span> 사탕 잡기에 성공해 1개 가져감' : '<span class="tag treat">무사</span> 성공했지만 우리 집에 사탕이 없었음';
   if (k.r === 'lose') return k.k
     ? `<span class="tag treat">무사</span> 사탕 잡기에 실패해 장난 당함${esc(fx)}`
     : '<span class="tag treat">무사</span> 사탕 잡기에 실패해 아무 일도 일어나지 않음';
@@ -2120,7 +2139,8 @@ function bookLine(k) {
   return `<span class="tag trick">TRICK</span> ${esc(trickBook(k))}`;
 }
 function knockNews(k) {
-  if (k.r === 'win') return wasMoved(k) ? '사탕 잡기에 성공해 사탕 1개 가져감' : '성공했지만 줄 사탕이 없었음';
+  if (k.r === 'win') return k.protected ? '호박 수호 부적이 집을 지켜 사탕을 가져가지 못함'
+    : wasMoved(k) ? '사탕 잡기에 성공해 사탕 1개 가져감' : '성공했지만 줄 사탕이 없었음';
   if (k.r === 'lose') return k.k ? `사탕 잡기에 실패해 ${trickBook(k)}` : '사탕 잡기에 실패해 아무 일도 일어나지 않음';
   return k.r === 'treat' ? '사탕 줌' : trickBook(k);
 }
@@ -2132,6 +2152,38 @@ function ago(at) {
   if (m < 1440) return `${Math.floor(m / 60)}시간 전`;
   const d = new Date(at);
   return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function itemInventory() {
+  const saved = S.mode === 'firebase' ? S.ownPrivate?.inventory : S.players[S.me]?.inventory;
+  return saved && typeof saved === 'object' ? saved : {};
+}
+function itemUsedAt() {
+  return Number(S.mode === 'firebase' ? S.ownPrivate?.houseGuardUsedAt : S.players[S.me]?.houseGuardUsedAt) || 0;
+}
+function refreshItemShop() {
+  for (const [key, item] of Object.entries(ITEMS)) {
+    const status = $(`#item-status-${key}`), buy = $(`#item-buy-${key}`), use = $(`#item-use-${key}`);
+    if (!status || !buy || !use) continue;
+    const count = Math.max(0, Math.floor(Number(itemInventory()[key]) || 0));
+    const p = S.players[S.me];
+    const active = Math.max(0, (Number(p?.guardUntil) || 0) - Date.now());
+    const cooldown = Math.max(0, itemUsedAt() + item.cooldownMs - Date.now());
+    status.textContent = active > 0 ? `보유 ${count}개 · 집 지키는 중 ${fmtLeft(active)} · 재사용까지 ${fmtLeft(cooldown)}`
+      : cooldown > 0 ? `보유 ${count}개 · 재사용 대기 ${fmtLeft(cooldown)}`
+        : `보유 ${count}개 · 사용할 수 있어요`;
+    const closed = eventState() === 'ended';
+    buy.disabled = S.readOnly || closed || candiesOf(S.me) < item.price;
+    use.disabled = S.readOnly || closed || count < 1 || active > 0 || cooldown > 0;
+    use.textContent = active > 0 ? '수호 중' : cooldown > 0 ? '대기 중' : `사용 (${count})`;
+  }
+}
+function renderItemShop() {
+  $('#item-shop').innerHTML = Object.entries(ITEMS).map(([key, item]) =>
+    `<div class="shop-item"><img class="px-img" src="${spriteUrl(item.icon, 3)}" alt="">
+      <div><b>${esc(item.name)}</b><small>${esc(item.line)}</small><small>구매 ${item.price}사탕 · 사용 후 재사용 대기 20분</small><small class="item-status" id="item-status-${key}"></small></div>
+      <div class="shop-actions"><button class="pbtn hot" type="button" id="item-buy-${key}" data-item-buy="${key}">구매</button><button class="pbtn" type="button" id="item-use-${key}" data-item-use="${key}">사용</button></div></div>`).join('');
+  refreshItemShop();
 }
 
 function renderHouse() {
@@ -2150,6 +2202,7 @@ function renderHouse() {
       <div><b>${it.name}</b><small>${it.line}</small></div>
       <button class="pbtn ${own ? '' : 'hot'}" type="button" data-buy="${key}" ${own || closed || have < it.price ? 'disabled' : ''}>${own ? '설치함' : `사탕 −${it.price}개`}</button></div>`;
   }).join('');
+  renderItemShop();
   renderMuralEditor(p);
   $('#book').innerHTML = guestbookHtml(S.me);
 }
@@ -2194,6 +2247,52 @@ async function buyDecor(key) {
   } else saveMe({ decor: { ...(p.decor || {}), [key]: Date.now() } });
   track('decor_purchased', { item: key, price: it.price });
   toast(`${it.name} 설치 완료! 사탕 ${it.price}개를 써서 순위에도 반영돼요.`);
+}
+
+async function buyItem(key) {
+  const item = ITEMS[key], p = S.players[S.me];
+  if (!item || !p?.costume || S.readOnly) return;
+  if (eventState() === 'ended') { toast('이벤트가 끝나서 상점이 닫혔어요.'); return; }
+  if (candiesOf(S.me) < item.price) { toast(`사탕이 ${item.price}개 있어야 해요.`); return; }
+  const purchase = { item: key, price: item.price, at: Date.now(), round: currentRound() };
+  if (S.mode === 'firebase') {
+    try {
+      const result = await gameRequest({ type: 'item-buy', item: key });
+      rememberPrivate({ inventory: result.inventory });
+      const current = S.players[S.me] || p;
+      S.players[S.me] = { ...current, round: result.round, candies: result.candies,
+        itemPurchases: [...(current.itemPurchases || []), result.purchase].slice(-200) };
+    } catch (error) { toast(error.message); return; }
+  } else {
+    const inventory = { ...itemInventory(), [key]: (Number(itemInventory()[key]) || 0) + 1 };
+    saveMe({ inventory, itemPurchases: [...(p.itemPurchases || []), purchase].slice(-200) });
+    S.ledger = null;
+  }
+  render();
+  toast(`${item.name}을 샀어요. 사탕 ${item.price}개를 썼어요.`);
+}
+
+async function useItem(key) {
+  const item = ITEMS[key], p = S.players[S.me];
+  if (!item || !p?.costume || S.readOnly) return;
+  if (eventState() === 'ended') { toast('이벤트가 끝나 아이템을 사용할 수 없어요.'); return; }
+  const inventory = itemInventory(), count = Math.max(0, Math.floor(Number(inventory[key]) || 0));
+  if (!count) { toast('사용할 아이템이 없어요.'); return; }
+  if ((Number(p.guardUntil) || 0) > Date.now()) { toast('호박 수호 부적이 이미 작동 중이에요.'); return; }
+  const cooldown = itemUsedAt() + item.cooldownMs - Date.now();
+  if (cooldown > 0) { toast(`호박 수호 부적은 ${fmtLeft(cooldown)} 뒤에 다시 쓸 수 있어요.`); return; }
+  if (S.mode === 'firebase') {
+    try {
+      const result = await gameRequest({ type: 'item-use', item: key });
+      rememberPrivate({ inventory: result.inventory, houseGuardUsedAt: result.usedAt });
+      S.players[S.me] = { ...S.players[S.me], guardUntil: result.guardUntil };
+    } catch (error) { toast(error.message); return; }
+  } else {
+    const updated = { ...inventory, [key]: count - 1 };
+    saveMe({ inventory: updated, houseGuardUsedAt: Date.now(), guardUntil: Date.now() + item.durationMs });
+  }
+  render();
+  toast(`${item.name} 발동! 5분 동안 우리 집을 지켜요. 다음 사용은 20분 뒤예요.`);
 }
 
 function muralDraft() {
@@ -2317,7 +2416,7 @@ function renderCrew() {
   if (html !== renderCrew.last) $('#cr-list').innerHTML = renderCrew.last = html;
 }
 
-const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
+const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', 'item-buy': '아이템 구매', 'item-use': '아이템 사용', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
 const adminSeconds = (ms) => ms == null ? '-' : `${(ms / 1000).toFixed(1)}초`;
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
 const adminDelta = (value) => Number.isFinite(value) ? `${signed(value)}개` : null;
@@ -2345,7 +2444,7 @@ function adminActivityDetails(item) {
 function adminWatchHtml() {
   return S.adminWatch.length ? S.adminWatch.map((u) => `<li><div><b>${esc(u.nick)}</b>${u.banned ? ' · 밴' : ''}${u.flags.map((f) => ` <small class="flag">${esc(f)}</small>`).join('')}<br>
     <span class="note">24시간 도전 ${u.tries}번 · 성공률 ${Math.round(u.winRate * 100)}% · 성공 평균 ${adminSeconds(u.avgWinMs)} · 최단 ${adminSeconds(u.fastestWinMs)}</span><br>
-    <span class="note">사탕 ${signed(u.candy.net)} (노크 ${signed(u.candy.knocks)}, 연금술 ${signed(u.candy.brews)}, 장식 ${signed(u.candy.decor)}, 털림 ${signed(u.candy.lost)}) · 수확 ${u.harvests}개 · 활동 ${u.activeHours}개 시간대${u.topSource ? ` · ${esc(u.topSource.nick)}에게서 ${u.topSource.wins}번` : ''}</span></div>
+    <span class="note">사탕 ${signed(u.candy.net)} (노크 ${signed(u.candy.knocks)}, 연금술 ${signed(u.candy.brews)}, 장식 ${signed(u.candy.decor)}, 아이템 ${signed(u.candy.items || 0)}, 털림 ${signed(u.candy.lost)}) · 수확 ${u.harvests}개 · 활동 ${u.activeHours}개 시간대${u.topSource ? ` · ${esc(u.topSource.nick)}에게서 ${u.topSource.wins}번` : ''}</span></div>
     <button class="pbtn" type="button" data-watch-target="${u.id}">자세히</button></li>`).join('')
     : '<li><div>최근 24시간 동안 활동한 계정이 없어요.</div></li>';
 }
@@ -3048,6 +3147,8 @@ async function knock(slot) {
   const id = slot.owner, host = S.players[id], me = S.players[S.me];
   if (!host || !me?.costume || S.busy || S.readOnly) return;
   if (eventState() === 'ended') { toast('이벤트가 끝나서 더는 문을 두드릴 수 없어요.'); return; }
+  const guardLeft = (Number(host.guardUntil) || 0) - Date.now();
+  if (guardLeft > 0) { toast(`호박 수호 부적이 ${nameOf(id)}네 집을 지키고 있어요 · ${fmtLeft(guardLeft)} 남음.`); return; }
   if (!hasBasket(S.me)) { toast(`호박 바구니부터 만들어요. 호박 ${BASKET_PUMPKINS}개면 돼요.`); return; }
   track('knock_started');
   S.busy = true;
@@ -3149,7 +3250,7 @@ async function knock(slot) {
     fly(doorPoint, head);
     await say('TREAT!', `${hostName}에게서 사탕 1개 가져옴! 내 사탕 +1 · 지금 ${candiesOf(S.me)}개`, 'sys');
   } else if (hit) {
-    await say(hostName, '성공했지만 우리 집 사탕은 다 떨어졌어.');
+    await say(hostName, entry.protected ? '호박 수호 부적이 우리 집을 지켜 줬어.' : '성공했지만 우리 집 사탕은 다 떨어졌어.');
   } else {
     await say(hostName, pick(['땡! 사탕이 쏙 빠져나갔네.', '땡! 그 바로는 못 잡지.', '땡! 사탕이 더 빨랐어.']));
     const t = TRICKS[entry.k];
@@ -3476,6 +3577,8 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'mural-save') saveMural();
   else if (t.id === 'wr-rename') renameMe();
   else if (t.dataset.buy) buyDecor(t.dataset.buy);
+  else if (t.dataset.itemBuy) buyItem(t.dataset.itemBuy);
+  else if (t.dataset.itemUse) useItem(t.dataset.itemUse);
   else if (t.dataset.chatTab) { S.chatTab = t.dataset.chatTab; renderChatLog(); }
   else if (t.dataset.bookTab) { S.bookTab = t.dataset.bookTab; if (!$('#note').hidden) renderNote(); else renderHouse(); }
   else if (t.dataset.cos) {
@@ -3676,7 +3779,8 @@ function applyFirebasePlayers() {
   const round = currentRound();
   // 내 호박 수와 밭은 나만 읽는 비공개 문서에서 온다. 공개 문서의 호박 수는 예전 값일 수 있다.
   const mine = S.ownPrivate || {};
-  const own = S.ownPlayer && { ...S.ownPlayer, ...('pumpkins' in mine ? { pumpkins: mine.pumpkins } : {}), ...(mine.field ? { field: mine.field } : {}), ...unsavedOwnFields() };
+  const own = S.ownPlayer && { ...S.ownPlayer, ...('pumpkins' in mine ? { pumpkins: mine.pumpkins } : {}), ...(mine.field ? { field: mine.field } : {}),
+    ...(mine.inventory ? { inventory: mine.inventory } : {}), ...(mine.houseGuardUsedAt ? { houseGuardUsedAt: mine.houseGuardUsedAt } : {}), ...unsavedOwnFields() };
   const source = { ...S.strangers, ...S.firebasePlayers, ...(own ? { [S.me]: own } : {}) };
   for (const p of Object.values(source)) for (const g of p.guests || []) if (g.nick && !S.names[g.v]) S.names[g.v] = cleanNick(g.nick);
   const next = Object.fromEntries(Object.entries(source).map(([uid, player]) => [uid, {

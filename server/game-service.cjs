@@ -7,6 +7,10 @@ const { readVillagePlan, announceNewcomer } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
+const ITEMS = Object.freeze({
+  'house-ward': Object.freeze({ price: 5, durationMs: 5 * 60 * 1000, cooldownMs: 20 * 60 * 1000 }),
+});
+const ITEM_INVENTORY_MAX = 99, MAX_ITEM_PURCHASES = 200;
 // 사탕 잡기에 실패하면 사탕은 그대로 두고 장난 하나를 당한다. 화면의 TRICKS와 이름이 같아야 한다.
 const TRICK_KINDS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
 const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 5 * 60 * 1000;
@@ -23,7 +27,7 @@ const fieldOf = (player, now) => (Array.isArray(player.field) && player.field.le
 const MAX_RECEIPTS = 20, MAX_ACTIVITY = 100;
 const privateState = (doc, player, now) => (doc.exists ? doc.data() : {
   pumpkins: Number(player?.pumpkins) || 0, harvestAt: player?.harvestAt || 0, field: fieldOf(player || {}, now),
-  harvestHours: player?.harvestHours || {}, receipts: [], activity: [],
+  harvestHours: player?.harvestHours || {}, inventory: {}, receipts: [], activity: [],
 });
 function brewGain(roll = randomInt(100)) {
   for (const { n, weight } of BREW_TABLE) {
@@ -228,6 +232,34 @@ async function action(authorization, input) {
         if (count < price) fail('사탕이 부족해요.');
         tx.update(playerRef, { round, candies: count - price, decor: { ...(player.decor || {}), [input.item]: { at: now, round } } });
         result = { candies: count - price };
+      } else if (type === 'item-buy') {
+        if (typeof input.item !== 'string' || !Object.hasOwn(ITEMS, input.item)) fail('아이템을 확인해 주세요.');
+        const item = ITEMS[input.item];
+        const inventory = mine.inventory && typeof mine.inventory === 'object' && !Array.isArray(mine.inventory) ? { ...mine.inventory } : {};
+        const held = Number(inventory[input.item] || 0);
+        if (!Number.isSafeInteger(held) || held < 0 || held >= ITEM_INVENTORY_MAX) fail(`아이템은 ${ITEM_INVENTORY_MAX}개까지 보유할 수 있어요.`);
+        if (count < item.price) fail('사탕이 부족해요.');
+        const purchase = { item: input.item, price: item.price, at: now, round };
+        inventory[input.item] = held + 1;
+        tx.update(playerRef, { round, candies: count - item.price,
+          itemPurchases: [...(player.itemPurchases || []), purchase].slice(-MAX_ITEM_PURCHASES) });
+        privateUpdate = { inventory };
+        result = { candies: count - item.price, inventory, purchase, round };
+      } else if (type === 'item-use') {
+        if (typeof input.item !== 'string' || !Object.hasOwn(ITEMS, input.item)) fail('아이템을 확인해 주세요.');
+        const item = ITEMS[input.item];
+        const inventory = mine.inventory && typeof mine.inventory === 'object' && !Array.isArray(mine.inventory) ? { ...mine.inventory } : {};
+        const held = Number(inventory[input.item] || 0);
+        if (!Number.isSafeInteger(held) || held <= 0) fail('사용할 아이템이 없어요.');
+        const usedAt = Number(mine.houseGuardUsedAt) || 0;
+        const wait = usedAt + item.cooldownMs - now;
+        if (wait > 0) fail(`호박 수호 부적은 아직 다시 쓸 수 없어요. ${Math.ceil(wait / 60000)}분 뒤 사용해 주세요.`, 429);
+        if ((Number(player.guardUntil) || 0) > now) fail('호박 수호 부적이 이미 작동 중이에요.', 429);
+        inventory[input.item] = held - 1;
+        const guardUntil = now + item.durationMs;
+        tx.update(playerRef, { guardUntil });
+        privateUpdate = { inventory, houseGuardUsedAt: now };
+        result = { inventory, usedAt: now, guardUntil };
       } else if (type === 'mural') {
         if (typeof input.mural !== 'string' || !/^[.1-8]{288}$/.test(input.mural)) fail('지붕 그림을 확인해 주세요.');
         tx.update(playerRef, { mural: input.mural });
@@ -251,6 +283,7 @@ async function action(authorization, input) {
         ]);
         const lockDoc = await tx.get(lockRef);
         if (!host.exists || !host.data().costume || host.data().houseHidden || host.data().banned) fail('집을 찾을 수 없어요.');
+        if ((Number(host.data().guardUntil) || 0) > now) fail('호박 수호 부적이 이 집을 지키고 있어요.', 429);
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
         const priorAge = now - (prior.createdAt || 0);
@@ -309,12 +342,14 @@ async function action(authorization, input) {
         if (!outcome.finished) fail('도전이 아직 끝나지 않았어요.');
         const win = outcome.won;
         const hostCount = balance(hostDoc.data(), event, now);
-        const moved = win && hostCount > 0;
+        const protectedByGuard = win && (Number(hostDoc.data().guardUntil) || 0) > now;
+        const moved = win && !protectedByGuard && hostCount > 0;
         const nextLevelByHost = challenge.streakRound === round && challenge.nextLevelByHost
           ? { ...challenge.nextLevelByHost } : {};
         if (win) nextLevelByHost[challenge.host] = Math.min(MAX_LEVEL, challenge.level + 1);
         else delete nextLevelByHost[challenge.host];
         const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level,
+          ...(protectedByGuard ? { protected: true } : {}),
           ...(win ? {} : { k: TRICK_KINDS[randomInt(TRICK_KINDS.length)] }) };
         const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now,
           challenges: [...(player.challenges || []), { at: now, h: challenge.host, w: win, ms: outcome.at, lv: challenge.level, m: moved }].slice(-MAX_CHALLENGE_LOG) };
@@ -379,4 +414,4 @@ async function action(authorization, input) {
   return done;
 }
 
-module.exports = { TRICK_KINDS, PRICES, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { TRICK_KINDS, PRICES, ITEMS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
