@@ -137,8 +137,11 @@ test('duel API delivers invitations and settled results only to participants wit
   assert.equal((await duels(b.authorization)).duels[0].status, 'active');
   for (let i = 0; i < 5; i++) {
     await db.collection('gameDuels').doc(offer.id).update({ lastHitAt: {} });
-    await act(a, { type: 'duel-hit', duelId: offer.id, victim: b.uid,
+    const hit = await act(a, { type: 'duel-hit', duelId: offer.id, victim: b.uid,
       attackerPeer: `${a.uid}:${sidA}`, victimPeer: `${b.uid}:${sidB}` });
+    const received = (await duels(b.authorization, offer.id)).duels[0];
+    assert.equal(hit.hitAt, received.hits[b.uid].at, 'both clients use the same server hit identity');
+    assert.equal(received.hits[b.uid].count, i + 1);
   }
   const settled = (await duels(b.authorization, offer.id)).duels[0];
   assert.equal(settled.status, 'completed');

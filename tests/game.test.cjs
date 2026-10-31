@@ -153,9 +153,57 @@ test('denied duel subscription falls back to authenticated reads and queues invi
   assert.equal(g.elements.get('duel-start').hidden, false);
   g.fire(900);
   assert.equal(g.elements.get('duel-start-text').textContent, '땅!');
+  g.run(`delivered[0].hits.me = { count: 1, at: Date.now() };`);
+  await g.run('S.account.refreshDuels()');
+  assert.equal(g.run('S.floats.at(-1).text'), '뿅! 1/5', 'a victim sees a hit from the API poll without an RTDB event');
+  const swings = g.run('S.swings.length');
+  await g.run('S.account.refreshDuels()');
+  assert.equal(g.run('S.swings.length'), swings, 'repeated polls do not replay hit effects');
   g.run("openModal('duel')");
   await g.run('S.account.refreshDuels()');
   assert.equal(g.elements.get('duel').hidden, false, 'an unchanged active snapshot must not close a manually opened window');
+  g.run(`delivered[0] = { ...delivered[0], status: 'completed', winner: 'host', loser: 'me', updatedAt: Date.now(),
+    hits: { me: { count: 5, at: delivered[0].hits.me.at + 1 } } };`);
+  await g.run('S.account.refreshDuels()');
+  assert.equal(g.run('S.floats.at(-1).text'), '기절!');
+  assert.equal(g.run('S.stunUntil > Date.now()'), true, 'the victim is stunned even without any RTDB message');
+});
+
+test('both duel clients show authoritative hit effects once regardless of API/snapshot order', () => {
+  const attacker = game(), victim = game();
+  for (const [g, me, other] of [[attacker, 'me', 'host'], [victim, 'host', 'me']]) {
+    g.players();
+    g.run(`S.me = '${me}'; var sounds = []; playSfx = (name) => sounds.push(name);
+      ghosts.set('peer', { by: '${other}', x: 100, y: 100 });
+      var duel = { id: 'match', players: ['me', 'host'], status: 'active', hits: {} };
+      var previous = JSON.parse(JSON.stringify(duel));
+      duel.hits.host = { count: 1, at: 1000 };`);
+  }
+  attacker.run('showDuelHit(duel, "host", duel.hits.host); syncDuelHitEffects(duel, previous)');
+  victim.run('syncDuelHitEffects(duel, previous); showDuelHit(duel, "host", duel.hits.host)');
+  for (const g of [attacker, victim]) {
+    assert.equal(g.run('S.swings.length'), 1);
+    assert.equal(g.run('S.floats.at(-1).text'), '뿅! 1/5');
+    assert.equal(g.run('sounds.join()'), 'hit');
+    g.run(`previous = JSON.parse(JSON.stringify(duel)); duel.hits.host = { count: 1, at: 8000 };
+      syncDuelHitEffects(duel, previous);`);
+    assert.equal(g.run('S.swings.length'), 2, 'a hit after the count resets still plays');
+    g.run(`previous = JSON.parse(JSON.stringify(duel)); duel.status = 'completed';
+      duel.hits.host = { count: 5, at: 11000 }; syncDuelHitEffects(duel, previous);
+      syncDuelHitEffects(duel, previous);`);
+    assert.equal(g.run('S.swings.length'), 3);
+    assert.equal(g.run('S.floats.at(-1).text'), '기절!');
+  }
+  assert.equal(victim.run('sounds.at(-1)'), 'stun');
+  assert.equal(attacker.run('sounds.at(-1)'), 'hit');
+});
+
+test('reconnecting and repeated snapshots do not replay historic duel hits', () => {
+  const g = game(); g.players();
+  g.run(`var duel = { id: 'old', players: ['me', 'host'], status: 'active',
+    hits: { me: { count: 3, at: Date.now() - 10000 } } };
+    syncDuelHitEffects(duel, null); syncDuelHitEffects(duel, duel);`);
+  assert.equal(g.run('S.swings.length'), 0);
 });
 
 test('item purchases and uses cannot overlap or overwrite a newer inventory', async () => {
