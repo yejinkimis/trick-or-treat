@@ -91,14 +91,29 @@ async function freezeResults(db) {
   }, { maxAttempts: 20 });
 }
 
+// 3시 사탕 보충: 이벤트 중 3시가 지나 다시 접속했을 때 사탕이 10개보다 적으면 한 번만 10개까지 채운다.
+// 0개인 사람만 채우면 몇 개 남은 사람보다 많아져 순서가 뒤집히므로 모자란 만큼 채운다.
+// 밴되었거나 순위에서 빠진 계정과 끝난 이벤트는 채우지 않는다. 시각은 GAME_REFILL_AT으로 바꿀 수 있다.
+const REFILL_ID = 'refill-1031-1500', REFILL_CANDIES = 10;
+const refillAt = () => Date.parse(process.env.GAME_REFILL_AT || '2026-10-31T15:00:00+09:00');
+function refillOf(player, event, now) {
+  if (now < refillAt() || !player?.costume || player.banned || player.rankExcluded) return null;
+  const have = balance(player, event, now);
+  if ((event && event.endsAt <= now) || player.refill?.id === REFILL_ID || have >= REFILL_CANDIES) return null;
+  return { round: roundOf(event, now), candies: REFILL_CANDIES, refill: { id: REFILL_ID, at: now, n: REFILL_CANDIES - have } };
+}
+
 async function session(authorization) {
   const profile = await getProfile(authorization);
   const { db } = services();
   const ref = db.collection('gamePlayers').doc(profile.uid);
   const privateRef = db.collection('gamePrivate').doc(profile.uid);
   const village = await db.runTransaction(async (tx) => {
-    const [existing, privateDoc] = await Promise.all([tx.get(ref), tx.get(privateRef)]);
+    const now = Date.now();
+    const [existing, privateDoc, eventDoc] = await Promise.all([tx.get(ref), tx.get(privateRef), tx.get(db.doc('game/event'))]);
+    const event = eventDoc.exists ? eventDoc.data() : null;
     const prior = existing.exists ? existing.data() : null;
+    const refill = refillOf(prior, event, now) || {};
     const readyAt = prior?.readyAt || (profile.costume ? Date.now() : 0);
     const plan = await readVillagePlan(tx, db, profile.costume && !prior?.village ? { id: profile.uid, readyAt } : null);
     const home = prior?.village || plan.villageOf.get(profile.uid);
@@ -106,7 +121,7 @@ async function session(authorization) {
     const placed = home && !prior?.village ? { village: home } : {};
     if (!privateDoc.exists) tx.set(privateRef, privateState(privateDoc, prior, Date.now()));
     if (!existing.exists) tx.create(ref, { ...profile, readyAt, knocks: [], notes: [], guests: [], decor: {}, candies: 10, round: 'practice', ...placed });
-    else tx.update(ref, { ...profile, ...(profile.costume && !prior.readyAt ? { readyAt } : {}), ...placed });
+    else tx.update(ref, { ...profile, ...(profile.costume && !prior.readyAt ? { readyAt } : {}), ...placed, ...refill });
     return home || plan.latest;
   }, { maxAttempts: 20 });
   return { isAdmin: isAdmin(profile.uid), uid: profile.uid, village };

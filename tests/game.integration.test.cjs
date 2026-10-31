@@ -309,6 +309,45 @@ test('a harvest reuses the event another request just read, but an event stop on
   }
 });
 
+test('after three o\'clock a reconnect tops a bag up to ten once, and skips bags of ten or more, excluded accounts and ended events', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, empty, few, rich, excluded] = await Promise.all(['보충관', '빈손', '세개', '부자', '제외'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const { event } = await act(admin, { type: 'event-start' });
+  const players = services().db.collection('gamePlayers');
+  const set = (p, candies, extra = {}) => players.doc(p.uid).update({ round: event.id, candies, ...extra });
+  await Promise.all([set(empty, 0), set(few, 3), set(rich, 12), set(excluded, 0, { rankExcluded: true })]);
+  try {
+    process.env.GAME_REFILL_AT = new Date(Date.now() + 60000).toISOString();
+    await session(empty.authorization);
+    assert.equal((await saved(empty)).candies, 0, 'nothing happens before three o\'clock');
+
+    process.env.GAME_REFILL_AT = new Date(Date.now() - 1000).toISOString();
+    await Promise.all([empty, few, rich, excluded].map((p) => session(p.authorization)));
+    const filled = await saved(empty);
+    assert.equal(filled.candies, 10);
+    assert.equal(filled.round, event.id);
+    assert.equal(filled.refill.n, 10);
+    const topped = await saved(few);
+    assert.equal(topped.candies, 10, 'three left is topped up to ten, so nobody overtakes them');
+    assert.equal(topped.refill.n, 7);
+    assert.equal((await saved(rich)).candies, 12, 'ten or more is left alone');
+    assert.equal((await saved(excluded)).candies, 0, 'excluded accounts are not refilled');
+
+    await set(empty, 0);
+    await session(empty.authorization);
+    assert.equal((await saved(empty)).candies, 0, 'only once per person');
+
+    await services().db.doc('game/event').update({ endsAt: Date.now() - 1 });
+    await set(rich, 0);
+    await session(rich.authorization);
+    assert.equal((await saved(rich)).candies, 0, 'an ended event is not refilled');
+  } finally {
+    delete process.env.GAME_REFILL_AT;
+    await services().db.doc('game/event').delete();
+  }
+});
+
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {
   const [p, other] = await Promise.all([player('규'), player('남')]);
   const base = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-trick-or-treat/databases/(default)/documents`;
