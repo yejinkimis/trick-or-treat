@@ -1569,7 +1569,7 @@ function drawActor(a, key, name, color, fx, stunned, basket, said, doodle) {
   if (basket) drawSpr(TILE_SPR.basket, a.x + (a.f === -1 ? -14 : 4), a.y - 9 - bob);
   if (stunned) drawStars(a, bob);
   if (name) label(name, a.x, a.y - 17 - bob, color, 0.85);
-  if (said) drawSpeech(said, a.x, a.y - 26 - bob - (name ? 8 : 0) - (fx && TRICKS[fx.kind].bubble ? 8 : 0));
+  if (said) drawSpeech(said, a.x, a.y - 22 - bob - (name ? 4 : 0) - (fx && TRICKS[fx.kind].bubble ? 8 : 0));
   const bubble = fx && TRICKS[fx.kind].bubble;
   if (bubble) label(bubble, a.x, a.y - 17 - bob - (name ? 8 : 0), '#ff6fa8', 0.7);
 }

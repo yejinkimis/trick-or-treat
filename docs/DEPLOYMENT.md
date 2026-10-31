@@ -45,7 +45,8 @@ Vercel Project Settings → Environment Variables에 등록한 뒤 다시 배포
 | FIREBASE_DATABASE_URL | https://trick-or-treat-89de3-default-rtdb.asia-southeast1.firebasedatabase.app |
 | GAME_ADMIN_UIDS | 이벤트 운영자 계정의 Firebase UID. 여러 명이면 쉼표로 구분 |
 | GAME_MINIGAMES | 선택. 노크 때 랜덤으로 낼 게임을 쉼표로 제한한다(`fish,whack,spell,catch`). 비우면 네 개 모두, 문제가 생긴 게임은 빼고 재배포한다 |
-| GAME_CANDY_RAIN_AT | 선택. 사탕 비 시각을 '시작 시각/분'으로 쉼표로 잇는다(`2026-10-31T22:30:00+09:00/90`). 설정하지 않으면 기본값(10/31 22:30~24:00), 빈 문자열이면 끈다 |
+| GAME_CANDY_RAIN_AT | 선택. 사탕 비 시각을 '시작 시각/분'으로 쉼표로 잇는다(`2026-10-31T22:30:00+09:00/30`). 설정하지 않으면 기본값(10/31 22:30~23:00), 빈 문자열이면 끈다 |
+| GAME_RICH_RAID_AT | 선택. 부자 털기 시각을 '시작 시각/분'으로 쉼표로 잇는다. 설정하지 않으면 기본값(10/31 23:00~23:30), 빈 문자열이면 끈다 |
 | FIREBASE_SERVICE_ACCOUNT_JSON | 프로젝트 설정 → 서비스 계정 → Firebase Admin SDK의 서비스 계정 JSON 전체 |
 
 Web 설정은 공개 설정이고 `FIREBASE_SERVICE_ACCOUNT_JSON`은 서버 전용 비밀값이다. JSON 키는 Vercel 환경변수에서만 관리하며 Git이나 PR 본문에 올리지 않는다. `/api/firebase-config`는 이 비밀값을 반환하지 않는다.
