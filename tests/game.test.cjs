@@ -1183,6 +1183,27 @@ test('online rankings come from the shared server list and are not refetched wit
   assert.equal(g.run('calls.length'), 1, 'reopening right away reuses the list');
 });
 
+test('roulette rankings use a new cache address and discard an older in-flight response', async () => {
+  const g = game(); village(g);
+  g.run(`var calls = [], finishOld;
+    S.event = { id: 'r1', startedAt: 1, endsAt: Date.now() + 60000 };
+    S.rankAt = 0; S.rankList = null;
+    accountRequest = (url) => {
+      calls.push(url);
+      if (calls.length === 1) return new Promise(resolve => { finishOld = resolve; });
+      return Promise.resolve({ players: [{ id: 'me', nick: '나', costume: 'ghost', n: 30 }] });
+    };
+    loadRanking();
+    S.event.roulette = { id: '11111111-1111-4111-8111-111111111111' };
+    loadRanking({ quiet: true });
+    finishOld({ players: [{ id: 'me', nick: '나', costume: 'ghost', n: 10 }] });`);
+  await tick(); await tick();
+  assert.equal(g.run('calls.length'), 2);
+  assert.equal(g.run('calls[1]'), '/api/game/leaderboard?roulette=11111111-1111-4111-8111-111111111111');
+  assert.equal(g.run('ranking()[0].n'), 30);
+  assert.equal(g.run('S.rankLoading'), false);
+});
+
 test('chat reaches every village but shows a bubble only for people in the same village', () => {
   const g = game(); village(g);
   g.run(`onChat({ data: { text: '옆 마을 안녕', v: 2 }, by: 'far', peer: 'far:tab' });

@@ -938,9 +938,12 @@ function rankingOf(players) {
 const RANK_REFRESH_MS = 60 * 1000;
 async function loadRanking({ quiet = false } = {}) {
   if (S.mode !== 'firebase' || S.rankLoading || Date.now() - (S.rankAt || 0) < 30000) return;
+  const eventId = S.event?.id, rouletteId = S.event?.roulette?.id;
+  const changed = () => eventId !== S.event?.id || rouletteId !== S.event?.roulette?.id;
   S.rankLoading = true;
   try {
-    const { players } = await accountRequest('/api/game/leaderboard');
+    const { players } = await accountRequest(`/api/game/leaderboard${rouletteId ? `?roulette=${encodeURIComponent(rouletteId)}` : ''}`);
+    if (changed()) return;
     for (const p of players) if (p.nick) S.names[p.id] = cleanNick(p.nick);
     S.rankList = players;
     S.rankAt = Date.now();
@@ -948,7 +951,10 @@ async function loadRanking({ quiet = false } = {}) {
     if (!$('#rank').hidden) renderRanking();
     if (!$('#crew').hidden) renderCrew();
   } catch { if (!quiet) toast('순위를 불러오지 못했어요. 잠시 뒤 다시 열어 주세요.'); }
-  finally { S.rankLoading = false; }
+  finally {
+    S.rankLoading = false;
+    if (changed()) { S.rankAt = 0; void loadRanking({ quiet }); }
+  }
 }
 function activeFx(id) {
   const ks = S.players[id]?.knocks || [];
