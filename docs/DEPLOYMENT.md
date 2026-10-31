@@ -44,6 +44,7 @@ Vercel Project Settings → Environment Variables에 등록한 뒤 다시 배포
 | FIREBASE_APP_ID | 1:891696036211:web:a9ab62f17b940f1507ed06 |
 | FIREBASE_DATABASE_URL | https://trick-or-treat-89de3-default-rtdb.asia-southeast1.firebasedatabase.app |
 | GAME_ADMIN_UIDS | 이벤트 운영자 계정의 Firebase UID. 여러 명이면 쉼표로 구분 |
+| GAME_MINIGAMES | 선택. 노크 때 랜덤으로 낼 게임을 쉼표로 제한한다(`fish,rhythm,whack,spell,catch`). 비우면 다섯 개 모두, 문제가 생긴 게임은 빼고 재배포한다 |
 | FIREBASE_SERVICE_ACCOUNT_JSON | 프로젝트 설정 → 서비스 계정 → Firebase Admin SDK의 서비스 계정 JSON 전체 |
 
 Web 설정은 공개 설정이고 `FIREBASE_SERVICE_ACCOUNT_JSON`은 서버 전용 비밀값이다. JSON 키는 Vercel 환경변수에서만 관리하며 Git이나 PR 본문에 올리지 않는다. `/api/firebase-config`는 이 비밀값을 반환하지 않는다.

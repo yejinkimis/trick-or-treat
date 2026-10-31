@@ -3,6 +3,7 @@ const { services } = require('./firebase-admin.cjs');
 const { authenticatedUid, getProfile } = require('./auth-service.cjs');
 const { AuthError } = require('./errors.cjs');
 const { MAX_LEVEL, STALE_CHALLENGE_MS, CHALLENGE_LOCK_TTL_MS, CHALLENGE_MAX_MS, createCandySeed, evaluateCandyChallenge } = require('./candy-challenge.cjs');
+const { pickGame, evaluateChallenge } = require('./minigames.cjs');
 const { readVillagePlan, announceNewcomer } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 
@@ -272,11 +273,11 @@ async function action(authorization, input) {
         const level = Math.min(MAX_LEVEL, Math.max(1, Number(nextLevelByHost[input.host]) || 1));
         const challenge = {
           id: randomUUID(), host: input.host, round, createdAt: now, used: false,
-          level, seed: createCandySeed(), nextLevelByHost, streakRound: round,
+          level, seed: createCandySeed(), game: pickGame(input.games), nextLevelByHost, streakRound: round,
         };
         tx.set(challengeRef, challenge);
         tx.set(lockRef, { challengeId: challenge.id, challengerUid: uid, round, createdAt: now, heartbeatAt: now });
-        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed } };
+        result = { challenge: { id: challenge.id, host: challenge.host, round, createdAt: now, level, seed: challenge.seed, game: challenge.game } };
       } else if (type === 'knock-heartbeat') {
         const challengeDoc = await tx.get(challengeRef);
         const challenge = challengeDoc.exists ? challengeDoc.data() : null;
@@ -304,7 +305,7 @@ async function action(authorization, input) {
         if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round || !lockAlive(lock, now, FINISH_SLACK_MS)) {
           fail('이 도전은 더 이상 유효하지 않아요. 다시 노크해 주세요.');
         }
-        const outcome = evaluateCandyChallenge(challenge, input.inputs, input.elapsedMs, now);
+        const outcome = evaluateChallenge(challenge, input.inputs, input.elapsedMs, now);
         if (!outcome.valid) fail(outcome.message || '조작 기록을 확인해 주세요.');
         if (!outcome.finished) fail('도전이 아직 끝나지 않았어요.');
         const win = outcome.won;
@@ -317,7 +318,7 @@ async function action(authorization, input) {
         const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level,
           ...(win ? {} : { k: TRICK_KINDS[randomInt(TRICK_KINDS.length)] }) };
         const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now,
-          challenges: [...(player.challenges || []), { at: now, h: challenge.host, w: win, ms: outcome.at, lv: challenge.level, m: moved }].slice(-MAX_CHALLENGE_LOG) };
+          challenges: [...(player.challenges || []), { at: now, h: challenge.host, w: win, ms: outcome.at, lv: challenge.level, m: moved, ...(challenge.game ? { g: challenge.game } : {}) }].slice(-MAX_CHALLENGE_LOG) };
         // 실패도 남겨야 마을 사람들 화면에 낙서·똥 같은 장난이 보인다.
         playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
         tx.update(playerRef, playerUpdate);
