@@ -32,6 +32,7 @@ function game({ reducedMotion = true, storage } = {}) {
       getContext: () => drawing, toDataURL: () => 'data:image/png;base64,test',
       addEventListener(type, fn) { this.listeners[type] = fn; }, setPointerCapture() {}, focus() { document.activeElement = this; }, blur() { document.activeElement = null; },
       querySelector: () => element('', 'button'), querySelectorAll: () => [],
+      insertAdjacentHTML(position, markup) { this.innerHTML += markup; }, scrollTop: 0, scrollHeight: 0,
       firstChild: { textContent: '' },
     };
     Object.defineProperty(el, 'className', { get: () => [...classes].join(' '), set(value) { classes.clear(); value.split(/\s+/).forEach((x) => classes.add(x)); } });
@@ -944,6 +945,43 @@ test('chat reaches every village but shows a bubble only for people in the same 
   const log = g.elements.get('chatlog').innerHTML;
   assert.match(log, /\[구리마을\]<\/small> 먼집<\/b>옆 마을 안녕/);
   assert.match(log, /<b>이웃<\/b>여기 안녕/);
+});
+
+test('the chat window keeps history in time order, pages older lines in, and filters to this village', () => {
+  const g = game(); village(g);
+  g.run(`onChat({ data: { id: 'c3', text: '셋', v: 1, at: 300 }, by: 'near', peer: 'near:tab' });
+    chatHistory.more = true;
+    addChat([{ id: 'c1', by: 'far', v: 2, text: '하나', at: 100 }, { id: 'c2', by: 'near', v: 1, text: '둘', at: 200 }, { id: 'c3', by: 'near', v: 1, text: '셋', at: 300 }], { older: true });`);
+  const log = () => g.elements.get('chatlog').innerHTML;
+  assert.equal(g.elements.get('chatbox').hidden, false);
+  assert.match(log(), /^<p class="more">위로 올리면 이전 채팅을 불러와요<\/p><p><b><small>\[구리마을\]<\/small> 먼집<\/b>하나<\/p><p><b>이웃<\/b>둘<\/p><p><b>이웃<\/b>셋<\/p>$/);
+  const press = (dataset) => g.run(`document.listeners.click({ target: { classList: { contains: () => false }, closest: () => (${JSON.stringify({ id: '', dataset })}) }, preventDefault() {} })`);
+  press({ chatTab: 'here' });
+  assert.doesNotMatch(log(), /하나/);
+  assert.match(log(), /둘.*셋/);
+  press({ chatTab: 'all' });
+  assert.match(log(), /하나/);
+  g.run(`toggleFold('chat')`);
+  assert.equal(g.elements.get('chatbox').classList.contains('folded'), true);
+});
+
+test('a new chat line is appended without redrawing the history, and trimming keeps the place to page from', () => {
+  const g = game(); village(g);
+  const box = g.elements.get('chatlog');
+  g.run(`onChat({ data: { id: 'a1', text: '처음', v: 1, at: 100 }, by: 'near', peer: 'near:tab' })`);
+  box.innerHTML += '<i>그대로</i>';
+  g.run(`onChat({ data: { id: 'a2', text: '다음', v: 1, at: 200 }, by: 'near', peer: 'near:tab' })`);
+  assert.match(box.innerHTML, /<i>그대로<\/i><p><b>이웃<\/b>다음<\/p>$/, 'only the new line is added');
+
+  const lines = (from, count) => `Array.from({ length: ${count} }, (_, i) => ({ id: '-T' + String(${from} + i).padStart(18, '0'), by: 'near', v: 1, text: 'x', at: 1000 + ${from} + i }))`;
+  box.scrollHeight = 5000; box.scrollTop = 0;
+  g.run(`addChat(${lines(0, 1101)})`);
+  assert.equal(g.run('chatLog.length'), 1103, 'nothing is dropped while reading older lines');
+  box.scrollTop = 5000;
+  g.run(`addChat(${lines(1101, 1)})`);
+  assert.equal(g.run('chatLog.length'), 1000);
+  assert.equal(g.run('chatHistory.oldest'), '-T' + String(102).padStart(18, '0'), 'the next page starts right before the first line kept');
+  assert.equal(g.run('chatHistory.more'), true);
 });
 
 test('the village map lists villages top to bottom in sign order and travels to the chosen one', async () => {

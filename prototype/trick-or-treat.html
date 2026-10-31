@@ -145,9 +145,14 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .me .reward{color:var(--gold)}
 .chatbar{left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));display:flex;gap:8px;padding:8px;width:min(520px,calc(100vw - 40px));z-index:9}
 .chatbar input{flex:1 1 auto}
-.chatlog{left:max(14px,env(safe-area-inset-left,0px));bottom:calc(96px + env(safe-area-inset-bottom,0px));max-width:min(320px,calc(100vw - 40px));display:flex;flex-direction:column;gap:2px;pointer-events:none;font-size:.85rem}
-.chatlog p{margin:0;padding:2px 8px;background:rgba(11,8,16,.72);overflow-wrap:anywhere}
+.chatbox{left:max(14px,env(safe-area-inset-left,0px));bottom:calc(96px + env(safe-area-inset-bottom,0px));width:min(340px,calc(100vw - 40px));display:grid;gap:4px;padding:6px 8px;font-size:.85rem;background:rgba(11,8,16,.62);border-color:rgba(255,244,226,.45);box-shadow:none}
+.chat-tabs{display:flex;gap:6px}
+.chat-tabs button{all:unset;cursor:pointer;font-size:.75rem;color:var(--muted);padding:2px 6px;border-bottom:2px solid transparent}
+.chat-tabs button[aria-pressed="true"]{color:var(--gold);border-bottom-color:var(--gold)}
+.chatlog{height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;overscroll-behavior:contain}
+.chatlog p{margin:0;padding:1px 2px;overflow-wrap:anywhere}
 .chatlog b{font-weight:400;color:var(--gold);margin-right:6px}
+.chatlog .more{color:var(--muted);text-align:center;font-size:.75rem}
 .mural{width:100%;max-width:432px;aspect-ratio:2/1;image-rendering:pixelated;border:3px solid var(--muted);touch-action:none;cursor:crosshair;box-sizing:border-box}
 .mc{all:unset;cursor:pointer;width:30px;height:30px;border:3px solid var(--edge);box-shadow:0 0 0 2px var(--muted);font-size:.7rem;text-align:center;line-height:30px;color:var(--text)}
 .mc[aria-pressed="true"]{box-shadow:0 0 0 3px var(--gold)}
@@ -217,6 +222,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 @media (max-width:560px){
   .tr{flex-direction:column;align-items:flex-end}
   .tr-break,.vmap{display:none!important}
+  .chatlog{height:96px}
   .toast{top:auto;bottom:calc(110px + env(safe-area-inset-bottom,0px))}
   .timing{max-height:calc(100dvh - 24px);overflow:auto;padding:12px;gap:8px}
   .timing-track{height:min(36dvh,260px);min-height:160px}
@@ -487,7 +493,10 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <p class="note">사탕이 초록 바 안에 있으면 게이지가 차고, 벗어나면 줄어요.</p>
 </div>
 
-<div class="hud chatlog" id="chatlog" aria-live="polite" hidden></div>
+<section class="hud px chatbox" id="chatbox" aria-label="채팅" hidden>
+  <div class="panel-head"><div class="chat-tabs" role="group" aria-label="채팅 보기"><button type="button" data-chat-tab="all" aria-pressed="true">전체</button><button type="button" data-chat-tab="here" aria-pressed="false">우리 마을</button></div><button class="fold" type="button" data-fold="chat" aria-expanded="true">접기</button></div>
+  <div class="chatlog" id="chatlog" aria-live="polite"></div>
+</section>
 <form class="hud chatbar px" id="chatbar" hidden>
   <input type="text" id="chat-in" maxlength="60" autocomplete="off" placeholder="할 말을 적고 Enter (Esc로 닫기)">
   <button class="pbtn hot" type="submit">보내기</button>
@@ -1051,9 +1060,11 @@ function update(dt) {
   growPumpkins(dt);
 }
 
-const CHAT_MAX = 60, CHAT_BUBBLE_MS = 5000, CHAT_LOG = 6;
+const CHAT_MAX = 60, CHAT_BUBBLE_MS = 5000, CHAT_KEEP = 1000;
 const chatBubbles = new Map();
 const chatLog = [];
+// 온라인에서는 채팅 기록을 100줄씩 나눠 받는다. 위로 스크롤하면 이전 100줄을 더 부른다.
+const chatHistory = { more: false, oldest: null, loading: false, loadOlder: null };
 function openChat() {
   if (S.busy) { toast('진행 중인 대화나 노크를 먼저 마쳐 주세요.'); return; }
   if (S.readOnly || !myCostume()) { toast('코스튬을 입어야 말할 수 있어요.'); return; }
@@ -1081,14 +1092,53 @@ function onChat(msg) {
   const village = msg.data?.v;
   const here = village === undefined || village === S.village;
   if (here) chatBubbles.set(msg.sameTab ? 'me' : msg.peer, { id: msg.data?.id, text, until: Date.now() + CHAT_BUBBLE_MS });
-  chatLog.push({ id: msg.data?.id, by: msg.sameTab ? S.me : msg.by, village: here ? null : village, text });
-  if (chatLog.length > CHAT_LOG) chatLog.shift();
-  renderChatLog();
+  addChat([{ id: msg.data?.id, by: msg.sameTab ? S.me : msg.by, v: village, text, at: Number(msg.data?.at) || Date.now() }]);
 }
-function renderChatLog() {
-  const box = $('#chatlog');
-  box.innerHTML = chatLog.map((c) => `<p><b>${c.village ? `<small>[${esc(villageLabel(c.village))}]</small> ` : ''}${esc(c.name || (c.by ? nameOf(c.by) : '이웃'))}</b>${esc(c.text)}</p>`).join('');
-  box.hidden = !chatLog.length;
+const CHAT_KEY = /^-[\w-]{19}$/;
+const chatAtBottom = () => { const box = $('#chatlog'); return box.scrollHeight - box.scrollTop - box.clientHeight < 24; };
+function addChat(entries, { older = false } = {}) {
+  const known = new Set(chatLog.map((c) => c.id).filter(Boolean));
+  const fresh = entries.filter((c) => !c.id || !known.has(c.id));
+  if (!fresh.length) return;
+  const newest = chatLog.at(-1)?.at ?? -Infinity;
+  const appended = !older && fresh.every((c) => c.at >= newest);
+  chatLog.push(...fresh);
+  if (!appended) chatLog.sort((a, b) => a.at - b.at);
+  // 맨 아래를 볼 때만 오래된 줄을 100줄씩 덜어 낸다. 덜어 낸 구간은 위로 스크롤하면 남은 첫 줄 앞부터 다시 받는다.
+  if (!older && chatLog.length > CHAT_KEEP + 100 && chatAtBottom()) {
+    chatLog.splice(0, chatLog.length - CHAT_KEEP);
+    const first = chatLog.find((c) => CHAT_KEY.test(c.id || ''));
+    if (first) Object.assign(chatHistory, { oldest: first.id, more: true });
+    renderChatLog();
+    return;
+  }
+  if (appended && renderChatLog.last !== undefined && !$('#chatbox').hidden) appendChatLines(fresh);
+  else renderChatLog({ older });
+}
+// 전체 탭은 모든 마을, 우리 마을 탭은 지금 있는 마을 채팅만 보여 준다. 다른 마을 채팅에는 마을 이름을 붙인다.
+const chatElsewhere = (c) => c.v !== undefined && c.v !== S.village;
+const chatShown = (c) => (S.chatTab || 'all') === 'all' || !chatElsewhere(c);
+const chatLine = (c) => `<p><b>${chatElsewhere(c) ? `<small>[${esc(villageLabel(c.v))}]</small> ` : ''}${esc(c.name || (c.by ? nameOf(c.by) : '이웃'))}</b>${esc(c.text)}</p>`;
+// 새 채팅은 기록을 얼마나 불러 뒀든 맨 아래에 그 줄만 붙인다. 전체를 다시 그리는 건 탭·마을이 바뀌거나 이전 기록을 받을 때뿐이다.
+function appendChatLines(fresh) {
+  const html = fresh.filter(chatShown).map(chatLine).join('');
+  if (!html) return;
+  const box = $('#chatlog'), atBottom = chatAtBottom();
+  box.insertAdjacentHTML('beforeend', html);
+  renderChatLog.last += html;
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+function renderChatLog({ older = false } = {}) {
+  const box = $('#chatlog'), tab = S.chatTab || 'all';
+  $('#chatbox').hidden = !chatLog.length;
+  for (const button of document.querySelectorAll('[data-chat-tab]')) button.setAttribute('aria-pressed', String(button.dataset.chatTab === tab));
+  const html = (chatHistory.more ? '<p class="more">위로 올리면 이전 채팅을 불러와요</p>' : '') + chatLog.filter(chatShown).map(chatLine).join('');
+  if (html === renderChatLog.last) return;
+  const atBottom = chatAtBottom(), fromBottom = box.scrollHeight - box.scrollTop;
+  box.innerHTML = renderChatLog.last = html;
+  // 이전 채팅을 위에 붙일 때는 보던 줄이 그대로 있게 하고, 맨 아래를 보고 있었으면 새 채팅을 따라 내려간다.
+  if (older) box.scrollTop = box.scrollHeight - fromBottom;
+  else if (atBottom) box.scrollTop = box.scrollHeight;
 }
 function bubbleOf(key) {
   const b = chatBubbles.get(key);
@@ -1101,9 +1151,7 @@ function botReply() {
     if (!g.bot || Math.hypot(g.x - S.pos.x, g.y - S.pos.y) > 120) continue;
     setTimeout(() => {
       chatBubbles.set(id, { text: pick(BOT_LINES), until: Date.now() + CHAT_BUBBLE_MS });
-      chatLog.push({ name: nameOf(id), text: chatBubbles.get(id).text });
-      if (chatLog.length > CHAT_LOG) chatLog.shift();
-      renderChatLog();
+      addChat([{ name: nameOf(id), text: chatBubbles.get(id).text, at: Date.now() }]);
     }, 900 + Math.random() * 800);
     return;
   }
@@ -1814,6 +1862,7 @@ function renderHud() {
   $('#open-online').hidden = S.mode !== 'firebase';
   renderBoard();
   renderVillagePanel();
+  applyFold($('#chatbox'), 'chat');
 }
 
 // 퀘스트와 순위판을 접었는지는 이 기기에만 기억해 둔다.
@@ -3117,6 +3166,7 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'mural-save') saveMural();
   else if (t.id === 'wr-rename') renameMe();
   else if (t.dataset.buy) buyDecor(t.dataset.buy);
+  else if (t.dataset.chatTab) { S.chatTab = t.dataset.chatTab; renderChatLog(); }
   else if (t.dataset.bookTab) { S.bookTab = t.dataset.bookTab; if (!$('#note').hidden) renderNote(); else renderHouse(); }
   else if (t.dataset.cos) {
     const first = !myCostume();
@@ -3148,6 +3198,7 @@ document.addEventListener('click', (e) => {
   }
 });
 $('#chatbar').addEventListener('submit', (e) => { e.preventDefault(); sendChat(); });
+$('#chatlog').addEventListener('scroll', () => { if ($('#chatlog').scrollTop < 24) void chatHistory.loadOlder?.(); });
 $('#auth-form').addEventListener('submit', submitAccountForm);
 $('#cr-search').addEventListener('input', renderCrew);
 $('#chat-in').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.preventDefault(); closeChat(); } });
@@ -3311,7 +3362,8 @@ async function connectFirebaseGame(uid) {
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
   Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [] });
-  ghosts.clear(); chatBubbles.clear(); chatLog.length = 0; renderChatLog();
+  ghosts.clear(); chatBubbles.clear(); chatLog.length = 0;
+  Object.assign(chatHistory, { more: false, oldest: null, loading: false, loadOlder: null }); renderChatLog();
   const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
   let ownRef = null, disconnect = null;
@@ -3361,6 +3413,7 @@ async function connectFirebaseGame(uid) {
     handlers[data.kind]?.({ data, by: snapshot.key, peer: peers.find((p) => p.by === snapshot.key)?.peer || snapshot.key, sameTab: snapshot.key === uid });
   };
   const messageError = () => toast('채팅 권한을 확인해 주세요.');
+  const chatRef = rt.ref(a.database, 'chatLog'), CHAT_PAGE = 100;
   stops.push(rt.onChildAdded(rt.ref(a.database, 'chat'), receive, messageError));
   stops.push(rt.onChildRemoved(rt.ref(a.database, 'chat'), (snapshot) => {
     const id = snapshot.val()?.id;
@@ -3379,6 +3432,7 @@ async function connectFirebaseGame(uid) {
     villageStops.splice(0).forEach((stop) => stop());
     if (ownRef) { void disconnect.cancel().catch(() => {}); void rt.remove(ownRef).catch(() => {}); }
     S.village = n; S.firebasePlayers = {}; presenceTree = {}; peers = []; villageLoaded = false;
+    renderChatLog();
     ghosts.clear(); chatBubbles.clear();
     ownRef = rt.ref(a.database, `presence/${n}/${uid}/${sid}`);
     disconnect = rt.onDisconnect(ownRef);
@@ -3413,8 +3467,11 @@ async function connectFirebaseGame(uid) {
     emit: async (kind, data) => {
       if (!S.networkConnected) throw new Error('마을에 다시 연결 중이에요.');
       const message = { id: crypto.randomUUID(), kind, ...data, at: rt.serverTimestamp() };
-      if (kind === 'chat') await rt.set(rt.ref(a.database, `chat/${uid}`), { ...message, v: S.village });
-      else await rt.set(rt.ref(a.database, `events/${S.village}/${uid}`), message);
+      if (kind === 'chat') {
+        // 기록 한 줄은 0.6초 제한이 걸린 내 채팅과 같은 id로 함께 써야 규칙을 통과한다.
+        const id = rt.push(chatRef).key, v = S.village;
+        await rt.update(rt.ref(a.database), { [`chat/${uid}`]: { ...message, id, v }, [`chatLog/${id}`]: { id, by: uid, text: data.text, v, at: rt.serverTimestamp() } });
+      } else await rt.set(rt.ref(a.database, `events/${S.village}/${uid}`), message);
     },
     enterVillage: (n) => withDeadline(joinVillage(n)),
   };
@@ -3425,6 +3482,26 @@ async function connectFirebaseGame(uid) {
     rt.goOffline(a.database); S.room = null; S.village = null; S.online = [];
   };
   const villageReady = joinVillage(session.village);
+  const loadChat = async (before) => {
+    const page = await rt.get(before
+      ? rt.query(chatRef, rt.orderByKey(), rt.endBefore(before), rt.limitToLast(CHAT_PAGE))
+      : rt.query(chatRef, rt.orderByKey(), rt.limitToLast(CHAT_PAGE)));
+    if (disposed) return;
+    const entries = [];
+    page.forEach((child) => { const c = child.val(); entries.push({ id: c.id, by: c.by, v: c.v, text: c.text, at: c.at }); });
+    chatHistory.more = entries.length === CHAT_PAGE;
+    if (entries.length) chatHistory.oldest = entries[0].id;
+    for (const c of entries) know(c.by);
+    addChat(entries, { older: Boolean(before) });
+    renderChatLog();
+  };
+  chatHistory.loadOlder = async () => {
+    if (chatHistory.loading || !chatHistory.more || !chatHistory.oldest) return;
+    chatHistory.loading = true;
+    try { await loadChat(chatHistory.oldest); } catch { /* 이전 채팅을 못 받으면 다음 스크롤 때 다시 시도한다 */ } finally { chatHistory.loading = false; }
+  };
+  // 마을 문서가 온 뒤에 불러야 채팅한 사람 이름을 읽을 때 헛읽기가 없다.
+  void villageReady.then(() => loadChat()).catch(() => {});
   stops.push(rt.onValue(rt.ref(a.database, '.info/connected'), async (snapshot) => {
     S.networkConnected = snapshot.val() === true;
     renderHud();

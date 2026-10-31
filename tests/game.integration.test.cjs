@@ -24,12 +24,17 @@ test('admin moderation enforces permissions, bans existing sessions, hides house
   await moderate(admin.authorization, { type: 'delete-note', target: visitor.uid, guest: visitor.uid, host: host.uid, at: note.at });
   assert.equal((await saved(visitor)).notes.length, 0);
   assert.equal((await saved(host)).guests.length, 0);
-  const chatRef = services().database.ref(`chat/${visitor.uid}`);
+  const chatRef = services().database.ref(`chat/${visitor.uid}`), logRef = services().database.ref('chatLog');
   await chatRef.set({ id: 'new', text: 'new' });
+  await logRef.update({ new: { id: 'new', by: visitor.uid, text: 'new' }, theirs: { id: 'theirs', by: host.uid, text: 'keep' } });
   await moderate(admin.authorization, { type: 'delete-chat', target: visitor.uid, chatId: 'old' });
   assert.equal((await chatRef.get()).val().id, 'new');
+  await moderate(admin.authorization, { type: 'delete-chat', target: visitor.uid, chatId: 'theirs' });
+  assert.equal((await logRef.child('theirs').get()).exists(), true, 'another person\'s line stays');
   await moderate(admin.authorization, { type: 'delete-chat', target: visitor.uid, chatId: 'new' });
   assert.equal((await chatRef.get()).exists(), false);
+  assert.equal((await logRef.child('new').get()).exists(), false);
+  await assert.rejects(moderate(admin.authorization, { type: 'delete-chat', target: visitor.uid, chatId: '../chat' }), /삭제할 채팅/);
   await moderate(admin.authorization, { type: 'house', target: host.uid, hidden: true });
   await services().db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
   await assert.rejects(act(visitor, { type: 'knock-start', host: host.uid }), /집을 찾을/);
@@ -392,6 +397,30 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   await assert.rejects(act(brewer, { type: 'brew' }), (error) => error.status === 429 && /분 뒤/.test(error.message));
   const { challenge } = await act(brewer, { type: 'knock-start', host: host.uid });
   assert.ok(challenge.id);
+});
+
+test('chat history lines can only be added together with a new rate-limited chat line', async () => {
+  const [talker, other] = await Promise.all(['수다', '옆집'].map(player));
+  const base = `http://${process.env.FIREBASE_DATABASE_EMULATOR_HOST}`, ns = 'ns=demo-trick-or-treat-default-rtdb';
+  const patch = async (who, body) => (await fetch(`${base}/.json?${ns}&auth=${who.token}`, { method: 'PATCH', body: JSON.stringify(body) })).status;
+  const at = { '.sv': 'timestamp' };
+  const chat = (id, text = '안녕') => ({ [`chat/${talker.uid}`]: { id, kind: 'chat', text, v: 1, at } });
+  const log = (id, extra = {}) => ({ [`chatLog/${id}`]: { id, by: talker.uid, text: '안녕', v: 1, at, ...extra } });
+  const wait = () => new Promise((resolve) => setTimeout(resolve, 650));
+  const first = `-A${randomUUID().slice(0, 18)}`, second = `-B${randomUUID().slice(0, 18)}`, third = `-C${randomUUID().slice(0, 18)}`;
+
+  assert.equal(await patch(talker, { ...chat(first), ...log(first) }), 200);
+  assert.equal(await patch(talker, log(second)), 401, 'a history line without a new chat line');
+  await wait();
+  assert.equal(await patch(talker, { ...chat(second), ...log(second), ...log(third) }), 401, 'two history lines for one chat line');
+  assert.equal(await patch(talker, { ...chat(second), ...log(second, { by: other.uid }) }), 401, 'a line under someone else');
+  assert.equal(await patch(talker, { ...chat(second), ...log(second) }), 200);
+  assert.equal(await patch(talker, { ...chat(third), ...log(third) }), 401, 'faster than the chat rate limit');
+  assert.equal(await patch(other, { [`chatLog/${first}`]: null }), 401, 'nobody can delete history from the client');
+  const read = async (id) => (await fetch(`${base}/chatLog/${id}.json?${ns}&auth=${other.token}`)).json();
+  assert.equal((await read(first)).text, '안녕');
+  assert.equal((await read(second)).by, talker.uid);
+  assert.equal(await read(third), null);
 });
 
 test('the leaderboard is computed once per three minutes, shared through the CDN, and refuses cache-busting', async () => {

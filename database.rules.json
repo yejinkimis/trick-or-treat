@@ -44,6 +44,19 @@
         "$other": { ".validate": false }
       }
     },
+    "chatLog": {
+      ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",
+      "$id": {
+        ".write": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true && !data.exists() && newData.exists() && root.child('chat').child(auth.uid).child('id').val() != $id && newData.parent().parent().child('chat').child(auth.uid).child('id').val() == $id",
+        ".validate": "newData.hasChildren(['id','by','text','v','at'])",
+        "id": { ".validate": "newData.val() == $id" },
+        "by": { ".validate": "newData.val() == auth.uid" },
+        "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 60" },
+        "v": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 9999" },
+        "at": { ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 1000" },
+        "$other": { ".validate": false }
+      }
+    },
     "events": {
       "$village": {
         ".read": "auth != null && root.child('bannedUsers').child(auth.uid).val() !== true",

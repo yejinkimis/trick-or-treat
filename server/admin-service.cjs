@@ -113,8 +113,11 @@ async function moderate(authorization, input) {
     });
     detail = { host, guest, at };
   } else {
-    if (typeof input.chatId !== 'string') reject(400, 'invalid-chat', '삭제할 채팅을 확인해 주세요.');
+    if (typeof input.chatId !== 'string' || !/^[\w-]{1,80}$/.test(input.chatId)) reject(400, 'invalid-chat', '삭제할 채팅을 확인해 주세요.');
     await database.ref(`chat/${target}`).transaction((current) => current === null || current.id === input.chatId ? null : undefined);
+    // 채팅 기록에 남은 같은 줄도 지운다. 다른 사람의 줄은 id가 같아도 건드리지 않는다.
+    const logRef = database.ref(`chatLog/${input.chatId}`);
+    if ((await logRef.get()).val()?.by === target) await logRef.remove();
     detail = { deletedChat: true };
   }
   if (['ban', 'unban', 'rank'].includes(type)) {
