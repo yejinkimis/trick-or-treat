@@ -9,7 +9,7 @@ const { hourOf } = require('./watch.cjs');
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 // 사탕 잡기에 실패하면 사탕은 그대로 두고 장난 하나를 당한다. 화면의 TRICKS와 이름이 같아야 한다.
 const TRICK_KINDS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
-const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 10 * 60 * 1000;
+const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 5 * 60 * 1000;
 const BREW_TABLE = [{ n: 0, weight: 20 }, { n: 2, weight: 50 }, { n: 5, weight: 30 }];
 const hasBasket = (player) => player.basket === true || (player.pumpkins || 0) >= BASKET_PUMPKINS;
 // 호박은 서버가 밭에 심어 둔 것만 딸 수 있다. 화면은 자리 번호(s)를 마을 풀밭 칸으로 바꿔 그린다.
