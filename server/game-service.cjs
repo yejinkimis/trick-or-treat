@@ -7,6 +7,7 @@ const { pickGame, evaluateChallenge } = require('./minigames.cjs');
 const { readVillagePlan, announceNewcomer } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 const { rainSchedule, checkDrop } = require('./candy-rain.cjs');
+const { RICH_TOP, raidSchedule, raidActive, raidTake } = require('./rich-raid.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 const ITEMS = Object.freeze({
@@ -252,7 +253,7 @@ async function session(authorization) {
     return home || plan.latest;
   }, { maxAttempts: 20 });
   if (newcomer) await announceNewcomer(services().database, newcomer);
-  return { isAdmin: isAdmin(profile.uid), uid: profile.uid, village, rain: rainSchedule() };
+  return { isAdmin: isAdmin(profile.uid), uid: profile.uid, village, rain: rainSchedule(), raid: raidSchedule() };
 }
 
 async function action(authorization, input) {
@@ -265,6 +266,8 @@ async function action(authorization, input) {
   const privateRef = db.collection('gamePrivate').doc(uid);
   const challengeRef = db.collection('gameChallenges').doc(uid);
   let brewNews = null;
+  const richHosts = input.type === 'knock-finish' && raidActive(Date.now())
+    ? new Set((await leaderboard()).players.slice(0, RICH_TOP).map((p) => p.id)) : null;
   const done = await db.runTransaction(async (tx) => {
     brewNews = null;
     const remembered = input.type === 'harvest' || input.type === 'rain-pick' ? recentEvent(Date.now()) : null;
@@ -652,23 +655,25 @@ async function action(authorization, input) {
         const hostCount = balance(hostDoc.data(), event, now);
         const protectedByGuard = win && (Number(hostDoc.data().guardUntil) || 0) > now;
         const moved = win && !protectedByGuard && hostCount > 0;
+        const rich = moved && Boolean(richHosts?.has(challenge.host)) && raidActive(now);
+        const take = !moved ? 0 : rich ? raidTake(hostCount) : 1;
         const nextLevelByHost = challenge.streakRound === round && challenge.nextLevelByHost
           ? { ...challenge.nextLevelByHost } : {};
         if (win) nextLevelByHost[challenge.host] = Math.min(MAX_LEVEL, challenge.level + 1);
         else delete nextLevelByHost[challenge.host];
         const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level,
-          ...(protectedByGuard ? { protected: true } : {}),
+          ...(protectedByGuard ? { protected: true } : {}), ...(rich ? { rich: true, n: take } : {}),
           ...(win ? {} : { k: TRICK_KINDS[randomInt(TRICK_KINDS.length)] }) };
-        const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now,
+        const playerUpdate = { round, candies: count + take, knockAt: now,
           challenges: [...(player.challenges || []), { at: now, h: challenge.host, w: win, ms: outcome.at, lv: challenge.level, m: moved, ...(challenge.game ? { g: challenge.game } : {}) }].slice(-MAX_CHALLENGE_LOG) };
         // 실패도 남겨야 마을 사람들 화면에 낙서·똥 같은 장난이 보인다.
         playerUpdate.knocks = [...(player.knocks || []), entry].slice(-100);
         tx.update(playerRef, playerUpdate);
-        if (win) tx.update(hostRef, { ...(moved ? { round, candies: hostCount - 1 } : {}),
+        if (win) tx.update(hostRef, { ...(moved ? { round, candies: hostCount - take } : {}),
           guests: withGuest(hostDoc.data(), { ...entry, v: uid, nick: player.nick }) });
         tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
         tx.delete(lockRef);
-        result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
+        result = { entry, candies: count + take, hostCandies: hostCount - take };
         activityDetails = { durationMs: outcome.at, candyDelta: result.candies - count, hostCandyDelta: result.hostCandies - hostCount };
       } else if (type === 'knock-leave') {
         const challengeDoc = await tx.get(challengeRef);

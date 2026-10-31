@@ -1621,6 +1621,7 @@ function draw() {
     if (s.owner) {
       const n = candiesOf(s.owner);
       if ((Number(S.players[s.owner]?.guardUntil) || 0) > now) label('보호 중', s.hx * T + 32, s.hy * T - 14, '#79a6e6', 0.7);
+      else if (S.richIds?.has(s.owner)) label('부자 털기!', s.hx * T + 32, s.hy * T - 14, '#ffd166', 0.7);
       label(`${nameOf(s.owner)}네`, s.hx * T + 32, s.hy * T - 6, s.owner === S.me ? '#ffd166' : '#fff4e2');
       label(`사탕 ${n}`, s.hx * T + 32, s.hy * T + 3, n ? '#8bd450' : '#ff6fa8', 0.7);
     } else {
@@ -1666,6 +1667,7 @@ function frame(now) {
     hudSecond = sec;
     noticeEventTurn();
     noticeRain();
+    noticeRaid();
     renderHud();
     renderAction();
     S.account?.promptDuel?.();
@@ -1882,6 +1884,26 @@ function noticeRain() {
     if (phase === 'end' && now < r.at + r.ms + r.life + 30000) toast('사탕 비가 그쳤어요.');
   }
 }
+// 부자 털기: 시간 동안 순위 상위 5명의 집에 표시를 단다. 실제로 털리는 집은 서버가 순위표로 정한다.
+const RICH_TOP = 5;
+const activeRaid = (now) => (S.mode === 'firebase' && eventState() !== 'ended' ? (S.raid || []).find((r) => now >= r.at && now < r.at + r.ms) : null);
+function noticeRaid() {
+  const now = serverNowMs(), raid = activeRaid(now);
+  S.richIds = raid ? new Set(ranking().slice(0, RICH_TOP).map((r) => r.id)) : null;
+  if (S.mode !== 'firebase' || eventState() === 'ended') return;
+  for (const r of S.raid || []) {
+    const phase = now >= r.at + r.ms ? 'end' : now >= r.at ? 'start' : now >= r.at - 60000 ? 'soon' : null;
+    if (!phase || rainNoticed.has(`raid:${r.at}:${phase}`)) continue;
+    rainNoticed.add(`raid:${r.at}:${phase}`);
+    if (phase === 'soon') toast(`1분 뒤 부자 털기! 상위 ${RICH_TOP}명 집 노크에 성공하면 그 집 사탕의 5~10%를 가져와요.`, { duration: 5000 });
+    if (phase === 'start') toast(`부자 털기 시작! '부자 털기!' 표시가 붙은 집에서 성공하면 사탕을 왕창 가져와요.`, { duration: 5000 });
+    if (phase === 'end' && now < r.at + r.ms + 30000) toast('부자 털기가 끝났어요.');
+  }
+}
+const raidLine = () => {
+  const now = serverNowMs(), raid = activeRaid(now);
+  return raid ? ` · 부자 털기 ${fmtLeft(raid.at + raid.ms - now)} 남음` : '';
+};
 const rainLine = () => {
   const now = serverNowMs(), rain = activeRain(now);
   return rain && now < rain.at + rain.ms ? ` · 사탕 비 ${fmtLeft(rain.at + rain.ms - now)} 남음` : '';
@@ -2119,7 +2141,7 @@ function eventLine() {
     const top = list[0];
     return top ? `이벤트 끝 · 우승 ${nameOf(top.id)} (사탕 ${top.n}개)${mine}` : '이벤트 끝';
   }
-  return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${rainLine()}${mine}`;
+  return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${rainLine()}${raidLine()}${mine}`;
 }
 // 별도 퀘스트 잔액을 저장하지 않고 기존 호박 수와 노크 기록으로 진행도를 복원한다.
 function renderQuest() {
@@ -2435,7 +2457,7 @@ const trickBook = (k) => TRICKS[k.k]?.book || (k.t ? `${k.t} 당함` : '장난 �
 function bookLine(k) {
   const fx = TRICKS[k.k] ? ` + ${TRICKS[k.k].book}` : '';
   if (k.r === 'win') return k.protected ? '<span class="tag treat">수호</span> 호박 수호 부적이 사탕을 지킴'
-    : wasMoved(k) ? '<span class="tag trick">털림</span> 사탕 잡기에 성공해 1개 가져감' : '<span class="tag treat">무사</span> 성공했지만 우리 집에 사탕이 없었음';
+    : wasMoved(k) ? `<span class="tag trick">털림</span> ${k.rich ? '부자 털기! ' : ''}사탕 잡기에 성공해 ${k.n || 1}개 가져감` : '<span class="tag treat">무사</span> 성공했지만 우리 집에 사탕이 없었음';
   if (k.r === 'lose') return k.k
     ? `<span class="tag treat">무사</span> 사탕 잡기에 실패해 장난 당함${esc(fx)}`
     : '<span class="tag treat">무사</span> 사탕 잡기에 실패해 아무 일도 일어나지 않음';
@@ -2444,7 +2466,7 @@ function bookLine(k) {
 }
 function knockNews(k) {
   if (k.r === 'win') return k.protected ? '호박 수호 부적이 집을 지켜 사탕을 가져가지 못함'
-    : wasMoved(k) ? '사탕 잡기에 성공해 사탕 1개 가져감' : '성공했지만 줄 사탕이 없었음';
+    : wasMoved(k) ? `${k.rich ? '부자 털기! ' : ''}사탕 잡기에 성공해 사탕 ${k.n || 1}개 가져감` : '성공했지만 줄 사탕이 없었음';
   if (k.r === 'lose') return k.k ? `사탕 잡기에 실패해 ${trickBook(k)}` : '사탕 잡기에 실패해 아무 일도 일어나지 않음';
   return k.r === 'treat' ? '사탕 줌' : trickBook(k);
 }
@@ -3924,8 +3946,9 @@ async function knock(slot) {
   await say('나', 'Trick or treat!');
   if (hit && moved) {
     await say(hostName, treatLine(me.costume));
-    fly(doorPoint, head);
-    await say('TREAT!', `${hostName}에게서 사탕 1개 가져옴! 내 사탕 +1 · 지금 ${candiesOf(S.me)}개`, 'sys');
+    const n = entry.n || 1;
+    for (let i = 0; i < Math.min(n, 5); i++) setTimeout(() => fly(doorPoint, head), i * 120);
+    await say(entry.rich ? '부자 털기!' : 'TREAT!', `${hostName}에게서 사탕 ${n}개 가져옴! 내 사탕 +${n} · 지금 ${candiesOf(S.me)}개`, 'sys');
   } else if (hit) {
     await say(hostName, entry.protected ? '호박 수호 부적이 우리 집을 지켜 줬어.' : '성공했지만 우리 집 사탕은 다 떨어졌어.');
   } else {
@@ -4525,7 +4548,7 @@ async function connectFirebaseGame(uid) {
   const a = S.account, fs = a.firestoreSdk, rt = a.databaseSdk;
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
-  S.mode = 'firebase'; S.isOwner = session.isAdmin; S.rain = Array.isArray(session.rain) ? session.rain : []; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
+  S.mode = 'firebase'; S.isOwner = session.isAdmin; S.rain = Array.isArray(session.rain) ? session.rain : []; S.raid = Array.isArray(session.raid) ? session.raid : []; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
   duelStartTimers.forEach(clearTimeout);
   duelStartTimers = [];
   Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [], announcement: null, announcementUnread: false, duels: [], duel: null, duelActionPending: false, dismissedDuelIds: new Set(), duelExpiryRequestedIds: new Set(), duelStartId: null, duelReadyUntil: 0 });

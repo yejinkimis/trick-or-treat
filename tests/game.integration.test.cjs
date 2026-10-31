@@ -487,6 +487,37 @@ test('candy rain gives one candy per fallen drop, each once, only while it lies 
   }
 });
 
+test('during the rich raid a win at a top-five house takes five to ten percent, and other houses still give one', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, raider, rich, poor] = await Promise.all(['털이관', '도둑', '부자', '서민'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const { event } = await act(admin, { type: 'event-start' });
+  const players = services().db.collection('gamePlayers');
+  process.env.GAME_RICH_RAID_AT = `${new Date(Date.now() - 60000).toISOString()}/10`;
+  assert.equal((await session(raider.authorization)).raid.length, 1);
+  await Promise.all([
+    players.doc(raider.uid).update({ basket: true, round: event.id, candies: 0 }),
+    players.doc(rich.uid).update({ round: event.id, candies: 100000 }),
+    players.doc(poor.uid).update({ round: event.id, candies: 0 }),
+  ]);
+  try {
+    await leaderboard(Date.now() + LEADERBOARD_MS);
+    const big = await act(raider, { type: 'knock-finish', ...(await winningChallenge(raider, rich)) });
+    assert.equal(big.entry.rich, true);
+    assert.ok(big.entry.n >= 5000 && big.entry.n <= 10000, `took ${big.entry.n}`);
+    assert.equal(big.candies, big.entry.n);
+    assert.equal((await saved(rich)).candies, 100000 - big.entry.n);
+    await players.doc(raider.uid).update({ knockAt: 0 });
+    await players.doc(poor.uid).update({ candies: 3 });
+    const small = await act(raider, { type: 'knock-finish', ...(await winningChallenge(raider, poor)) });
+    assert.equal(small.entry.rich, undefined, 'a house outside the top five gives one candy as usual');
+    assert.equal(small.candies, big.entry.n + 1);
+  } finally {
+    delete process.env.GAME_RICH_RAID_AT;
+    await services().db.doc('game/event').delete();
+  }
+});
+
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {
   const [p, other] = await Promise.all([player('규'), player('남')]);
   const base = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-trick-or-treat/databases/(default)/documents`;

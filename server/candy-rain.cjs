@@ -4,11 +4,15 @@
 const RAIN_MIN = 10, DROP_EVERY_MS = 4 * 1000, DROP_LIFE_MS = 20 * 1000, PICK_SLACK_MS = 2000;
 const DEFAULT_RAIN_AT = '2026-10-31T22:30:00+09:00/90';
 
+function scheduleOf(text, defaultMin) {
+  return text.split(',').map((item) => {
+    const [start, min = defaultMin] = item.trim().split('/');
+    return { at: Date.parse(start), ms: Number(min) * 60 * 1000 };
+  }).filter((span) => Number.isFinite(span.at) && span.ms > 0).sort((a, b) => a.at - b.at);
+}
+
 function rainSchedule() {
-  return (process.env.GAME_CANDY_RAIN_AT ?? DEFAULT_RAIN_AT).split(',').map((text) => {
-    const [start, min = RAIN_MIN] = text.trim().split('/');
-    return { at: Date.parse(start), ms: Number(min) * 60 * 1000, every: DROP_EVERY_MS, life: DROP_LIFE_MS };
-  }).filter((rain) => Number.isFinite(rain.at) && rain.ms > 0).sort((a, b) => a.at - b.at);
+  return scheduleOf(process.env.GAME_CANDY_RAIN_AT ?? DEFAULT_RAIN_AT, RAIN_MIN).map((span) => ({ ...span, every: DROP_EVERY_MS, life: DROP_LIFE_MS }));
 }
 
 // 사탕 번호는 '비 시작 시각-순번'이다. 떨어진 뒤 녹기 전까지만 주울 수 있다.
@@ -23,4 +27,4 @@ function checkDrop(id, now, schedule = rainSchedule()) {
   return { rain: rain.at, i };
 }
 
-module.exports = { rainSchedule, checkDrop };
+module.exports = { scheduleOf, rainSchedule, checkDrop };
