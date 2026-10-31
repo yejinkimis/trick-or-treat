@@ -26,7 +26,7 @@ function miniPlan(game, level, seed) {
       items.push({ t, k, from: t, to: t + show, bad: i > 0 && random() < .35 });
       t += between(550 - L * 60, 900 - L * 80);
     }
-    const allowed = Math.max(1, 4 - L);
+    const allowed = Math.max(0, 3 - L);
     return { items, need: items.filter((item) => !item.bad).length - allowed, allowed, end: items[items.length - 1].to };
   }
   if (game === 'spell') {
