@@ -37,6 +37,7 @@ const roundOf = (event, now = Date.now()) => (event?.id && now >= (event.started
 const EVENT_MAX_MS = 48 * 60 * 60 * 1000;
 // 잠금은 신호가 끊기거나 도전 시작 후 90초가 지나면 풀린다. 끝나는 순간의 요청이 늦게 와도 받도록 정산에는 여유를 둔다.
 const FINISH_SLACK_MS = 10 * 1000;
+const KNOCK_EARLY_LEAVE_MS = 5 * 1000;
 const lockAlive = (lock, now, slack = 0) => Boolean(lock?.createdAt)
   && now - (lock.heartbeatAt || lock.createdAt) < CHALLENGE_LOCK_TTL_MS && now - lock.createdAt < CHALLENGE_MAX_MS + slack;
 const balance = (player, event, now = Date.now()) => player.round === roundOf(event, now) ? player.candies : 10;
@@ -181,7 +182,7 @@ async function action(authorization, input) {
       }
     } else {
       if (!player.costume) fail('분장을 먼저 골라 주세요.');
-      if (event && event.endsAt <= now) fail('이벤트가 끝났어요. 결과가 보존됩니다.');
+      if (event && event.endsAt <= now && type !== 'knock-leave') fail('이벤트가 끝났어요. 결과가 보존됩니다.');
       if (type === 'harvest') {
         if (now - (mine.harvestAt || 0) < 1500) fail('조금 뒤 다른 호박을 따 주세요.', 429);
         if ((player.pumpkins || 0) >= PUMPKIN_HOLD_MAX) fail(`바구니가 꽉 찼어요. 호박은 ${PUMPKIN_HOLD_MAX}개까지 들 수 있어요.`);
@@ -316,11 +317,42 @@ async function action(authorization, input) {
         tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
         tx.delete(lockRef);
         result = { entry, candies: count + (moved ? 1 : 0), hostCandies: hostCount - (moved ? 1 : 0) };
+      } else if (type === 'knock-leave') {
+        const challengeDoc = await tx.get(challengeRef);
+        const challenge = challengeDoc.exists ? challengeDoc.data() : null;
+        if (!challenge || challenge.id !== input.challengeId || challenge.used || challenge.round !== round) fail('도전이 끝났거나 다시 시작됐어요. 다시 시도해 주세요.');
+        const hostRef = db.collection('gamePlayers').doc(challenge.host);
+        const lockRef = db.collection('gameHouseLocks').doc(challenge.host);
+        const [hostDoc, lockDoc] = await Promise.all([tx.get(hostRef), tx.get(lockRef)]);
+        if (!hostDoc.exists) fail('집을 찾을 수 없어요.');
+        if (hostDoc.data().houseHidden || hostDoc.data().banned) fail('운영자가 이 집의 도전을 중단했어요.');
+        const lock = lockDoc.exists ? lockDoc.data() : null;
+        if (lock?.challengeId !== challenge.id || lock.challengerUid !== uid || lock.round !== round) {
+          fail('이 도전은 더 이상 유효하지 않아요. 다시 노크해 주세요.');
+        }
+        const elapsedMs = Math.max(0, now - challenge.createdAt);
+        const nextLevelByHost = challenge.streakRound === round && challenge.nextLevelByHost
+          ? { ...challenge.nextLevelByHost } : {};
+        if (elapsedMs < KNOCK_EARLY_LEAVE_MS) {
+          tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
+          tx.delete(lockRef);
+          result = { left: true, penalized: false, elapsedMs, level: challenge.level, host: challenge.host };
+        } else {
+          const entry = { h: challenge.host, r: 'lose', at: now, c: player.costume, round, moved: false, level: challenge.level,
+            abandoned: true, k: TRICK_KINDS[randomInt(TRICK_KINDS.length)] };
+          tx.update(playerRef, { round, candies: count, knockAt: now,
+            challenges: [...(player.challenges || []), { at: now, h: challenge.host, w: false, ms: elapsedMs, lv: challenge.level, m: false }].slice(-MAX_CHALLENGE_LOG),
+            knocks: [...(player.knocks || []), entry].slice(-100) });
+          tx.update(challengeRef, { used: true, nextLevelByHost, streakRound: round });
+          tx.delete(lockRef);
+          result = { left: true, penalized: true, elapsedMs, level: challenge.level, host: challenge.host, entry, candies: count };
+        }
       } else fail('지원하지 않는 행동이에요.');
     }
     if (type !== 'knock-heartbeat') {
       const activity = { uid, type, at: now, round, ...(typeof input.host === 'string' && /^[a-f0-9]{32}$/.test(input.host) ? { host: input.host } : {}),
-        ...(type === 'knock-finish' && result.entry ? { host: result.entry.h, outcome: result.entry.r, moved: result.entry.moved, level: result.entry.level } : {}) };
+        ...(type === 'knock-finish' && result.entry ? { host: result.entry.h, outcome: result.entry.r, moved: result.entry.moved, level: result.entry.level } : {}),
+        ...(type === 'knock-leave' ? { host: result.host, outcome: result.penalized ? 'lose' : 'quit', moved: false, level: result.level } : {}) };
       tx.set(privateRef, { ...mine, ...privateUpdate,
         receipts: [...(mine.receipts || []), { id: input.requestId, result }].slice(-MAX_RECEIPTS),
         activity: [...(mine.activity || []), activity].slice(-MAX_ACTIVITY) });
