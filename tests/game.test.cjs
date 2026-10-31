@@ -1024,8 +1024,9 @@ function village(g) {
 
 test('the village panel stays on screen with online counts and buttons to the other villages', () => {
   const g = game(); village(g);
-  g.run(`S.online = [{ by: 'me', presence: { v: 1 } }, { by: 'near', presence: { v: 1 } }, { by: 'far', presence: { v: 2 } }]; renderHud();`);
-  assert.equal(g.elements.get('vmap').hidden, false);
+  g.run(`ghosts.set('near:1', { by: 'near', x: 100, y: 100 });
+    S.online = [{ by: 'me', presence: { v: 1 } }, { by: 'near', presence: { v: 1 } }, { by: 'gone', presence: { v: 1 } }, { by: 'far', presence: { v: 2 } }]; renderHud();`);
+  assert.equal(g.elements.get('vmap').hidden, false, 'someone still in the online list but not on the map is not counted here');
   const list = g.elements.get('vmap-list').innerHTML;
   assert.match(list, /^<p class="vmap-end">▲ 1번에서 위로 가면 3번<\/p><div class="vmap-node here" aria-current="true"><span>1\. 태초마을 · 여기<\/span><b>2명<\/b><\/div><span class="vmap-link" aria-hidden="true">▼<\/span>/);
   assert.match(list, /data-go="2"><span>2\. 구리마을<\/span><b>1명<\/b><\/button><span class="vmap-link" aria-hidden="true">▼<\/span><button class="vmap-node" type="button" data-go="3">/);
@@ -1186,7 +1187,7 @@ test('a new chat line is appended without redrawing the history, and trimming ke
 
 test('the village map lists villages top to bottom in sign order and travels to the chosen one', async () => {
   const g = game(); village(g);
-  g.run(`S.online = [
+  g.run(`ghosts.set('near:1', { by: 'near', x: 100, y: 100 }); S.online = [
     { by: 'far', presence: { v: 2, at: 1 } }, { by: 'me', presence: { v: 1, at: 1 } }, { by: 'near', presence: { v: 1, at: 1 } },
   ]; S.networkConnected = true; openModal('online'); renderHud();
     var entered = []; S.room = { peers: () => [], presence: async () => {}, enterVillage: async (n) => { entered.push(n); S.village = n; } };`);
