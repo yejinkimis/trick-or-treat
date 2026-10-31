@@ -508,6 +508,7 @@ test('during the rich raid a win at a top-five house takes five to ten percent, 
     assert.equal(big.candies, big.entry.n);
     assert.equal((await saved(rich)).candies, 100000 - big.entry.n);
     await players.doc(raider.uid).update({ knockAt: 0 });
+    await assert.rejects(act(raider, { type: 'knock-start', host: rich.uid }), (e) => e.status === 429 && /3분에 한 번/.test(e.message), 'the same rich house waits three minutes');
     await players.doc(poor.uid).update({ candies: 3 });
     const small = await act(raider, { type: 'knock-finish', ...(await winningChallenge(raider, poor)) });
     assert.equal(small.entry.rich, undefined, 'a house outside the top five gives one candy as usual');

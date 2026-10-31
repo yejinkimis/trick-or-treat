@@ -7,7 +7,7 @@ const { pickGame, evaluateChallenge } = require('./minigames.cjs');
 const { readVillagePlan, announceNewcomer } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 const { rainSchedule, checkDrop } = require('./candy-rain.cjs');
-const { RICH_TOP, raidSchedule, raidActive, raidTake } = require('./rich-raid.cjs');
+const { RICH_TOP, RAID_COOLDOWN_MS, raidSchedule, raidActive, raidTake } = require('./rich-raid.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
 const ITEMS = Object.freeze({
@@ -266,7 +266,7 @@ async function action(authorization, input) {
   const privateRef = db.collection('gamePrivate').doc(uid);
   const challengeRef = db.collection('gameChallenges').doc(uid);
   let brewNews = null;
-  const richHosts = input.type === 'knock-finish' && raidActive(Date.now())
+  const richHosts = (input.type === 'knock-start' || input.type === 'knock-finish') && raidActive(Date.now())
     ? new Set((await leaderboard()).players.slice(0, RICH_TOP).map((p) => p.id)) : null;
   const done = await db.runTransaction(async (tx) => {
     brewNews = null;
@@ -596,6 +596,11 @@ async function action(authorization, input) {
         if (!host.exists || !host.data().costume || host.data().houseHidden || host.data().banned) fail('집을 찾을 수 없어요.');
         if ((Number(host.data().guardUntil) || 0) > now) fail('호박 수호 부적이 이 집을 지키고 있어요.', 429);
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
+        if (richHosts?.has(input.host) && raidActive(now)) {
+          const last = Math.max(0, ...(player.challenges || []).filter((item) => item.h === input.host).map((item) => item.at));
+          const wait = Math.ceil((last + RAID_COOLDOWN_MS - now) / 1000);
+          if (wait > 0) fail(`부자 털기 중에는 같은 집에 3분에 한 번만 노크할 수 있어요. ${Math.floor(wait / 60)}분 ${wait % 60}초 뒤 다시 와 주세요.`, 429);
+        }
         const prior = pending.exists ? pending.data() : {};
         const priorAge = now - (prior.createdAt || 0);
         const priorIsUnfinished = prior.expiresAt ? prior.expiresAt > now : priorAge < STALE_CHALLENGE_MS;

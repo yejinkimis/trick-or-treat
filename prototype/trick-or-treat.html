@@ -1896,7 +1896,7 @@ function noticeRaid() {
     if (!phase || rainNoticed.has(`raid:${r.at}:${phase}`)) continue;
     rainNoticed.add(`raid:${r.at}:${phase}`);
     if (phase === 'soon') toast(`1분 뒤 부자 털기! 상위 ${RICH_TOP}명 집 노크에 성공하면 그 집 사탕의 5~10%를 가져와요.`, { duration: 5000 });
-    if (phase === 'start') toast(`부자 털기 시작! '부자 털기!' 표시가 붙은 집에서 성공하면 사탕을 왕창 가져와요.`, { duration: 5000 });
+    if (phase === 'start') toast(`부자 털기 시작! '부자 털기!' 표시가 붙은 집에서 성공하면 사탕을 왕창 가져와요. 같은 집은 3분에 한 번이에요.`, { duration: 5000 });
     if (phase === 'end' && now < r.at + r.ms + 30000) toast('부자 털기가 끝났어요.');
   }
 }
