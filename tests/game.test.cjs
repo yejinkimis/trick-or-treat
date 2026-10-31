@@ -1291,7 +1291,7 @@ test('the rank board shows the top three and my place, and the board and quest f
   assert.equal(g.elements.get('board').classList.contains('folded'), false);
   assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3');
   g.run(`const mode = S.mode; S.mode = 'firebase'; S.rankList = [{ id: 'me', n: 10, costume: 'pumpkin' }]; renderBoard(); S.mode = mode`);
-  assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3 (3분마다 갱신)');
+  assert.equal(g.elements.get('board-label').textContent, '사탕 순위 TOP 3 (1분마다 갱신)');
   press({ id: '', dataset: { fold: 'quest' } });
   assert.equal(g.elements.get('quest').classList.contains('folded'), true);
   assert.match(g.elements.get('quest-label').textContent, /진행 중인 퀘스트 · 호박 바구니 만들기/);

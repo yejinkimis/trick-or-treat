@@ -55,7 +55,7 @@ async function finalResults(tx, db, event, cutoff) {
   return rankPlayers((await tx.get(db.collection('gamePlayers'))).docs, event, cutoff, true);
 }
 
-const LEADERBOARD_MS = 3 * 60 * 1000;
+const LEADERBOARD_MS = 60 * 1000;
 let leaderboardMemo = null;
 // 호박은 1.5초마다 딸 수 있어 가장 자주 오는 요청이다. 호박 따기만 다른 요청이 방금 읽은 이벤트를 10초 동안 다시 쓴다.
 // 이벤트가 시간이 되어 끝나는 건 기억한 종료 시각으로 바로 막히고, 운영자가 바꾼 이벤트는 늦어도 10초 뒤 반영된다.
@@ -63,7 +63,7 @@ const EVENT_MEMO_MS = 10 * 1000;
 let eventMemo = null;
 const rememberEvent = (event, at = Date.now()) => { eventMemo = { at, event }; return event; };
 const recentEvent = (now) => (eventMemo && now - eventMemo.at < EVENT_MEMO_MS ? eventMemo : null);
-// 접속자 수와 관계없이 전체 플레이어 읽기가 3분에 한 번을 넘지 않도록 서버와 CDN이 같은 결과를 나눠 준다.
+// 접속자 수와 관계없이 전체 플레이어 읽기가 1분에 한 번을 넘지 않도록 서버와 CDN이 같은 결과를 나눠 준다.
 async function leaderboard(now = Date.now()) {
   if (leaderboardMemo && now - leaderboardMemo.at < LEADERBOARD_MS) return leaderboardMemo;
   const { db } = services();
