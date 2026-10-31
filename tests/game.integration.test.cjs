@@ -217,6 +217,33 @@ test('server stores atomic candy transfers, deduplicates retries, resets rounds 
   await act(owner, { type: 'event-stop' });
 });
 
+test('a knock picks a random mini game the page can play and settles it on the server', async (t) => {
+  const { miniPlan } = require('../server/minigames.cjs');
+  const [owner, visitor, host] = await Promise.all(['운', '놀', '집'].map(player));
+  process.env.GAME_ADMIN_UIDS = owner.uid;
+  await services().db.collection('gamePlayers').doc(visitor.uid).update({ basket: true });
+  await act(owner, { type: 'event-start' });
+  t.after(async () => { delete process.env.GAME_MINIGAMES; process.env.GAME_ADMIN_UIDS = owner.uid; await act(owner, { type: 'event-stop' }); });
+  const old = (await act(visitor, { type: 'knock-start', host: host.uid })).challenge;
+  assert.equal(old.game, 'fish', 'a page without mini games keeps fishing');
+  await act(visitor, { type: 'knock-leave', challengeId: old.id });
+  process.env.GAME_MINIGAMES = 'whack';
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  const { challenge } = await act(visitor, { type: 'knock-start', host: host.uid, games: ['whack', 'spell', 'catch'] });
+  assert.equal(challenge.game, 'whack');
+  await services().db.collection('gameChallenges').doc(visitor.uid).update({ createdAt: Date.now() - 30000 });
+  let previous = 0;
+  const inputs = miniPlan('whack', challenge.level, challenge.seed).items.filter((item) => !item.bad).flatMap((item) => {
+    const tick = Math.ceil((item.from + 100) / 20), packed = [tick - previous, item.k];
+    previous = tick;
+    return packed;
+  });
+  const finish = await act(visitor, { type: 'knock-finish', challengeId: challenge.id, inputs, elapsedMs: 30000 });
+  assert.equal(finish.entry.r, 'win');
+  assert.equal(finish.candies, 11);
+  assert.equal((await saved(visitor)).challenges.at(-1).g, 'whack');
+});
+
 test('event stop and a winning candy transfer are serialized at the round boundary', async () => {
   const [owner, visitor, host] = await Promise.all(['운영', '도전', '집'].map(player));
   process.env.GAME_ADMIN_UIDS = owner.uid;

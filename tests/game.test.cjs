@@ -33,6 +33,7 @@ function game({ reducedMotion = true, storage } = {}) {
       addEventListener(type, fn) { this.listeners[type] = fn; }, setPointerCapture() {}, focus() { document.activeElement = this; }, blur() { document.activeElement = null; },
       querySelector: () => element('', 'button'), querySelectorAll: () => [],
       insertAdjacentHTML(position, markup) { this.innerHTML += markup; }, scrollTop: 0, scrollHeight: 0,
+      children: [], append(...kids) { this.children.push(...kids); }, replaceChildren() { this.children = []; },
       firstChild: { textContent: '' },
     };
     Object.defineProperty(el, 'className', { get: () => [...classes].join(' '), set(value) { classes.clear(); value.split(/\s+/).forEach((x) => classes.add(x)); } });
@@ -484,6 +485,62 @@ test('letting the progress bar empty fails without a candy transfer', async () =
   g.fire(0);
   assert.equal((await result).won, false);
   assert.equal(g.elements.get('timing').hidden, true);
+});
+
+const minigames = require('../server/minigames.cjs');
+test('the page plans and judges every mini game exactly like the server', () => {
+  const g = game();
+  for (const name of ['whack', 'spell', 'catch']) {
+    for (const seed of [3, 4242, 0xfffffff0]) {
+      const level = seed % 5 + 1, plan = minigames.miniPlan(name, level, seed);
+      assert.deepEqual(JSON.parse(g.run(`JSON.stringify(miniPlan('${name}', ${level}, ${seed}))`)), JSON.parse(JSON.stringify(plan)));
+      const taps = plan.items.slice(0, 6).map((item, i) => ({ t: 400 + i * 360, v: (item.k ?? i) % 3 }));
+      assert.deepEqual(JSON.parse(g.run(`JSON.stringify(miniJudge('${name}', miniPlan('${name}', ${level}, ${seed}), ${JSON.stringify(taps)}, 30000))`)),
+        JSON.parse(JSON.stringify(minigames.miniJudge(name, plan, taps, 30000))));
+    }
+  }
+});
+
+for (const name of ['whack', 'catch']) {
+  test(`a ${name} challenge played on the page sends input the server accepts as a win`, async () => {
+    const g = game();
+    const challenge = { game: name, level: 1, seed: 77, createdAt: 0 }, plan = minigames.miniPlan(name, 1, 77);
+    const result = g.run(`candyGame(${JSON.stringify(challenge)})`);
+    assert.equal(g.elements.get('mini').hidden, false);
+    assert.equal(g.elements.get('timing').hidden, true, 'the fishing box stays closed');
+    let dir = 0, x = .5;
+    for (let now = 20; now <= 60000 && g.run('S.miniControl !== null'); now += 20) {
+      g.setNow(now);
+      if (name === 'whack') {
+        const ghost = plan.items.find((item) => !item.bad && item.from + 100 <= now && now < item.from + 120);
+        if (ghost) g.run(`S.miniControl.key('${['KeyQ', 'KeyW', 'KeyE', 'KeyA', 'KeyS', 'KeyD', 'KeyZ', 'KeyX', 'KeyC'][ghost.k]}', true, false)`);
+      } else {
+        const goal = plan.items.find((item) => !item.bad && item.t >= now);
+        const want = !goal || Math.abs(goal.x - x) < .02 ? 0 : goal.x < x ? 1 : 2;
+        if (want !== dir) {
+          if (dir) g.run(`S.miniControl.key('${dir === 1 ? 'ArrowLeft' : 'ArrowRight'}', false)`);
+          if (want) g.run(`S.miniControl.key('${want === 1 ? 'ArrowLeft' : 'ArrowRight'}', true)`);
+          dir = want;
+        }
+        x = Math.max(0, Math.min(1, x + (want === 1 ? -1 : want === 2 ? 1 : 0) * plan.speed * .02));
+      }
+      [...g.frames.values()].at(-1)?.();
+    }
+    g.fire(0);
+    const attempt = await result;
+    assert.equal(attempt.won, true);
+    assert.equal(g.elements.get('mini').hidden, true);
+    const judged = minigames.evaluateChallenge(challenge, attempt.inputs, attempt.elapsedMs, 100000);
+    assert.deepEqual([judged.valid, judged.finished, judged.won], [true, true, true]);
+  });
+}
+
+test('Escape leaves a mini game as a quit', async () => {
+  const g = game();
+  const result = g.run(`candyGame({ game: 'spell', level: 2, seed: 5 })`);
+  g.run(`document.listeners.keydown({ key: 'Escape', code: 'Escape', preventDefault() {}, target: {} })`);
+  assert.equal((await result).quit, true);
+  assert.equal(g.run('S.miniControl'), null);
 });
 
 for (const won of [true, false]) {

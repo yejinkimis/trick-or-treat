@@ -68,3 +68,65 @@ test('a challenge still undecided at ninety seconds ends as a loss', () => {
   const after = evaluateCandyChallenge(hovering, [], CHALLENGE_MAX_MS, CHALLENGE_MAX_MS + 500);
   assert.deepEqual([after.valid, after.finished, after.won, after.timedOut, after.at], [true, true, false, true, CHALLENGE_MAX_MS]);
 });
+
+const { miniPlan, miniJudge, pickGame, evaluateChallenge } = require('../server/minigames.cjs');
+const encode = (taps) => { let prev = 0; return taps.flatMap(({ t, v }) => { const tick = Math.ceil(t / 20); const out = [tick - prev, v]; prev = tick; return out; }); };
+function bestPlay(game, plan) {
+  if (game === 'whack') return plan.items.filter((item) => !item.bad).map((item) => ({ t: item.from + 100, v: item.k }));
+  if (game === 'spell') return plan.items.map((item, i) => ({ t: plan.open + 300 * (i + 1), v: item.k }));
+  const taps = [];
+  let x = .5, dir = 0;
+  for (let time = 20; time <= plan.end; time += 20) {
+    const goal = plan.items.find((item) => !item.bad && item.t >= time);
+    const want = !goal || Math.abs(goal.x - x) < .02 ? 0 : goal.x < x ? 1 : 2;
+    if (want !== dir) { taps.push({ t: time, v: want }); dir = want; }
+    const step = want === 1 ? -1 : want === 2 ? 1 : 0;
+    x = Math.max(0, Math.min(1, x + step * plan.speed * 20 / 1000));
+  }
+  return taps;
+}
+
+test('every mini game is won by clean play and lost by doing nothing, on every level', () => {
+  for (const game of ['whack', 'spell', 'catch']) {
+    for (let level = 1; level <= 5; level++) {
+      for (const seed of [1, 99, 123456, 0xfffffff0]) {
+        const plan = miniPlan(game, level, seed);
+        const challenge = { game, level, seed, createdAt: 0 };
+        const won = evaluateChallenge(challenge, encode(bestPlay(game, plan)), 90000, 100000);
+        assert.deepEqual([game, level, seed, won.valid, won.finished, won.won], [game, level, seed, true, true, true]);
+        const idle = evaluateChallenge(challenge, [], 90000, 100000);
+        assert.deepEqual([game, idle.valid, idle.finished, idle.won], [game, true, true, false]);
+        assert.ok(idle.at < 60000, `${game} ${level} ends in time`);
+      }
+    }
+  }
+});
+
+test('mini games wait for the end, reject impossible input and fall back to fishing for old challenges', () => {
+  const challenge = { game: 'whack', level: 1, seed: 7, createdAt: 0 };
+  assert.equal(evaluateChallenge(challenge, [], 1000, 100000).finished, false);
+  assert.equal(evaluateChallenge(challenge, [1, 9], 1000, 100000).valid, false);
+  assert.equal(evaluateChallenge({ ...challenge, game: 'catch' }, [5, 0], 1000, 100000).valid, false);
+  assert.equal(evaluateChallenge(challenge, [], 9000, 5000).valid, false);
+  const spammed = evaluateChallenge(challenge, Array.from({ length: 200 }, (_, i) => (i % 2 ? (i >> 1) % 9 : 1)), 4000, 100000);
+  assert.deepEqual([spammed.finished, spammed.won], [true, false]);
+  const fishing = evaluateChallenge({ game: 'spell', level: 1, seed: 1, createdAt: 1000, path: [{ t: 0, y: .05 }, { t: 30000, y: .05 }] }, [1, 1], 6000, 8000);
+  assert.equal(fishing.won, true);
+});
+
+test('hitting poop in the ghost game counts as a mistake', () => {
+  const plan = miniPlan('whack', 1, 11), poop = plan.items.find((item) => item.bad);
+  const result = miniJudge('whack', plan, [{ t: poop.from + 100, v: poop.k }], poop.from + 120);
+  const idle = miniJudge('whack', plan, [], poop.from + 120);
+  assert.deepEqual([result.hits, result.misses - idle.misses, result.state[plan.items.indexOf(poop)]], [0, 1, 'miss']);
+  const skipped = miniJudge('whack', plan, [], poop.to + 20);
+  assert.equal(skipped.state[plan.items.indexOf(poop)], 'pass', 'letting poop go is fine');
+});
+
+test('the server only picks games the knocking page can play', () => {
+  assert.equal(pickGame(undefined), 'fish');
+  const seen = new Set(Array.from({ length: 200 }, () => pickGame(['rhythm', 'whack', 'spell', 'catch', 'nope'])));
+  assert.deepEqual([...seen].sort(), ['catch', 'fish', 'spell', 'whack']);
+  process.env.GAME_MINIGAMES = 'whack';
+  try { assert.equal(pickGame(['spell', 'whack']), 'whack'); } finally { delete process.env.GAME_MINIGAMES; }
+});
