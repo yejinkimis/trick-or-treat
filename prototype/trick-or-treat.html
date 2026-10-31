@@ -865,7 +865,7 @@ function computeLedger() {
     if (item) { bal[v] = Math.max(0, bal[v] - DECOR[item].price); continue; }
     if (itemPurchase) { bal[v] = Math.max(0, bal[v] - ITEMS[itemPurchase].price); continue; }
     // 실패는 장난만 받고 사탕은 옮기지 않는다.
-    if (k.r !== 'win' || bal[k.h] === undefined) continue;
+    if (k.r !== 'win' || k.protected || bal[k.h] === undefined) continue;
     if (bal[k.h] > 0) { bal[k.h] -= 1; bal[v] += 1; moved.add(k); }
   }
   return { bal, moved };
@@ -2154,6 +2154,22 @@ function ago(at) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+let itemActionPending = false;
+// 구매와 사용은 같은 보유 수를 바꾸므로 한 번에 하나만 처리한다.
+async function runItemAction(action) {
+  if (itemActionPending) return;
+  itemActionPending = true;
+  try {
+    refreshItemShop();
+    await action();
+  } finally {
+    itemActionPending = false;
+    refreshItemShop();
+  }
+}
+const buyItem = (key) => runItemAction(() => buyItemNow(key));
+const useItem = (key) => runItemAction(() => useItemNow(key));
+
 function itemInventory() {
   const saved = S.mode === 'firebase' ? S.ownPrivate?.inventory : S.players[S.me]?.inventory;
   return saved && typeof saved === 'object' ? saved : {};
@@ -2173,8 +2189,8 @@ function refreshItemShop() {
       : cooldown > 0 ? `보유 ${count}개 · 재사용 대기 ${fmtLeft(cooldown)}`
         : `보유 ${count}개 · 사용할 수 있어요`;
     const closed = eventState() === 'ended';
-    buy.disabled = S.readOnly || closed || candiesOf(S.me) < item.price;
-    use.disabled = S.readOnly || closed || count < 1 || active > 0 || cooldown > 0;
+    buy.disabled = itemActionPending || S.readOnly || closed || candiesOf(S.me) < item.price;
+    use.disabled = itemActionPending || S.readOnly || closed || count < 1 || active > 0 || cooldown > 0;
     use.textContent = active > 0 ? '수호 중' : cooldown > 0 ? '대기 중' : `사용 (${count})`;
   }
 }
@@ -2249,7 +2265,7 @@ async function buyDecor(key) {
   toast(`${it.name} 설치 완료! 사탕 ${it.price}개를 써서 순위에도 반영돼요.`);
 }
 
-async function buyItem(key) {
+async function buyItemNow(key) {
   const item = ITEMS[key], p = S.players[S.me];
   if (!item || !p?.costume || S.readOnly) return;
   if (eventState() === 'ended') { toast('이벤트가 끝나서 상점이 닫혔어요.'); return; }
@@ -2272,7 +2288,7 @@ async function buyItem(key) {
   toast(`${item.name}을 샀어요. 사탕 ${item.price}개를 썼어요.`);
 }
 
-async function useItem(key) {
+async function useItemNow(key) {
   const item = ITEMS[key], p = S.players[S.me];
   if (!item || !p?.costume || S.readOnly) return;
   if (eventState() === 'ended') { toast('이벤트가 끝나 아이템을 사용할 수 없어요.'); return; }
@@ -3222,8 +3238,10 @@ async function knock(slot) {
       if (hit) byHost[id] = Math.min(CANDY_MAX_LEVEL, localLevel + 1);
       else delete byHost[id];
       S.localKnockStreaks = { challenger: S.me, round, byHost };
-      const moved = hit && candiesOf(id) > 0;
+      const protectedByGuard = hit && (Number(S.players[id]?.guardUntil) || 0) > Date.now();
+      const moved = hit && !protectedByGuard && candiesOf(id) > 0;
       entry = { h: id, r: hit ? 'win' : 'lose', at: Date.now(), c: me.costume, moved, level: localLevel,
+        ...(protectedByGuard ? { protected: true } : {}),
         ...(hit ? {} : { k: pick(Object.keys(TRICKS)) }) };
       const kept = (S.players[S.me].knocks || []).filter((k) => k.at >= eventFrom());
       saveMe({ knocks: [...kept, entry].slice(-MAX_KNOCKS), knockAt: entry.at });
