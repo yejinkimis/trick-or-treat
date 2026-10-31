@@ -791,9 +791,9 @@ test('the village panel stays on screen with online counts and buttons to the ot
   g.run(`S.online = [{ by: 'me', presence: { v: 1 } }, { by: 'near', presence: { v: 1 } }, { by: 'far', presence: { v: 2 } }]; renderHud();`);
   assert.equal(g.elements.get('vmap').hidden, false);
   const list = g.elements.get('vmap-list').innerHTML;
-  assert.match(list, /<li class="here"><span>1\. 태초마을 · 여기<\/span><b>2명<\/b><\/li>/);
-  assert.match(list, /data-go="2"><span>2\. 구리마을<\/span><b>1명<\/b>/);
-  assert.match(list, /data-go="3"><span>3\. 안드로이드 제국<\/span><b>0명<\/b>/);
+  assert.match(list, /^<p class="vmap-end">▲ 1번에서 위로 가면 3번<\/p><div class="vmap-node here" aria-current="true"><span>1\. 태초마을 · 여기<\/span><b>2명<\/b><\/div><span class="vmap-link" aria-hidden="true">▼<\/span>/);
+  assert.match(list, /data-go="2"><span>2\. 구리마을<\/span><b>1명<\/b><\/button><span class="vmap-link" aria-hidden="true">▼<\/span><button class="vmap-node" type="button" data-go="3">/);
+  assert.match(list, /<span>3\. 안드로이드 제국<\/span><b>0명<\/b><\/button><p class="vmap-end">▼ 3번에서 아래로 가면 1번<\/p>$/);
   g.run(`toggleFold('vmap')`);
   assert.equal(g.elements.get('vmap-label').textContent, '마을 지도 · 지금 1. 태초마을');
   g.run(`toggleFold('vmap'); S.mode = 'practice'; renderHud();`);

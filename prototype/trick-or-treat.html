@@ -59,9 +59,13 @@ img.px-img{image-rendering:pixelated;display:block}
 .board li.mine span{color:var(--gold)}
 .tr-break{flex-basis:100%;height:0}
 .vmap{margin:0 0 0 auto;width:min(240px,100%)}
-.vmap li button{all:unset;box-sizing:border-box;display:flex;justify-content:space-between;gap:8px;width:100%;cursor:pointer}
-.vmap li button:hover span,.vmap li button:focus-visible span{color:var(--gold)}
-.vmap li.here span,.vmap li.here b{color:var(--gold)}
+.vmap-chain{display:grid}
+.vmap-node{all:unset;box-sizing:border-box;display:flex;justify-content:space-between;gap:8px;padding:4px 8px;border:2px solid rgba(255,244,226,.55);background:rgba(28,20,36,.6);cursor:pointer}
+.vmap-node:hover,.vmap-node:focus-visible{border-color:var(--gold)}
+.vmap-node b{font-family:var(--f-px);font-weight:400;white-space:nowrap}
+.vmap-node.here{border-color:var(--gold);color:var(--gold);cursor:default}
+.vmap-link{justify-self:center;color:#a67d57;line-height:1;font-size:.7rem;padding:1px 0}
+.vmap-end{margin:2px 0;text-align:center;color:var(--muted);font-size:.7rem}
 .board-me{color:var(--muted)}
 
 .quest[data-step="knock"],.quest[data-brew="ready"]{border-color:var(--gold)}
@@ -250,7 +254,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <span class="tr-break" aria-hidden="true"></span>
   <section class="px board vmap" id="vmap" aria-label="마을 지도" hidden>
     <div class="panel-head"><span class="board-label" id="vmap-label">마을 지도</span><button class="fold" type="button" data-fold="vmap" aria-expanded="true">접기</button></div>
-    <ol id="vmap-list"></ol>
+    <div class="vmap-chain" id="vmap-list"></div>
   </section>
 </div>
 
@@ -1805,7 +1809,7 @@ function renderBoard() {
   $('#board-me').textContent = rank ? `나 ${list.length}명 중 ${rank}등 · 사탕 ${list[rank - 1].n}개` : `참가 ${list.length}명`;
 }
 
-// 오른쪽 위에 마을마다 접속 인원을 늘 띄워 두고, 누르면 그 마을로 간다. 마을 지도 창과 같은 기록을 쓴다.
+// 오른쪽 위에 마을이 어떻게 이어지는지와 마을마다 접속 인원을 늘 띄워 두고, 누르면 그 마을로 간다. 마을 지도 창과 같은 기록을 쓴다.
 function renderVillagePanel() {
   const panel = $('#vmap');
   const counts = new Map();
@@ -1816,10 +1820,12 @@ function renderVillagePanel() {
   applyFold(panel, 'vmap');
   const label = folds.vmap && S.village ? `마을 지도 · 지금 ${S.village}. ${villageLabel(S.village)}` : '마을 지도';
   if ($('#vmap-label').textContent !== label) $('#vmap-label').textContent = label;
-  const html = Array.from({ length: total }, (_, i) => i + 1).map((v) => {
+  const nodes = Array.from({ length: total }, (_, i) => i + 1).map((v) => {
     const row = `<span>${v}. ${esc(villageLabel(v))}${v === S.village ? ' · 여기' : ''}</span><b>${counts.get(v) || 0}명</b>`;
-    return v === S.village ? `<li class="here">${row}</li>` : `<li><button type="button" data-go="${v}">${row}</button></li>`;
-  }).join('');
+    return v === S.village ? `<div class="vmap-node here" aria-current="true">${row}</div>` : `<button class="vmap-node" type="button" data-go="${v}">${row}</button>`;
+  });
+  const html = total === 1 ? nodes[0]
+    : `<p class="vmap-end">▲ 1번에서 위로 가면 ${total}번</p>${nodes.join('<span class="vmap-link" aria-hidden="true">▼</span>')}<p class="vmap-end">▼ ${total}번에서 아래로 가면 1번</p>`;
   // 매초 다시 그려도 내용이 같으면 그대로 두어 누르려던 마을 버튼이 바뀌지 않게 한다.
   if (html !== renderVillagePanel.last) $('#vmap-list').innerHTML = renderVillagePanel.last = html;
 }
