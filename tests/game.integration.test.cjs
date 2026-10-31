@@ -233,7 +233,7 @@ test('a knock picks a random mini game the page can play and settles it on the s
   assert.equal(challenge.game, 'whack');
   await services().db.collection('gameChallenges').doc(visitor.uid).update({ createdAt: Date.now() - 30000 });
   let previous = 0;
-  const inputs = miniPlan('whack', challenge.level, challenge.seed).items.flatMap((item) => {
+  const inputs = miniPlan('whack', challenge.level, challenge.seed).items.filter((item) => !item.bad).flatMap((item) => {
     const tick = Math.ceil((item.from + 100) / 20), packed = [tick - previous, item.k];
     previous = tick;
     return packed;

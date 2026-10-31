@@ -69,10 +69,10 @@ test('a challenge still undecided at ninety seconds ends as a loss', () => {
   assert.deepEqual([after.valid, after.finished, after.won, after.timedOut, after.at], [true, true, false, true, CHALLENGE_MAX_MS]);
 });
 
-const { miniPlan, pickGame, evaluateChallenge } = require('../server/minigames.cjs');
+const { miniPlan, miniJudge, pickGame, evaluateChallenge } = require('../server/minigames.cjs');
 const encode = (taps) => { let prev = 0; return taps.flatMap(({ t, v }) => { const tick = Math.ceil(t / 20); const out = [tick - prev, v]; prev = tick; return out; }); };
 function bestPlay(game, plan) {
-  if (game === 'whack') return plan.items.map((item) => ({ t: item.from + 100, v: item.k }));
+  if (game === 'whack') return plan.items.filter((item) => !item.bad).map((item) => ({ t: item.from + 100, v: item.k }));
   if (game === 'spell') return plan.items.map((item, i) => ({ t: plan.open + 300 * (i + 1), v: item.k }));
   const taps = [];
   let x = .5, dir = 0;
@@ -112,6 +112,15 @@ test('mini games wait for the end, reject impossible input and fall back to fish
   assert.deepEqual([spammed.finished, spammed.won], [true, false]);
   const fishing = evaluateChallenge({ game: 'spell', level: 1, seed: 1, createdAt: 1000, path: [{ t: 0, y: .05 }, { t: 30000, y: .05 }] }, [1, 1], 6000, 8000);
   assert.equal(fishing.won, true);
+});
+
+test('hitting poop in the ghost game counts as a mistake', () => {
+  const plan = miniPlan('whack', 1, 11), poop = plan.items.find((item) => item.bad);
+  const result = miniJudge('whack', plan, [{ t: poop.from + 100, v: poop.k }], poop.from + 120);
+  const idle = miniJudge('whack', plan, [], poop.from + 120);
+  assert.deepEqual([result.hits, result.misses - idle.misses, result.state[plan.items.indexOf(poop)]], [0, 1, 'miss']);
+  const skipped = miniJudge('whack', plan, [], poop.to + 20);
+  assert.equal(skipped.state[plan.items.indexOf(poop)], 'pass', 'letting poop go is fine');
 });
 
 test('the server only picks games the knocking page can play', () => {

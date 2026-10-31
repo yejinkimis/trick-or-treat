@@ -17,15 +17,17 @@ function miniPlan(game, level, seed) {
   };
   const between = (a, b) => a + Math.floor(random() * (b - a + 1));
   if (game === 'whack') {
+    // 유령 사이에 똥이 섞여 나온다. 똥을 누르면 실수다.
     const show = 1100 - L * 100, items = [];
     let t = 1000;
-    for (let i = 0; i < 14 + L * 2; i++) {
+    for (let i = 0; i < 18 + L * 2; i++) {
       let k = between(0, 8);
       while (items.slice(-2).some((item) => item.k === k)) k = (k + 1) % 9;
-      items.push({ t, k, from: t, to: t + show });
+      items.push({ t, k, from: t, to: t + show, bad: i > 0 && random() < .3 });
       t += between(700 - L * 60, 1100 - L * 80);
     }
-    return { items, need: items.length - (7 - L), allowed: 7 - L, end: items[items.length - 1].to };
+    const allowed = 7 - L;
+    return { items, need: items.filter((item) => !item.bad).length - allowed, allowed, end: items[items.length - 1].to };
   }
   if (game === 'spell') {
     const step = 450 - L * 30, items = Array.from({ length: 5 + L }, () => ({ k: between(0, 3) }));
@@ -97,6 +99,7 @@ function miniJudge(game, plan, taps, until) {
   const expire = (time) => {
     for (; open < plan.items.length && plan.items[open].to < time; open++) {
       if (state[open]) continue;
+      if (plan.items[open].bad) { state[open] = 'pass'; continue; }
       state[open] = 'miss'; misses++;
       const decided = verdict(plan.items[open].to);
       if (decided) { open++; return decided; }
@@ -108,7 +111,7 @@ function miniJudge(game, plan, taps, until) {
     const expired = expire(tap.t);
     if (expired) return done(expired);
     const index = plan.items.findIndex((item, i) => !state[i] && item.k === tap.v && item.from <= tap.t && tap.t <= item.to);
-    if (index >= 0) { state[index] = 'hit'; hits++; } else misses++;
+    if (index >= 0 && !plan.items[index].bad) { state[index] = 'hit'; hits++; } else { if (index >= 0) state[index] = 'miss'; misses++; }
     const decided = verdict(tap.t);
     if (decided) return done(decided);
   }

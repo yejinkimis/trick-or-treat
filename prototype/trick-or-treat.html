@@ -249,7 +249,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .mg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;height:100%;padding:6px;box-sizing:border-box}
 .mg-hole{position:relative;padding:0;background:var(--panel-2);border:2px solid var(--text);overflow:hidden;cursor:pointer}
 .mg-hole img{position:absolute;left:50%;bottom:4px;max-width:90%;max-height:90%;transform:translateX(-50%);image-rendering:pixelated;pointer-events:none}
-.mg-ghost{visibility:hidden} .mg-hole.up .mg-ghost{visibility:visible;bottom:10px} .mg-hole.up .mg-grave{visibility:hidden}
+.mg-ghost,.mg-poop{visibility:hidden} .mg-hole.up .mg-ghost,.mg-hole.poo .mg-poop{visibility:visible;bottom:10px} .mg-hole.up .mg-grave,.mg-hole.poo .mg-grave{visibility:hidden}
 .mg-hole.on{background:var(--candy)}
 .mg-pads{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;height:calc(100% - 2em)}
 .mg-pad{position:relative;padding:0;background:var(--panel-2);border:3px solid var(--text);cursor:pointer}
@@ -3203,15 +3203,17 @@ function miniPlan(game, level, seed) {
   };
   const between = (a, b) => a + Math.floor(random() * (b - a + 1));
   if (game === 'whack') {
+    // 유령 사이에 똥이 섞여 나온다. 똥을 누르면 실수다.
     const show = 1100 - L * 100, items = [];
     let t = 1000;
-    for (let i = 0; i < 14 + L * 2; i++) {
+    for (let i = 0; i < 18 + L * 2; i++) {
       let k = between(0, 8);
       while (items.slice(-2).some((item) => item.k === k)) k = (k + 1) % 9;
-      items.push({ t, k, from: t, to: t + show });
+      items.push({ t, k, from: t, to: t + show, bad: i > 0 && random() < .3 });
       t += between(700 - L * 60, 1100 - L * 80);
     }
-    return { items, need: items.length - (7 - L), allowed: 7 - L, end: items[items.length - 1].to };
+    const allowed = 7 - L;
+    return { items, need: items.filter((item) => !item.bad).length - allowed, allowed, end: items[items.length - 1].to };
   }
   if (game === 'spell') {
     const step = 450 - L * 30, items = Array.from({ length: 5 + L }, () => ({ k: between(0, 3) }));
@@ -3283,6 +3285,7 @@ function miniJudge(game, plan, taps, until) {
   const expire = (time) => {
     for (; open < plan.items.length && plan.items[open].to < time; open++) {
       if (state[open]) continue;
+      if (plan.items[open].bad) { state[open] = 'pass'; continue; }
       state[open] = 'miss'; misses++;
       const decided = verdict(plan.items[open].to);
       if (decided) { open++; return decided; }
@@ -3294,7 +3297,7 @@ function miniJudge(game, plan, taps, until) {
     const expired = expire(tap.t);
     if (expired) return done(expired);
     const index = plan.items.findIndex((item, i) => !state[i] && item.k === tap.v && item.from <= tap.t && tap.t <= item.to);
-    if (index >= 0) { state[index] = 'hit'; hits++; } else misses++;
+    if (index >= 0 && !plan.items[index].bad) { state[index] = 'hit'; hits++; } else { if (index >= 0) state[index] = 'miss'; misses++; }
     const decided = verdict(tap.t);
     if (decided) return done(decided);
   }
@@ -3302,7 +3305,7 @@ function miniJudge(game, plan, taps, until) {
 }
 
 const MINI_INFO = {
-  whack: { title: '유령 잡기!', help: '무덤에서 튀어나온 유령을 눌러요. 빈 무덤을 누르면 실수예요. 키보드는 Q W E / A S D / Z X C.' },
+  whack: { title: '유령 잡기!', help: '무덤에서 튀어나온 유령을 눌러요. 똥이나 빈 무덤을 누르면 실수예요. 키보드는 Q W E / A S D / Z X C.' },
   spell: { title: '마녀 주문 외우기!', help: '빛나는 순서를 외웠다가 똑같이 눌러요. 키보드는 1 2 3 4.' },
   catch: { title: '사탕 받기!', help: '사탕은 받고 똥은 피해요. ← → 또는 A D, 화면 왼쪽·오른쪽을 누르고 있어도 돼요.' },
 };
@@ -3336,15 +3339,16 @@ const MINI_VIEWS = {
     const grid = Object.assign(document.createElement('div'), { className: 'mg-grid' });
     const holes = Array.from({ length: 9 }, (_, k) => {
       const hole = miniButton('mg-hole', `${k + 1}번 무덤`, () => tap(k));
-      hole.append(miniImg('grave', 3, 'mg-grave'), miniImg('ghost', 3, 'mg-ghost'));
+      hole.append(miniImg('grave', 3, 'mg-grave'), miniImg('ghost', 3, 'mg-ghost'), miniImg('poop', 3, 'mg-poop'));
       grid.append(hole);
       return hole;
     });
     stage.append(grid);
     return {
       draw(now, judged) {
-        const up = new Set(plan.items.filter((item, i) => !judged.state[i] && item.from <= now && now <= item.to).map((item) => item.k));
-        holes.forEach((hole, k) => hole.classList.toggle('up', up.has(k)));
+        const out = plan.items.filter((item, i) => !judged.state[i] && item.from <= now && now <= item.to);
+        const up = new Set(out.filter((item) => !item.bad).map((item) => item.k)), poo = new Set(out.filter((item) => item.bad).map((item) => item.k));
+        holes.forEach((hole, k) => { hole.classList.toggle('up', up.has(k)); hole.classList.toggle('poo', poo.has(k)); });
       },
       flash(k) { holes[k].classList.add('on'); setTimeout(() => holes[k].classList.remove('on'), 120); },
     };

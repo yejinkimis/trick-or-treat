@@ -512,7 +512,7 @@ for (const name of ['whack', 'catch']) {
     for (let now = 20; now <= 60000 && g.run('S.miniControl !== null'); now += 20) {
       g.setNow(now);
       if (name === 'whack') {
-        const ghost = plan.items.find((item) => item.from + 100 <= now && now < item.from + 120);
+        const ghost = plan.items.find((item) => !item.bad && item.from + 100 <= now && now < item.from + 120);
         if (ghost) g.run(`S.miniControl.key('${['KeyQ', 'KeyW', 'KeyE', 'KeyA', 'KeyS', 'KeyD', 'KeyZ', 'KeyX', 'KeyC'][ghost.k]}', true, false)`);
       } else {
         const goal = plan.items.find((item) => !item.bad && item.t >= now);
