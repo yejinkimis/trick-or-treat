@@ -262,6 +262,25 @@ test('a replaced or previous-round challenge cannot release another challenger h
   await act(owner, { type: 'event-stop' });
 });
 
+test('a body doodle is saved by the server, checked for shape, and readable by the neighbours', async () => {
+  const [p, neighbour] = await Promise.all([player('낙'), player('서')]);
+  const doodle = '.'.repeat(36) + '7777' + '.'.repeat(216);
+  await act(p, { type: 'doodle', doodle });
+  assert.equal((await saved(p)).doodle, doodle);
+  for (const bad of ['.'.repeat(255), '.'.repeat(257), '9'.repeat(256), 'x'.repeat(256), 42]) {
+    await assert.rejects(act(p, { type: 'doodle', doodle: bad }), /몸 낙서를 확인해 주세요/, String(bad).slice(0, 4));
+  }
+  assert.equal((await saved(p)).doodle, doodle, 'a rejected doodle leaves the saved one');
+  const base = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-trick-or-treat/databases/(default)/documents`;
+  const read = await (await fetch(`${base}/gamePlayers/${p.uid}`, { headers: { authorization: `Bearer ${neighbour.token}` } })).json();
+  assert.equal(read.fields.doodle.stringValue, doodle);
+  const write = await fetch(`${base}/gamePlayers/${neighbour.uid}?updateMask.fieldPaths=doodle`, {
+    method: 'PATCH', headers: { authorization: `Bearer ${neighbour.token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ fields: { doodle: { stringValue: doodle } } }),
+  });
+  assert.equal(write.status, 403, 'the doodle is only written through the server');
+});
+
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {
   const [p, other] = await Promise.all([player('규'), player('남')]);
   const base = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-trick-or-treat/databases/(default)/documents`;
@@ -597,6 +616,7 @@ test('when the end time passes nothing can change candy, and the results are fro
   for (const input of [
     { type: 'knock-finish', challengeId: pending.id, inputs: [1, 1], elapsedMs: 4000 }, { type: 'knock-start', host: host.uid },
     { type: 'brew' }, { type: 'decor', item: 'lantern' }, { type: 'note', host: host.uid, text: '늦었다' }, { type: 'mural', mural: '.'.repeat(288) },
+    { type: 'doodle', doodle: '.'.repeat(256) },
   ]) await assert.rejects(act(visitor, input), /이벤트가 끝났어요/, input.type);
   await assert.rejects(harvest(visitor), /이벤트가 끝났어요/);
 
@@ -616,3 +636,4 @@ test('when the end time passes nothing can change candy, and the results are fro
   await assert.rejects(act(admin, { type: 'event-stop' }), /진행 중인 이벤트가 없어요/, 'frozen results cannot be overwritten');
   await eventRef.delete();
 });
+

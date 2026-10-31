@@ -198,6 +198,9 @@ async function action(authorization, input) {
       } else if (type === 'mural') {
         if (typeof input.mural !== 'string' || !/^[.1-8]{288}$/.test(input.mural)) fail('지붕 그림을 확인해 주세요.');
         tx.update(playerRef, { mural: input.mural });
+      } else if (type === 'doodle') {
+        if (typeof input.doodle !== 'string' || !/^[.1-8]{256}$/.test(input.doodle)) fail('몸 낙서를 확인해 주세요.');
+        tx.update(playerRef, { doodle: input.doodle });
       } else if (type === 'note') {
         const text = typeof input.text === 'string' ? input.text.replace(/\s+/gu, ' ').trim() : '';
         if (!text || Array.from(text).length > 80 || input.host === uid || !/^[a-f0-9]{32}$/.test(input.host || '')) fail('방명록 내용을 확인해 주세요.');

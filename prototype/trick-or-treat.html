@@ -151,6 +151,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .mural{width:100%;max-width:432px;aspect-ratio:2/1;image-rendering:pixelated;border:3px solid var(--muted);touch-action:none;cursor:crosshair;box-sizing:border-box}
 .mc{all:unset;cursor:pointer;width:30px;height:30px;border:3px solid var(--edge);box-shadow:0 0 0 2px var(--muted);font-size:.7rem;text-align:center;line-height:30px;color:var(--text)}
 .mc[aria-pressed="true"]{box-shadow:0 0 0 3px var(--gold)}
+.doodle{width:192px;aspect-ratio:1;image-rendering:pixelated;border:3px solid var(--muted);touch-action:none;cursor:crosshair;box-sizing:border-box;background:var(--panel-2) center/100% 100% no-repeat}
+.doodle[aria-disabled="true"]{cursor:not-allowed;opacity:.5}
 .intro .sheet{width:min(460px,100%);text-align:center;align-items:stretch}
 .intro-footer{display:flex;justify-content:flex-end;margin-top:4px}
 .born{width:96px;height:96px;margin:4px auto 0}
@@ -286,6 +288,16 @@ textarea:focus{outline:none;border-color:var(--gold)}
       <button class="pbtn" id="wr-rename" type="button">이름 바꾸기</button>
     </div>
     <div class="costumes" id="costumes"></div>
+    <div class="field">
+      <span class="lab">몸 낙서</span>
+      <span class="note" id="doodle-note"></span>
+      <canvas id="doodle" class="doodle" width="16" height="16" aria-label="몸 낙서판"></canvas>
+      <div class="row" id="doodle-pal"></div>
+      <div class="row">
+        <button class="pbtn" id="doodle-clear" type="button">다 지우기</button>
+        <button class="pbtn hot" id="doodle-save" type="button">몸에 그리기</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -579,6 +591,7 @@ const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'note', 
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
+const DOODLE_SIZE = 16, DOODLE_CELLS = DOODLE_SIZE * DOODLE_SIZE;
 const TRICKS = {
   doodle: { dur: 60000, book: '얼굴에 매직 낙서 당함', bubble: '', status: '얼굴 낙서',
     lines: ['가만있어 봐… (쓱쓱) 됐다. 잘 어울리네.', '얼굴에 수염이 그려졌다! 1분 동안 다들 볼 수 있어요.'] },
@@ -681,7 +694,7 @@ const S = {
   candyControl: null, localKnockStreaks: { challenger: null, round: null, byHost: {} },
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
-  pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1',
+  pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1', doodleDraft: null, doodleColor: '1',
   myPeer: null, nearPeer: null, stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [],
   village: null, villages: {}, rankList: null, online: [],
   adminUsers: [], adminSelected: null,
@@ -1243,14 +1256,34 @@ function muralSprite(str) {
   muralCache.set(str, c);
   return c;
 }
-function paintCells(x, cells) {
-  x.clearRect(0, 0, MURAL_W, MURAL_H);
+function paintCells(x, cells, w = MURAL_W, h = MURAL_H) {
+  x.clearRect(0, 0, w, h);
   [...cells].forEach((ch, i) => {
     const color = MURAL_PAL[Number(ch) - 1];
     if (!color) return;
     x.fillStyle = color;
-    x.fillRect(i % MURAL_W, Math.floor(i / MURAL_W), 1, 1);
+    x.fillRect(i % w, Math.floor(i / w), 1, 1);
   });
+}
+// 몸 낙서는 코스튬과 상관없이 하나만 두고, 지금 입은 코스튬의 몸 픽셀 위에 있는 칸만 보인다.
+const onBody = (key, i) => (COSTUMES[key]?.rows[Math.floor(i / DOODLE_SIZE)]?.[i % DOODLE_SIZE] ?? '.') !== '.';
+function bodyDoodle(doodle, key) {
+  if (typeof doodle !== 'string' || !COSTUMES[key]) return '';
+  return Array.from({ length: DOODLE_CELLS }, (_, i) => /[1-8]/.test(doodle[i] || '') && onBody(key, i) ? doodle[i] : '.').join('');
+}
+const doodleCache = new Map();
+function doodleSprite(doodle, key) {
+  const cells = bodyDoodle(doodle, key);
+  if (!/[1-8]/.test(cells)) return null;
+  if (doodleCache.has(cells)) return doodleCache.get(cells);
+  const c = document.createElement('canvas');
+  c.width = DOODLE_SIZE;
+  c.height = DOODLE_SIZE;
+  paintCells(c.getContext('2d'), cells, DOODLE_SIZE, DOODLE_SIZE);
+  if (doodleCache.size > 64) doodleCache.clear();
+  const sprite = { r: c, l: mirror(c) };
+  doodleCache.set(cells, sprite);
+  return sprite;
 }
 function drawSpeech(text, wx, wy) {
   const [sx, sy] = w2s(wx, wy);
@@ -1292,7 +1325,7 @@ function drawStars(a, bob) {
     drawSpr(TILE_SPR.star, a.x - 2 + Math.cos(ang) * 8, a.y - 20 - bob + Math.sin(ang) * 3);
   }
 }
-function drawActor(a, key, name, color, fx, stunned, basket, said) {
+function drawActor(a, key, name, color, fx, stunned, basket, said, doodle) {
   const bob = a.m ? Math.floor(a.walk * (fx?.kind === 'slow' ? 16 : 8)) % 2 : 0;
   const look = fx?.kind === 'poop' ? 'poop' : key;
   const spr = (SPR[look] || SPR.plain)[a.f === -1 ? 'l' : 'r'];
@@ -1300,6 +1333,7 @@ function drawActor(a, key, name, color, fx, stunned, basket, said) {
   const [sx, sy] = w2s(Math.round(a.x) - 5, Math.round(a.y) - 1);
   ctx.fillRect(sx, sy, 10 * Z, 2 * Z);
   drawSpr(spr, a.x - 8, a.y - 15 - bob);
+  if (doodle && look === key) drawSpr(doodle[a.f === -1 ? 'l' : 'r'], a.x - 8, a.y - 15 - bob);
   if (fx?.kind === 'doodle') drawSpr(TILE_SPR.doodle, a.x - 8, a.y - 15 - bob);
   if (basket) drawSpr(TILE_SPR.basket, a.x + (a.f === -1 ? -14 : 4), a.y - 9 - bob);
   if (stunned) drawStars(a, bob);
@@ -1346,11 +1380,11 @@ function draw() {
   }
   for (const p of S.pumpkins) drawSpr(TILE_SPR.pumpkin, p.tx * T, p.ty * T);
   const now = Date.now();
-  for (const g of ghosts.values()) actors.push({ a: g, key: g.c, name: g.by ? nameOf(g.by) : '이웃', color: '#c3b4da', fx: g.by ? activeFx(g.by) : null, stun: g.stunUntil > now, basket: hasBasket(g.by), said: bubbleOf(g.bot ? g.by : g.peer) });
+  for (const g of ghosts.values()) actors.push({ a: g, key: g.c, name: g.by ? nameOf(g.by) : '이웃', color: '#c3b4da', fx: g.by ? activeFx(g.by) : null, stun: g.stunUntil > now, basket: hasBasket(g.by), said: bubbleOf(g.bot ? g.by : g.peer), doodle: g.by ? doodleSprite(S.players[g.by]?.doodle, g.c) : null });
   if (S.npc) actors.push({ a: { ...S.npc, f: 1, m: false, walk: 0 }, key: S.npc.c, name: '' });
-  if (S.me) actors.push({ a: { ...S.pos, m: S.pos.moving }, key: myCostume() || 'plain', name: '나', color: '#ffd166', fx: activeFx(S.me), stun: S.stunUntil > now, basket: hasBasket(S.me), said: bubbleOf('me') });
+  if (S.me) actors.push({ a: { ...S.pos, m: S.pos.moving }, key: myCostume() || 'plain', name: '나', color: '#ffd166', fx: activeFx(S.me), stun: S.stunUntil > now, basket: hasBasket(S.me), said: bubbleOf('me'), doodle: doodleSprite(S.players[S.me]?.doodle, myCostume()) });
   actors.sort((p, q) => p.a.y - q.a.y);
-  for (const it of actors) drawActor(it.a, it.key, it.name, it.color, it.fx, it.stun, it.basket, it.said);
+  for (const it of actors) drawActor(it.a, it.key, it.name, it.color, it.fx, it.stun, it.basket, it.said, it.doodle);
   for (const s of S.swings) drawSpr(TILE_SPR.hammer, s.x - 4, s.y - 32 + (s.t / 0.4) * 10);
 
   for (const s of MAP.slots) {
@@ -1864,6 +1898,7 @@ function renderWardrobe() {
   $('#costumes').innerHTML = Object.entries(COSTUMES).map(([key, c]) =>
     `<button class="cos-btn" type="button" data-cos="${key}" aria-pressed="${mine === key}" ${S.readOnly ? 'disabled' : ''}>
       <img class="px-img" src="${spriteUrl(key, 4)}" alt=""><b>${c.name}</b><small>${c.line}</small></button>`).join('');
+  renderDoodleEditor();
 }
 
 const trickBook = (k) => TRICKS[k.k]?.book || (k.t ? `${k.t} 당함` : '장난 당함');
@@ -1955,30 +1990,55 @@ async function buyDecor(key) {
 function muralDraft() {
   return (S.muralDraft ??= String(S.players[S.me]?.mural || '').padEnd(MURAL_CELLS, '.').slice(0, MURAL_CELLS).split(''));
 }
+const paletteHtml = (attr, current) => [...MURAL_PAL.map((color, i) => [String(i + 1), color]), ['.', '']].map(([code, color]) =>
+  `<button class="mc" type="button" data-${attr}="${code}" style="background:${color || 'transparent'}" aria-pressed="${current === code}" aria-label="${color ? `${code}번 색` : '지우개'}">${color ? '' : '지움'}</button>`).join('');
 function renderMuralEditor(p) {
   const canvasEl = $('#mural');
   canvasEl.style.background = ROOF[p.door || 1];
   paintCells(canvasEl.getContext('2d'), muralDraft().join(''));
-  $('#mural-pal').innerHTML = [...MURAL_PAL.map((color, i) => [String(i + 1), color]), ['.', '']].map(([code, color]) =>
-    `<button class="mc" type="button" data-mc="${code}" style="background:${color || 'transparent'}" aria-pressed="${S.muralColor === code}" aria-label="${color ? `${code}번 색` : '지우개'}">${color ? '' : '지움'}</button>`).join('');
+  $('#mural-pal').innerHTML = paletteHtml('mc', S.muralColor);
 }
-const muralEl = $('#mural');
-let painting = false;
-function paintAt(e) {
-  const r = muralEl.getBoundingClientRect();
-  const cx = Math.floor(((e.clientX - r.left - muralEl.clientLeft) / muralEl.clientWidth) * MURAL_W);
-  const cy = Math.floor(((e.clientY - r.top - muralEl.clientTop) / muralEl.clientHeight) * MURAL_H);
-  if (cx < 0 || cy < 0 || cx >= MURAL_W || cy >= MURAL_H) return;
-  const cells = muralDraft();
-  const i = cy * MURAL_W + cx;
-  if (cells[i] === S.muralColor) return;
-  cells[i] = S.muralColor;
-  paintCells(muralEl.getContext('2d'), cells.join(''));
+function doodleDraft() {
+  return (S.doodleDraft ??= bodyDoodle(S.players[S.me]?.doodle, myCostume()).padEnd(DOODLE_CELLS, '.').split(''));
 }
-muralEl.addEventListener('pointerdown', (e) => { painting = true; muralEl.setPointerCapture(e.pointerId); paintAt(e); });
-muralEl.addEventListener('pointermove', (e) => { if (painting) paintAt(e); });
-muralEl.addEventListener('pointerup', () => { painting = false; });
-muralEl.addEventListener('pointercancel', () => { painting = false; });
+function drawDoodleDraft() {
+  const key = myCostume();
+  paintCells($('#doodle').getContext('2d'), key ? bodyDoodle(doodleDraft().join(''), key) : '', DOODLE_SIZE, DOODLE_SIZE);
+}
+function renderDoodleEditor() {
+  const key = myCostume(), off = !key || S.readOnly;
+  const canvasEl = $('#doodle');
+  canvasEl.style.backgroundImage = key ? `url(${spriteUrl(key, 1)})` : 'none';
+  canvasEl.setAttribute('aria-disabled', off);
+  drawDoodleDraft();
+  $('#doodle-note').textContent = key
+    ? '입은 코스튬 위에 직접 낙서해요. 몸이 있는 칸에만 칠해지고, 마을 사람들 모두 볼 수 있어요.'
+    : '코스튬을 먼저 고르면 그 위에 낙서할 수 있어요.';
+  $('#doodle-pal').innerHTML = paletteHtml('dc', S.doodleColor);
+  $('#doodle-clear').disabled = off;
+  $('#doodle-save').disabled = off;
+}
+function painter(el, w, h, draft, color, redraw, canPaint = () => true) {
+  let down = false;
+  const at = (e) => {
+    const r = el.getBoundingClientRect();
+    const cx = Math.floor(((e.clientX - r.left - el.clientLeft) / el.clientWidth) * w);
+    const cy = Math.floor(((e.clientY - r.top - el.clientTop) / el.clientHeight) * h);
+    if (cx < 0 || cy < 0 || cx >= w || cy >= h) return;
+    const cells = draft();
+    const i = cy * w + cx;
+    if (cells[i] === color() || !canPaint(i)) return;
+    cells[i] = color();
+    redraw();
+  };
+  el.addEventListener('pointerdown', (e) => { if (!canPaint(-1)) return; down = true; el.setPointerCapture(e.pointerId); at(e); });
+  el.addEventListener('pointermove', (e) => { if (down) at(e); });
+  el.addEventListener('pointerup', () => { down = false; });
+  el.addEventListener('pointercancel', () => { down = false; });
+}
+painter($('#mural'), MURAL_W, MURAL_H, muralDraft, () => S.muralColor, () => paintCells($('#mural').getContext('2d'), muralDraft().join('')));
+painter($('#doodle'), DOODLE_SIZE, DOODLE_SIZE, doodleDraft, () => S.doodleColor, drawDoodleDraft,
+  (i) => Boolean(myCostume()) && !S.readOnly && (i < 0 || onBody(myCostume(), i)));
 
 function renderNote() {
   $('#nt-sub').textContent = `${nameOf(S.noteHost)}네 문 앞 방명록`;
@@ -2039,7 +2099,7 @@ function renderCrew() {
   if (html !== renderCrew.last) $('#cr-list').innerHTML = renderCrew.last = html;
 }
 
-const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
+const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
 const adminSeconds = (ms) => ms == null ? '-' : `${(ms / 1000).toFixed(1)}초`;
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
 // 특이 계정은 참고 표시일 뿐이라, 숫자를 보고 운영자가 자세히 확인한 뒤 조치한다.
@@ -2825,7 +2885,7 @@ function armOrRun(btn, question, run) {
 
 function openModal(id) {
   if (S.busy) { toast('진행 중인 대화나 노크를 먼저 마쳐 주세요.'); return; }
-  if (id === 'wardrobe') renderWardrobe();
+  if (id === 'wardrobe') { S.doodleDraft = null; renderWardrobe(); }
   if (id === 'house') { S.muralDraft = null; renderHouse(); }
   if (id === 'rank') { void loadRanking(); renderRanking(); }
   if (id === 'crew') { void loadRanking(); renderCrew(); }
@@ -3049,6 +3109,9 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'nt-send') sendNote();
   else if (t.id === 'in-ok') confirmName();
   else if (t.id === 'in-skip') skipIntro();
+  else if (t.dataset.dc) { S.doodleColor = t.dataset.dc; renderDoodleEditor(); }
+  else if (t.id === 'doodle-clear') { S.doodleDraft = new Array(DOODLE_CELLS).fill('.'); drawDoodleDraft(); }
+  else if (t.id === 'doodle-save') saveDoodle();
   else if (t.dataset.mc) { S.muralColor = t.dataset.mc; renderMuralEditor(S.players[S.me]); }
   else if (t.id === 'mural-clear') { S.muralDraft = new Array(MURAL_CELLS).fill('.'); renderMuralEditor(S.players[S.me]); }
   else if (t.id === 'mural-save') saveMural();
@@ -3204,6 +3267,17 @@ async function saveMural() {
     if (S.mode === 'firebase') await gameRequest({ type: 'mural', mural });
     else saveMe({ mural });
     toast('지붕에 그렸어요. 마을 지도에서 확인해 보세요.');
+  } catch (error) { toast(error.message); }
+}
+
+async function saveDoodle() {
+  const key = myCostume();
+  if (!key || S.readOnly) return;
+  const doodle = bodyDoodle(doodleDraft().join(''), key);
+  try {
+    if (S.mode === 'firebase') await gameRequest({ type: 'doodle', doodle });
+    else saveMe({ doodle });
+    toast(/[1-8]/.test(doodle) ? '몸에 낙서했어요. 마을 사람들도 볼 수 있어요.' : '몸 낙서를 다 지웠어요.');
   } catch (error) { toast(error.message); }
 }
 

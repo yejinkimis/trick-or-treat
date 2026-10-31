@@ -88,6 +88,53 @@ test('HTML contains every static script target and JavaScript loads', () => {
   for (const [, id] of source.matchAll(/\$\(['"]#([\w-]+)['"]\)/g)) assert.ok(g.elements.has(id), id);
 });
 
+test('the wardrobe doodle paints only on the body, survives a costume change inside the new body, and hides under poop', () => {
+  const g = game(); g.players();
+  const pad = g.elements.get('doodle');
+  Object.assign(pad, { clientWidth: 160, clientHeight: 160, clientLeft: 0, clientTop: 0, rect: { left: 0, top: 0, width: 160, height: 160 } });
+  const cell = (x, y) => ({ pointerId: 1, clientX: x * 10 + 5, clientY: y * 10 + 5 });
+  const click = (target) => g.run(`document.listeners.click({ target: { closest: () => (${JSON.stringify(target)}) } })`);
+  g.run(`openModal('wardrobe')`);
+  click({ id: '', dataset: { dc: '7' } });
+  pad.listeners.pointerdown(cell(0, 2));
+  pad.listeners.pointermove(cell(7, 2));
+  pad.listeners.pointermove(cell(7, 9));
+  pad.listeners.pointerup();
+  click({ id: 'doodle-save', dataset: {} });
+  const saved = g.run('S.players.me.doodle');
+  assert.equal(saved.length, 256);
+  assert.equal(saved[2 * 16 + 0], '.', 'outside the ghost body nothing is painted');
+  assert.equal(saved[2 * 16 + 7], '7');
+  assert.equal(saved[9 * 16 + 7], '7');
+  assert.equal(g.run(`bodyDoodle(S.players.me.doodle, 'cat')[2 * 16 + 7]`), '.', 'the cat has no body on that cell, so it is hidden');
+  assert.equal(g.run(`bodyDoodle(S.players.me.doodle, 'cat')[9 * 16 + 7]`), '7', 'the cat body still shows the shared cell');
+  assert.equal(g.run(`doodleSprite('.'.repeat(256), 'ghost')`), null);
+  assert.equal(g.run(`doodleSprite(S.players.me.doodle, 'ghost') === doodleSprite(S.players.me.doodle, 'ghost')`), true, 'the sprite is cached');
+
+  g.run(`var drawn = []; ctx.drawImage = (img) => drawn.push(img); var sprite = doodleSprite(S.players.me.doodle, 'ghost');
+    var actor = { x: 100, y: 100, f: -1, m: false, walk: 0 };`);
+  g.run(`drawActor(actor, 'ghost', '', '', null, false, false, '', sprite)`);
+  assert.equal(g.run('drawn.includes(sprite.l) && !drawn.includes(sprite.r)'), true, 'facing left draws the mirrored doodle');
+  g.run(`drawn = []; drawActor(actor, 'ghost', '', '', { kind: 'poop' }, false, false, '', sprite)`);
+  assert.equal(g.run('drawn.includes(sprite.l) || drawn.includes(sprite.r)'), false, 'under poop the body and its doodle are hidden');
+
+  click({ id: 'doodle-clear', dataset: {} });
+  click({ id: 'doodle-save', dataset: {} });
+  assert.equal(g.run('S.players.me.doodle'), '.'.repeat(256));
+});
+
+test('without a costume the doodle pad does not paint or save', () => {
+  const g = game(); g.players();
+  g.run(`S.players.me.costume = null; openModal('wardrobe')`);
+  const pad = g.elements.get('doodle');
+  Object.assign(pad, { clientWidth: 160, clientHeight: 160, rect: { left: 0, top: 0, width: 160, height: 160 } });
+  pad.listeners.pointerdown({ pointerId: 1, clientX: 45, clientY: 25 });
+  g.run(`document.listeners.click({ target: { closest: () => ({ id: 'doodle-save', dataset: {} }) } })`);
+  assert.equal(g.run('S.players.me.doodle'), undefined);
+  assert.equal(g.elements.get('doodle-save').disabled, true);
+  assert.equal(pad['aria-disabled'], 'true');
+});
+
 test('Firebase rankings use server balances and reset to ten for a new event', () => {
   const g = game(); g.players();
   g.run(`S.mode = 'firebase'; S.event = { id: 'round1', startedAt: 1, endsAt: Date.now() + 60000 };
@@ -1323,3 +1370,4 @@ test('a scheduled event shows its start time, stays practice until then, and tur
   assert.equal(g.run('eventState()'), 'ended');
   assert.match(g.elements.get('toast').textContent, /이벤트가 끝났어요/);
 });
+
