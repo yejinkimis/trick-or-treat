@@ -72,6 +72,8 @@
           "id": { ".validate": "newData.isString() && newData.val().length <= 80" },
           "kind": { ".validate": "newData.val() == 'bonk'" },
           "to": { ".validate": "newData.isString() && newData.val().length <= 100" },
+          "duelId": { ".validate": "newData.isString() && newData.val().length <= 24" },
+          "hitCount": { ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 5" },
           "at": { ".validate": "newData.isNumber() && newData.val() >= now - 5000 && newData.val() <= now + 1000" },
           "$other": { ".validate": false }
         }

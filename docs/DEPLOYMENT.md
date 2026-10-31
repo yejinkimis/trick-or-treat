@@ -57,7 +57,7 @@ PostHog를 쓰려면 Production 범위에 `POSTHOG_PROJECT_KEY=phc_…`와 `POST
 
 Firestore가 `asia-northeast3`(서울)에 있어서 `vercel.json`의 `regions`로 서버 함수도 서울(`icn1`)에서 실행한다. 기본값(미국 동부)에서는 요청마다 서버와 Firestore가 태평양을 여러 번 오가 호박 따기·노크 응답이 늦었다. Firestore 위치를 바꾸면 이 값도 함께 바꾼다.
 
-1. 대상 프로젝트가 `trick-or-treat-89de3`인지 확인하고 `firestore.rules`를 Firestore Rules 화면에, `database.rules.json`의 rules 내용을 Realtime Database Rules 화면에 게시한다. 한쪽만 적용하면 실시간 게임이 정상 동작하지 않는다. 캐릭터 위치·뿅망치 경로가 `presence/{마을}`·`events/{마을}`로, 채팅이 `chat`, 접속자 목록이 `online`으로 바뀌므로, 규칙과 새 배포를 같은 때에 반영한다. 이전 화면을 띄워 둔 사람은 새로고침해야 접속된다.
+1. 대상 프로젝트가 `trick-or-treat-89de3`인지 확인하고 `firestore.rules`와 `firestore.indexes.json`을 Firestore에, `database.rules.json`의 rules 내용을 Realtime Database에 게시한다. 한쪽만 적용하면 실시간 게임이 정상 동작하지 않는다. 캐릭터 위치·뿅망치 경로가 `presence/{마을}`·`events/{마을}`로, 채팅이 `chat`, 접속자 목록이 `online`으로 바뀌므로, 규칙과 새 배포를 같은 때에 반영한다. 이전 화면을 띄워 둔 사람은 새로고침해야 접속된다.
 2. 서비스 계정 JSON을 Vercel 환경변수에 등록한다. JSON의 `project_id`와 `FIREBASE_PROJECT_ID`가 일치해야 한다.
 3. PR Preview에서 가입 → 분장 선택 → 로그아웃 → 같은 계정 로그인 → 다른 브라우저 로그인 순으로 확인한다. 중복 닉네임과 잘못된 비밀번호도 거부되어야 한다.
 4. `/`에서 게임이 열리고 기존 HTML 링크가 `/`로 연결되는지 확인한다. `/api/firebase-config`는 200이어야 하며 비밀 키가 없어야 한다.
@@ -78,6 +78,6 @@ Firestore가 `asia-northeast3`(서울)에 있어서 `vercel.json`의 `regions`�
 
 `GAME_ADMIN_UIDS`에 등록된 운영자는 순위 창에서 관리자 도구를 연다. 닉네임 또는 UID로 검색해 최근 30개 활동, 현재 채팅과 작성한 방명록을 확인하고 밴·해제, 순위 제외·포함, 집 숨김·복원, 글 삭제를 할 수 있다. 밴 해제 후에도 순위 제외는 유지하므로 검토 후 따로 포함한다. 새 활동 기록은 서버에서 정상 처리한 행동만 남기며 기존 도전·연금술·방명록 기록도 함께 표시한다.
 
-배포 시 Firestore와 Realtime Database 규칙을 모두 갱신해야 기존 접속자의 직접 DB 접근도 차단된다. 관리자 서버는 기존 `FIREBASE_DATABASE_URL` 환경변수로 RTDB에 접근한다. 규칙 배포는 Vercel 자동 배포에 포함되지 않는다. Firebase CLI에서는 `firebase deploy --only firestore:rules,database --project trick-or-treat-89de3`로 반영할 수 있다.
+배포 시 Firestore 규칙·복합 색인과 Realtime Database 규칙을 모두 갱신해야 한다. 관리자 서버는 기존 `FIREBASE_DATABASE_URL` 환경변수로 RTDB에 접근한다. Firebase 설정 배포는 Vercel 자동 배포에 포함되지 않는다. Firebase CLI에서는 `firebase deploy --only firestore:rules,firestore:indexes,database --project trick-or-treat-89de3`로 반영할 수 있다.
 
 순위 제외는 `game/moderation` 구독으로 화면에 반영된다. 순위에 다시 포함한 사용자의 점수가 서버/CDN 순위 저장본에 없으면 기존 3분 갱신 주기 뒤 나타난다. 계정 비활성화와 두 DB 변경은 순서대로 적용되므로 오류가 표시되면 사용자 상태를 조회하고 동일한 조치를 다시 적용한다. 운영자 조치는 비공개 `gameAdminActivity`에 기록한다.

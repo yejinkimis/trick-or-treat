@@ -312,6 +312,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-rank" type="button">순위</button>
   <button class="pbtn" id="open-crew" type="button">크루 찾기</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
+  <button class="pbtn hot" id="open-duel" type="button" hidden>1대1 대전</button>
   <button class="pbtn" id="open-online" type="button" hidden>마을 지도</button>
   <button class="pbtn" id="open-announcement" type="button" aria-label="마을 공지" title="마을 공지" hidden>📣 공지</button>
   <button class="pbtn icon-btn" id="open-sound" type="button" aria-label="소리" title="소리"><img class="px-img" id="sound-icon" alt=""></button>
@@ -505,6 +506,15 @@ textarea:focus{outline:none;border-color:var(--gold)}
     <p class="note">▼ 아래 표지판은 다음 번호, ▲ 위 표지판은 이전 번호 마을로 가요. 마을을 누르면 바로 이동해요.</p>
     <div class="chain" id="on-chain"></div>
     <ol class="book" id="on-list"></ol>
+  </div>
+</div>
+<div class="modal small" id="duel" hidden>
+  <div class="px sheet small" role="dialog" aria-modal="true" aria-labelledby="du-title">
+    <div class="sheet-head">
+      <h2 id="du-title">1대1 뿅망치 대전<small>먼저 상대를 기절시키면 양쪽 사탕을 가져가요.</small></h2>
+      <button class="pbtn" type="button" data-close="duel">닫기</button>
+    </div>
+    <div class="field" id="du-content"></div>
   </div>
 </div>
 <div class="modal" id="note" hidden>
@@ -731,7 +741,7 @@ async function showBrewNews() {
   brewNews.showing = false;
 }
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'note', 'sound', 'announcement', 'auth', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'duel', 'note', 'sound', 'announcement', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -841,6 +851,7 @@ const S = {
   pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1', doodleDraft: null, doodleColor: '1',
   myPeer: null, nearPeer: null, stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [],
   village: null, villages: {}, rankList: null, online: [],
+  duels: [], duel: null, duelActionPending: false, dismissedDuelIds: new Set(), duelExpiryRequestedIds: new Set(),
   adminUsers: [], adminSelected: null, adminAnnouncement: undefined, adminAnnouncementWorking: false,
   announcement: null, announcementUnread: false,
 };
@@ -1643,6 +1654,9 @@ function frame(now) {
     noticeEventTurn();
     renderHud();
     renderAction();
+    if (!$('#duel').hidden) renderDuelModal();
+    const duel = activeOrRecentDuel();
+    if (duel?.status === 'pending' || duel?.status === 'active') void expireDuelIfDue(duel);
     if (!$('#house').hidden) refreshItemShop();
     if (!$('#rank').hidden) renderRanking();
   }
@@ -1670,6 +1684,21 @@ function bonk() {
   S.lastBonk = now;
   S.pos.f = g.x < S.pos.x ? -1 : 1;
   presenceDirty = true;
+  const duel = activeOrRecentDuel();
+  if (S.mode === 'firebase' && duel?.status === 'active') {
+    const opponent = duel.players?.find((id) => id !== S.me);
+    if (g.bot || g.by !== opponent) { toast('대전 상대에게만 뿅망치가 닿아요.'); return; }
+    gameRequest({ type: 'duel-hit', duelId: duel.id, victim: g.by, attackerPeer: S.myPeer, victimPeer: g.peer })
+      .then((result) => {
+        const hitCount = result.hitCount || BONK_TO_STUN;
+        onBonk({ data: { to: g.peer, duelId: duel.id, hitCount }, by: S.me });
+        S.room.emit('bonk', { to: g.peer, duelId: duel.id, hitCount }).catch(() => {});
+        track('bonk_sent', { target_is_bot: false, duel: true });
+        if (result.status === 'completed') toast(`기절 성공! 사탕 ${duel.stake * 2}개를 가져갔어요.`);
+      })
+      .catch((error) => { toast(error.message || '뿅망치가 닿지 않았어요. 상대 가까이에서 다시 해 보세요.'); });
+    return;
+  }
   if (g.bot) { onBonk({ data: { to: S.nearPeer }, by: S.me }); track('bonk_sent', { target_is_bot: true }); return; }
   S.room.emit('bonk', { to: g.peer })
     .then(() => track('bonk_sent', { target_is_bot: false }))
@@ -1683,6 +1712,20 @@ function onBonk(msg) {
   const isMe = to === S.myPeer;
   const victim = isMe ? S.pos : ghosts.get(to);
   if (!victim) return;
+  const duel = activeOrRecentDuel();
+  const duelHit = typeof msg.data.duelId === 'string';
+  if (duelHit) {
+    if (msg.by === S.me && msg.data.id) return;
+    if (!duel || msg.data.duelId !== duel.id) return;
+    const victimUid = to.slice(0, to.indexOf(':'));
+    const opponent = duel?.players?.find((id) => id !== S.me);
+    if (!opponent || ![S.me, opponent].includes(victimUid) || ![S.me, opponent].includes(msg.by)) return;
+    const count = Math.max(1, Math.min(BONK_TO_STUN, Number(msg.data.hitCount) || Number(duel.hits?.[victimUid]?.count) || 1));
+    S.swings.push({ x: victim.x, y: victim.y, t: 0 });
+    if (isMe || msg.by === S.me) playSfx(count >= BONK_TO_STUN && isMe ? 'stun' : 'hit');
+    S.floats.push({ text: count >= BONK_TO_STUN ? '기절!' : `뿅! ${count}/${BONK_TO_STUN}`, x: victim.x + 8, y: victim.y - 20, t: 0, life: count >= BONK_TO_STUN ? 1.2 : 0.7 });
+    return;
+  } else if (duel?.status === 'active') return;
   const tally = isMe ? S : victim;
   if ((tally.stunUntil || 0) > now) return;
   tally.hits = now - (tally.lastHit || 0) > BONK_RESET_MS ? 1 : (tally.hits || 0) + 1;
@@ -1697,7 +1740,7 @@ function onBonk(msg) {
   if (isMe) {
     S.target = null;
     shake();
-    toast(`${msg.by ? nameOf(msg.by) : '누군가'}한테 뿅망치 ${BONK_TO_STUN}대 맞고 기절! 3초 동안 못 움직여요`);
+    toast(duelHit ? `대전 중 기절! ${nameOf(msg.by)} 님이 이겼어요.` : `${msg.by ? nameOf(msg.by) : '누군가'}한테 뿅망치 ${BONK_TO_STUN}대 맞고 기절! 3초 동안 못 움직여요`);
   }
 }
 
@@ -2062,9 +2105,112 @@ function renderHud() {
   announcementButton.textContent = S.announcementUnread ? '📣 새 공지' : '📣 공지';
   announcementButton.classList.toggle('hot', S.announcementUnread);
   announcementButton.setAttribute('aria-label', S.announcementUnread ? '새 마을 공지 확인' : '마을 공지 확인');
+  const duel = activeOrRecentDuel();
+  $('#open-duel').hidden = S.mode !== 'firebase';
+  $('#open-duel').textContent = duel?.status === 'active' ? '대전 중'
+    : duel?.status === 'pending' && duel.opponent === S.me ? '대전 신청 도착' : '1대1 대전';
   renderBoard();
   renderVillagePanel();
   applyFold($('#chatbox'), 'chat');
+}
+
+function activeOrRecentDuel() {
+  const now = Date.now() + (Number(S.clockOffset) || 0);
+  const docs = S.duels || [];
+  return docs.find((duel) => duel.status === 'active' && !S.duelExpiryRequestedIds?.has(duel.id))
+    || docs.find((duel) => duel.status === 'pending' && !S.duelExpiryRequestedIds?.has(duel.id) && (duel.expiresAt || 0) > now)
+    || docs.filter((duel) => !S.dismissedDuelIds?.has(duel.id) && ['completed', 'declined', 'cancelled', 'expired'].includes(duel.status))
+      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
+      .find((duel) => now - (duel.updatedAt || duel.createdAt || 0) < 120000)
+    || null;
+}
+
+function duelTarget() {
+  const ghost = S.nearPeer && ghosts.get(S.nearPeer);
+  return ghost && !ghost.bot && ghost.by && ghost.by !== S.me ? { id: ghost.by, peer: ghost.peer, nick: nameOf(ghost.by) } : null;
+}
+
+let duelExpiryId = null;
+async function expireDuelIfDue(duel) {
+  const now = Date.now() + (Number(S.clockOffset) || 0);
+  if (!duel || !['pending', 'active'].includes(duel.status) || now < duel.expiresAt || duelExpiryId === duel.id || S.duelActionPending) return;
+  duelExpiryId = duel.id;
+  S.duelActionPending = true;
+  S.duelExpiryRequestedIds.add(duel.id);
+  try { await gameRequest({ type: 'duel-expire', duelId: duel.id }); }
+  catch {
+    // 네트워크가 끊긴 동안은 5초 뒤 다시 만료 요청을 시도한다.
+    setTimeout(() => { S.duelExpiryRequestedIds.delete(duel.id); renderHud(); }, 5000);
+  }
+  finally { S.duelActionPending = false; duelExpiryId = null; renderDuelModal(); renderHud(); }
+}
+
+function renderDuelModal() {
+  const content = $('#du-content');
+  if (!content) return;
+  const selectedStake = Number($('#du-stake')?.value) || Math.min(3, candiesOf(S.me));
+  const duel = activeOrRecentDuel();
+  S.duel = duel;
+  if (duel && ['pending', 'active'].includes(duel.status)) void expireDuelIfDue(duel);
+  const pending = Boolean(S.duelActionPending || S.readOnly || eventState() === 'ended');
+  let html = '';
+  if (duel?.status === 'pending' && duel.opponent === S.me) {
+    const challenger = nameOf(duel.challenger);
+    html = `<p class="note">${esc(challenger)} 님이 1대1 대전을 신청했어요. 두 사람 모두 ${duel.stake}개를 걸고, 이긴 사람이 ${duel.stake * 2}개를 가져가요. 수락하면 사탕이 먼저 맡겨져요.</p>
+      <p class="note">남은 시간 ${fmtLeft(Math.max(0, duel.expiresAt - (Date.now() + (Number(S.clockOffset) || 0))))}</p>
+      <div class="row"><button class="pbtn hot" type="button" data-duel-act="duel-accept" data-duel-id="${esc(duel.id)}" ${pending ? 'disabled' : ''}>수락하고 대전</button><button class="pbtn" type="button" data-duel-act="duel-decline" data-duel-id="${esc(duel.id)}" ${S.duelActionPending ? 'disabled' : ''}>거절</button></div>`;
+  } else if (duel?.status === 'pending' && duel.challenger === S.me) {
+    html = `<p class="note">${esc(nameOf(duel.opponent))} 님의 수락을 기다리는 중이에요. 수락하면 각자 ${duel.stake}개를 걸고 승자가 ${duel.stake * 2}개를 가져가요.</p>
+      <p class="note">남은 시간 ${fmtLeft(Math.max(0, duel.expiresAt - (Date.now() + (Number(S.clockOffset) || 0))))}</p>
+      <button class="pbtn" type="button" data-duel-act="duel-cancel" data-duel-id="${esc(duel.id)}" ${S.duelActionPending ? 'disabled' : ''}>신청 취소</button>`;
+  } else if (duel?.status === 'active') {
+    const opponent = duel.players?.find((id) => id !== S.me);
+    const meHits = Number(duel.hits?.[S.me]?.count) || 0;
+    const opponentHits = Number(duel.hits?.[opponent]?.count) || 0;
+    const now = Date.now() + (Number(S.clockOffset) || 0);
+    const remaining = Math.max(0, duel.expiresAt - now);
+    const hardRemaining = Math.max(0, duel.hardDeadline - now);
+    html = `<p class="note">${esc(nameOf(opponent))} 님과 대전 중이에요. 먼저 상대를 5번 맞혀 기절시키세요.</p>
+      <p>내 기절까지 <b>${Math.max(0, 5 - meHits)}대</b> · 상대 기절까지 <b>${Math.max(0, 5 - opponentHits)}대</b></p>
+      <progress max="5" value="${Math.min(5, opponentHits)}" aria-label="상대를 맞힌 횟수"></progress>
+      <p class="note">${duel.stake * 2}개가 승자에게 가요 · 다음 타격까지 ${fmtLeft(remaining)} · 최대 ${fmtLeft(hardRemaining)}</p>`;
+  } else if (duel?.status === 'completed') {
+    const won = duel.winner === S.me;
+    html = `<p class="note">${won ? '이겼어요!' : '기절했어요. 다음엔 복수전이에요!'} ${esc(nameOf(duel.winner))} 님이 사탕 ${duel.stake * 2}개를 가져갔어요.</p>
+      <button class="pbtn hot" type="button" data-duel-act="duel-new">새 대전 신청</button>`;
+  } else if (duel?.status === 'expired') {
+    html = `<p class="note">${duel.refunded ? `대전 시간이 끝났어요. 맡겨 둔 사탕 ${duel.stake}개씩을 돌려줬어요.` : '대전 신청 시간이 끝났어요. 사탕은 움직이지 않았어요.'}</p><button class="pbtn" type="button" data-duel-act="duel-new">새 대전 신청</button>`;
+  } else if (duel?.status === 'declined') {
+    html = `<p class="note">${esc(nameOf(duel.opponent))} 님이 대전을 거절했어요. 사탕은 움직이지 않았어요.</p><button class="pbtn" type="button" data-duel-act="duel-new">새 대전 신청</button>`;
+  } else if (duel?.status === 'cancelled') {
+    html = `<p class="note">대전 신청을 취소했어요.</p><button class="pbtn" type="button" data-duel-act="duel-new">다시 신청</button>`;
+  } else {
+    const target = duelTarget();
+    const maxStake = Math.min(10, Math.max(0, candiesOf(S.me)));
+    html = target && maxStake > 0
+      ? `<p class="note">상대: <b>${esc(target.nick)}</b> · ${esc(villageLabel(S.village))}. 각자 같은 수의 사탕을 걸고, 이긴 사람이 전부 가져가요.</p>
+        <label for="du-stake">걸 사탕 수</label><select id="du-stake" ${pending ? 'disabled' : ''}>${Array.from({ length: maxStake }, (_, i) => i + 1).map((n) => `<option value="${n}"${n === Math.min(selectedStake, maxStake) ? ' selected' : ''}>${n}개씩 · 승자 ${n * 2}개</option>`).join('')}</select>
+        <button class="pbtn hot" type="button" data-duel-act="duel-offer" data-opponent="${esc(target.id)}" data-peer="${esc(target.peer)}" ${pending ? 'disabled' : ''}>대전 신청</button>`
+      : `<p class="note">${target ? '대전에 걸 사탕이 없어요.' : '대전 신청을 하려면 같은 마을에서 상대 캐릭터 가까이 다가가세요. 수락 뒤 뿅망치 5대를 먼저 맞히면 승리해요.'}</p>`;
+  }
+  content.innerHTML = html;
+}
+
+async function runDuelAction(type, details = {}) {
+  if (S.duelActionPending || S.mode !== 'firebase' || S.readOnly) return;
+  S.duelActionPending = true;
+  renderDuelModal();
+  try {
+    await gameRequest({ type, ...details });
+    const messages = {
+      'duel-offer': '대전을 신청했어요. 상대가 수락하면 사탕이 맡겨져요.',
+      'duel-accept': '대전을 시작해요! 먼저 상대를 기절시키세요.',
+      'duel-decline': '대전 신청을 거절했어요.',
+      'duel-cancel': '대전 신청을 취소했어요.',
+    };
+    if (messages[type]) toast(messages[type]);
+  } catch (error) { toast(error.message); }
+  finally { S.duelActionPending = false; renderDuelModal(); renderHud(); }
 }
 
 // 퀘스트와 순위판을 접었는지는 이 기기에만 기억해 둔다.
@@ -2468,7 +2614,7 @@ function renderCrew() {
   if (html !== renderCrew.last) $('#cr-list').innerHTML = renderCrew.last = html;
 }
 
-const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', 'item-buy': '아이템 구매', 'item-use': '아이템 사용', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
+const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', 'item-buy': '아이템 구매', 'item-use': '아이템 사용', 'duel-offer': '1대1 대전 신청', 'duel-accept': '1대1 대전 수락', 'duel-decline': '1대1 대전 거절', 'duel-cancel': '1대1 대전 취소', 'duel-expire': '1대1 대전 만료', 'duel-hit': '1대1 대전 뿅망치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
 const adminSeconds = (ms) => ms == null ? '-' : `${(ms / 1000).toFixed(1)}초`;
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
 const adminDelta = (value) => Number.isFinite(value) ? `${signed(value)}개` : null;
@@ -3710,6 +3856,7 @@ function openModal(id) {
   if (id === 'rank') { void loadRanking(); renderRanking(); }
   if (id === 'crew') { void loadRanking(); renderCrew(); }
   if (id === 'online') renderOnline();
+  if (id === 'duel') renderDuelModal();
   if (id === 'admin') {
     Object.assign(S, { adminUsers: [], adminWatch: [], adminView: 'search', adminSelected: null, adminAnnouncement: undefined });
     renderAdmin();
@@ -3941,6 +4088,7 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'ad-announcement-withdraw') adminAnnouncementAction('withdraw').catch((error) => toast(error.message));
   else if (t.dataset.fold) toggleFold(t.dataset.fold);
   else if (t.id === 'open-online') openModal('online');
+  else if (t.id === 'open-duel') openModal('duel');
   else if (t.id === 'open-sound') openModal('sound');
   else if (t.id === 'sd-bgm') setSound('bgm', !sound.bgm);
   else if (t.id === 'sd-sfx') setSound('sfx', !sound.sfx);
@@ -3964,6 +4112,18 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'open-chat') openChat();
   else if (t.id === 'act-btn') act();
   else if (t.id === 'bonk-btn') bonk();
+  else if (t.dataset.duelAct === 'duel-new') {
+    if (S.duel?.id) S.dismissedDuelIds.add(S.duel.id);
+    renderDuelModal();
+  }
+  else if (t.dataset.duelAct) {
+    const extra = t.dataset.duelAct === 'duel-offer'
+      ? { opponent: t.dataset.opponent, opponentPeer: t.dataset.peer, challengerPeer: S.myPeer, village: S.village, stake: Number($('#du-stake').value) }
+      : t.dataset.duelAct === 'duel-accept'
+        ? { duelId: t.dataset.duelId, peer: S.myPeer, village: S.village }
+        : { duelId: t.dataset.duelId };
+    runDuelAction(t.dataset.duelAct, extra);
+  }
   else if (t.id === 'act-note') openNote(S.near?.owner);
   else if (t.id === 'nt-send') sendNote();
   else if (t.id === 'in-ok') confirmName();
@@ -4206,10 +4366,34 @@ async function connectFirebaseGame(uid) {
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
-  Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [], announcement: null, announcementUnread: false });
+  Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [], announcement: null, announcementUnread: false, duels: [], duel: null, duelActionPending: false, dismissedDuelIds: new Set(), duelExpiryRequestedIds: new Set() });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0;
   Object.assign(chatHistory, { more: false, oldest: null, loading: false, loadOlder: null }); renderChatLog();
-  const stops = [], villageStops = []; let disposed = false, peers = [], currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
+  const stops = [], villageStops = []; let disposed = false, peers = [], lastDuelPrompt = '', currentPresence = { x: SPAWN.x, y: SPAWN.y, f: 1, m: false };
+  const duelsQuery = fs.query(fs.collection(a.firestore, 'gameDuels'), fs.where('players', 'array-contains', uid), fs.orderBy('updatedAt', 'desc'), fs.limit(20));
+  stops.push(fs.onSnapshot(duelsQuery, { includeMetadataChanges: true }, (snapshot) => {
+    if (snapshot.metadata.fromCache) return;
+    const previousDuels = S.duels;
+    S.duels = snapshot.docs.map((doc) => doc.data());
+    S.duel = activeOrRecentDuel();
+    const previousDuel = S.duels.length ? previousDuels.find((duel) => duel.id === S.duel?.id) : null;
+    if (S.duel?.status === 'active') {
+      const hitCount = Number(S.duel.hits?.[uid]?.count) || 0;
+      if (hitCount > (Number(previousDuel?.hits?.[uid]?.count) || 0)) S.lastHit = Date.now();
+      S.hits = hitCount;
+    } else if (S.duel?.status === 'completed' && S.duel.loser === uid && previousDuel?.status === 'active') {
+      S.hits = 0;
+      S.stunUntil = Date.now() + STUN_MS;
+      S.target = null;
+      shake();
+      toast(`${nameOf(S.duel.winner)} 님에게 먼저 기절했어요. 사탕 ${S.duel.stake}개를 잃었어요.`);
+    }
+    if (!$('#duel').hidden) renderDuelModal();
+    const prompt = S.duel && ['pending', 'active', 'completed', 'expired'].includes(S.duel.status)
+      && (S.duel.opponent === uid || S.duel.status !== 'pending') ? `${S.duel.id}:${S.duel.status}` : '';
+    if (prompt && prompt !== lastDuelPrompt) { lastDuelPrompt = prompt; openModal('duel'); }
+    renderHud();
+  }, () => toast('1대1 대전 정보를 받지 못했어요. 새로고침해 주세요.')));
   const sid = crypto.randomUUID(), myPeer = `${uid}:${sid}`;
   let ownRef = null, disconnect = null;
   rt.goOnline(a.database);
