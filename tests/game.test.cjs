@@ -1102,6 +1102,17 @@ test('basket stays after harvesting more, alchemy tip explains the cauldron, and
   assert.match(g.elements.get('toast').textContent, /꽉 찼어요/);
 });
 
+test('a newcomer notice goes to everyone else and the chat window, once', () => {
+  const g = game(); village(g);
+  g.run(`announceNewcomer('j1', { kind: 'join', uid: 'new1', nick: '새친구', v: 2, at: 1 })`);
+  assert.equal(g.elements.get('toast').textContent, '새 크루 새친구님이 구리마을에 이사 왔어요! 반갑게 맞아 주세요');
+  g.run(`announceNewcomer('j1', { kind: 'join', uid: 'new1', nick: '새친구', v: 2, at: 1 }); announceNewcomer('j2', { kind: 'join', uid: 'me', nick: '나', v: 1, at: 2 })`);
+  const chat = g.elements.get('chatlog').innerHTML;
+  assert.equal((chat.match(/새 크루 새친구님이 구리마을에 이사 왔어요!/g) || []).length, 1);
+  assert.match(chat, /<b>마을 소식<\/b>/);
+  assert.doesNotMatch(chat, /새 크루 나님이/, 'the newcomer gets the welcome guide instead');
+});
+
 test('every brew shows in the top notice one at a time, and a jackpot stays longer and also goes to the chat window', async () => {
   const g = game(); village(g);
   const notice = g.elements.get('toast'), chat = () => g.elements.get('chatlog').innerHTML;

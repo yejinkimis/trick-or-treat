@@ -461,12 +461,24 @@ test('server alchemy keeps the basket, caps the bag, spends pumpkins and enforce
   assert.ok(challenge.id);
 });
 
+test('a newcomer is announced once when their house is placed, and later logins do not announce again', async () => {
+  const newcomer = await player('새크루');
+  const joins = async () => Object.values((await services().database.ref('announcements').get()).val() || {}).filter((a) => a.kind === 'join' && a.uid === newcomer.uid);
+  const [announced, ...extra] = await joins();
+  assert.equal(extra.length, 0);
+  assert.equal(announced.v, (await saved(newcomer)).village);
+  assert.equal(announced.nick, (await saved(newcomer)).nick);
+  await session(newcomer.authorization);
+  await updateProfile(newcomer.authorization, { costume: 'cat' });
+  assert.equal((await joins()).length, 1, 'changing costume or logging in again is not a new arrival');
+});
+
 test('every brew is announced to every village once, and players can read but not fake announcements', async () => {
   const brewer = await player('솥홍보');
   const privateRef = services().db.collection('gamePrivate').doc(brewer.uid), playerRef = services().db.collection('gamePlayers').doc(brewer.uid);
   await Promise.all([playerRef.update({ basket: true }), privateRef.update({ pumpkins: 10 })]);
   const announcements = services().database.ref('announcements');
-  const mine = async () => Object.values((await announcements.get()).val() || {}).filter((a) => a.uid === brewer.uid);
+  const mine = async () => Object.values((await announcements.get()).val() || {}).filter((a) => a.kind === 'brew' && a.uid === brewer.uid);
   const requestId = randomUUID();
   const { gain } = await action(brewer.authorization, { requestId, type: 'brew' });
   const [announced, ...extra] = await mine();

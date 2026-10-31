@@ -58,4 +58,9 @@ async function readVillagePlan(tx, db, newcomer, now = Date.now()) {
   };
 }
 
-module.exports = { VILLAGE_SIZE, VILLAGE_NAMES, villageName, planVillages, readVillagePlan };
+// 처음 분장해 마을에 집이 생긴 사람을 모든 마을에 알린다. 공지가 실패해도 입장은 그대로다.
+function announceNewcomer(database, { uid, nick, village }) {
+  return database.ref('announcements').push({ kind: 'join', uid, nick: nick || '', v: village, at: Date.now() }).catch(() => {});
+}
+
+module.exports = { VILLAGE_SIZE, VILLAGE_NAMES, villageName, planVillages, readVillagePlan, announceNewcomer };
