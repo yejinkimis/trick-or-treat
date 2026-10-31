@@ -197,6 +197,33 @@ textarea:focus{outline:none;border-color:var(--gold)}
 .auth-switch{align-self:flex-end}
 #ad-detail{overflow-wrap:anywhere}
 #ad-detail>.field{margin-top:16px}
+.admin-profile{padding:12px;background:var(--panel-2);border:2px solid var(--edge)}
+.admin-selected{background:var(--panel);color:var(--gold);border-color:var(--gold)}
+.admin-status{display:flex;flex-wrap:wrap;gap:6px}
+.admin-chip{padding:4px 8px;background:var(--night);border:1px solid var(--panel-2);font-size:.8rem}
+.admin-chip.warn{color:var(--candy);border-color:var(--candy)}
+.admin-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.admin-metric{min-width:0;padding:9px;background:var(--panel-2);border:2px solid var(--edge)}
+.admin-metric small,.admin-metric b{display:block}
+.admin-metric small{color:var(--muted);font-size:.74rem}
+.admin-metric b{margin-top:4px;color:var(--gold);font-family:var(--f-px);font-size:.9rem;overflow-wrap:anywhere}
+.admin-disclaimer{margin:0;color:var(--muted);font-size:.8rem}
+.admin-activity-list li.admin-activity{display:block;padding:0}
+.admin-activity details{width:100%;min-width:0}
+.admin-activity summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 2px;cursor:pointer;list-style:none}
+.admin-activity summary::-webkit-details-marker{display:none}
+.admin-activity summary::after{content:'+';flex:none;color:var(--gold);font-family:var(--f-px)}
+.admin-activity details[open] summary::after{content:'−'}
+.admin-activity-main{flex:1;min-width:0}
+.admin-activity-title{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+.admin-activity-time{display:block;margin-top:3px;color:var(--muted);font-size:.76rem}
+.admin-badge{padding:2px 6px;background:var(--panel-2);font-size:.72rem}
+.admin-badge.win{color:var(--slime)}
+.admin-badge.lose{color:var(--candy)}
+.admin-activity-detail{padding:0 8px 12px}
+.admin-activity-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+.admin-activity-facts span{padding:6px 8px;background:var(--night);font-size:.8rem;overflow-wrap:anywhere}
+.admin-old-record{color:var(--muted);font-size:.8rem}
 
 .timing{position:fixed;z-index:9;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 24px);overflow:auto;padding:16px 18px;display:grid;gap:10px;text-align:center;user-select:none;box-shadow:0 0 0 100vmax rgba(11,8,16,.68),0 0 0 4px var(--edge),6px 6px 0 4px rgba(0,0,0,.4)}
 .t-title{margin:0;font-size:1.35rem;font-weight:400;color:var(--gold)}
@@ -233,6 +260,8 @@ textarea:focus{outline:none;border-color:var(--gold)}
   .toast{top:auto;bottom:calc(110px + env(safe-area-inset-bottom,0px))}
   .timing{max-height:calc(100dvh - 24px);overflow:auto;padding:12px;gap:8px}
   .timing-track{height:min(36dvh,260px);min-height:160px}
+  .admin-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .admin-activity-facts{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
@@ -2253,6 +2282,19 @@ function renderCrew() {
 const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
 const adminSeconds = (ms) => ms == null ? '-' : `${(ms / 1000).toFixed(1)}초`;
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
+const adminDelta = (value) => Number.isFinite(value) ? `${signed(value)}개` : null;
+function adminActivityDetails(item) {
+  const facts = [];
+  if (item.host) facts.push(`대상 UID · ${esc(item.host)}`);
+  if (Number.isFinite(item.level)) facts.push(`난이도 · ${item.level}단계`);
+  if (Number.isFinite(item.durationMs)) facts.push(`소요 시간 · ${adminSeconds(item.durationMs)}`);
+  if (Number.isFinite(item.candyDelta)) facts.push(`내 사탕 변화 · ${adminDelta(item.candyDelta)}`);
+  if (Number.isFinite(item.hostCandyDelta)) facts.push(`상대 사탕 변화 · ${adminDelta(item.hostCandyDelta)}`);
+  if (Number.isFinite(item.pumpkinDelta)) facts.push(`호박 변화 · ${adminDelta(item.pumpkinDelta)}`);
+  if (item.item) facts.push(`설치 장식 · ${esc(item.item)}`);
+  if (facts.length) return `<div class="admin-activity-facts">${facts.map((fact) => `<span>${fact}</span>`).join('')}</div>`;
+  return '<span class="admin-old-record">이전 기록 · 상세 정보를 저장하기 전의 활동이에요.</span>';
+}
 // 특이 계정은 참고 표시일 뿐이라, 숫자를 보고 운영자가 자세히 확인한 뒤 조치한다.
 function adminWatchHtml() {
   return S.adminWatch.length ? S.adminWatch.map((u) => `<li><div><b>${esc(u.nick)}</b>${u.banned ? ' · 밴' : ''}${u.flags.map((f) => ` <small class="flag">${esc(f)}</small>`).join('')}<br>
@@ -2263,19 +2305,28 @@ function adminWatchHtml() {
 }
 function renderAdmin() {
   const results = $('#ad-results'), detail = $('#ad-detail');
-  results.innerHTML = S.adminView === 'watch' ? adminWatchHtml() : S.adminUsers.map((user) => `<li><button class="pbtn" type="button" data-admin-target="${user.id}">${esc(user.nick)} · ${user.id.slice(0, 8)}${user.banned ? ' · 밴' : ''}</button></li>`).join('');
+  results.innerHTML = S.adminView === 'watch' ? adminWatchHtml() : S.adminUsers.map((user) => `<li><button class="pbtn${S.adminSelected === user.id ? ' admin-selected' : ''}" type="button" data-admin-target="${user.id}" aria-pressed="${S.adminSelected === user.id}">${esc(user.nick)} · ${user.id.slice(0, 8)}${user.banned ? ' · 밴' : ''}</button></li>`).join('');
   const user = S.adminUsers.find((item) => item.id === S.adminSelected);
   detail.hidden = !user;
   if (!user) { detail.innerHTML = ''; return; }
+  const stats = user.challengeStats || {};
+  const rate = Number.isFinite(stats.successRate) ? `${stats.successRate}%` : '기록 없음';
+  const average = Number.isFinite(stats.averageDurationMs) ? adminSeconds(stats.averageDurationMs) : '기록 없음';
+  const candyTotal = stats.candyDeltaKnownCount ? `${signed(stats.candyDelta)}개` : '기록 없음';
+  const statsScope = stats.sampleLimited ? '최근 24시간 · 저장 기록 상한 도달' : '최근 24시간';
   const activity = user.activity.length
-    ? user.activity.map((item) => `<li><time>${new Date(item.at).toLocaleString('ko-KR')}</time><div>${esc(adminActivityLabel(item))}${item.host ? ` · 대상 ${esc(item.host.slice(0, 8))}` : ''}${item.moved ? ' · 사탕 이동' : ''}</div></li>`).join('')
+    ? user.activity.map((item) => {
+      const outcome = item.type === 'knock-finish' ? `<span class="admin-badge ${item.outcome === 'win' ? 'win' : 'lose'}">${item.outcome === 'win' ? '성공' : '실패'}</span>` : '';
+      return `<li class="admin-activity"><details><summary><span class="admin-activity-main"><span class="admin-activity-title">${esc(adminActivityLabel(item))}${outcome}${item.moved ? '<span class="admin-badge">사탕 이동</span>' : ''}</span><time class="admin-activity-time">${new Date(item.at).toLocaleString('ko-KR')}</time></span></summary><div class="admin-activity-detail">${adminActivityDetails(item)}</div></details></li>`;
+    }).join('')
     : '<li><div>기록된 활동이 없어요.</div></li>';
   const notes = user.notes.length
     ? user.notes.map((item) => `<li><div>${esc(item.text)}<small class="note"> · ${new Date(item.at).toLocaleString('ko-KR')}</small></div><button class="pbtn" type="button" data-admin-delete-note="${item.host}" data-admin-note-at="${item.at}">삭제</button></li>`).join('')
     : '<li><div>삭제할 방명록이 없어요.</div></li>';
-  detail.innerHTML = `<div class="field"><span class="lab">${esc(user.nick)} · ${esc(user.id)}</span><span class="note">사탕 ${user.candies}개 · 호박 ${user.pumpkins}개 · ${user.village ? `${user.village}번 마을` : '마을 미배정'}</span><span class="note">밴 ${user.banned ? `상태 · ${esc(user.banReason)}` : '아님'} · 순위 제외 ${user.rankExcluded ? '예' : '아니요'} · 집 숨김 ${user.houseHidden ? '예' : '아니요'}</span>
+  detail.innerHTML = `<div class="field admin-profile"><span class="lab">${esc(user.nick)}</span><span class="note">사용자 UID · ${esc(user.id)}</span><div class="admin-status"><span class="admin-chip">사탕 ${user.candies}개</span><span class="admin-chip">호박 ${user.pumpkins}개</span><span class="admin-chip">${user.village ? `${user.village}번 마을` : '마을 미배정'}</span><span class="admin-chip ${user.banned ? 'warn' : ''}">${user.banned ? `밴 · ${esc(user.banReason)}` : '밴 아님'}</span><span class="admin-chip">순위 제외 ${user.rankExcluded ? '예' : '아니요'}</span><span class="admin-chip">집 숨김 ${user.houseHidden ? '예' : '아니요'}</span></div>
     <div class="row"><button class="pbtn ${user.banned ? '' : 'hot'}" type="button" data-admin-action="${user.banned ? 'unban' : 'ban'}">${user.banned ? '밴 해제' : '밴'}</button><button class="pbtn" type="button" data-admin-action="rank" data-value="${!user.rankExcluded}">${user.rankExcluded ? '순위 포함' : '순위 제외'}</button><button class="pbtn" type="button" data-admin-action="house" data-value="${!user.houseHidden}">${user.houseHidden ? '집 복원' : '집 숨김'}</button></div></div>
-    <div class="field"><span class="lab">최근 채팅</span>${user.latestChat ? `<div class="shop-item"><div>${esc(user.latestChat.text || '')}</div><button class="pbtn" type="button" data-admin-action="delete-chat">삭제</button></div>` : '<span class="note">현재 채팅이 없어요.</span>'}</div><div class="field"><span class="lab">최근 활동</span><ol class="book">${activity}</ol></div><div class="field"><span class="lab">방명록</span><ol class="book">${notes}</ol></div>`;
+    <div class="field"><span class="lab">도전 현황 · ${statsScope}</span><div class="admin-metrics"><div class="admin-metric"><small>완료한 도전</small><b>${Number(stats.completed) || 0}회</b></div><div class="admin-metric"><small>성공률</small><b>${rate}</b></div><div class="admin-metric"><small>평균 소요 시간</small><b>${average}</b></div><div class="admin-metric"><small>도전자 사탕 변화</small><b>${candyTotal}</b></div></div><p class="admin-disclaimer">성공률은 참고 지표예요. 이 수치만으로 자동 밴하지 않고, 도전 기록을 함께 확인해 주세요.</p></div>
+    <div class="field"><span class="lab">최근 채팅</span>${user.latestChat ? `<div class="shop-item"><div>${esc(user.latestChat.text || '')}</div><button class="pbtn" type="button" data-admin-action="delete-chat">삭제</button></div>` : '<span class="note">현재 채팅이 없어요.</span>'}</div><div class="field"><span class="lab">최근 활동</span><ol class="book admin-activity-list">${activity}</ol></div><div class="field"><span class="lab">방명록</span><ol class="book">${notes}</ol></div>`;
 }
 async function loadAdminUsers() {
   if (!S.isOwner || S.mode !== 'firebase') return;

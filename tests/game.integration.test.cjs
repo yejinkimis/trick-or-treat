@@ -58,6 +58,28 @@ test('admin moderation enforces permissions, bans existing sessions, hides house
   await act(admin, { type: 'event-stop' });
 });
 
+test('admin review shows recent challenge detail and keeps high success rate as information only', async () => {
+  const [admin, visitor, host] = await Promise.all(['통계운영', '통계도전', '통계집'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const { event } = await act(admin, { type: 'event-start' });
+  await services().db.collection('gamePrivate').doc(visitor.uid).update({ pumpkins: 3 });
+  await services().db.collection('gamePlayers').doc(host.uid).update({ round: event.id, candies: 1 });
+  const attempt = await winningChallenge(visitor, host);
+  const finish = await act(visitor, { type: 'knock-finish', ...attempt });
+
+  const found = (await searchUsers(admin.authorization, visitor.uid)).users[0];
+  assert.equal(found.challengeStats.completed, 1);
+  assert.equal(found.challengeStats.wins, 1);
+  assert.equal(found.challengeStats.successRate, 100);
+  assert.equal(found.challengeStats.candyDelta, 1);
+  assert.equal(found.banned, false, 'success rate is displayed for review and never triggers an automatic ban');
+  const detail = found.activity.find((item) => item.type === 'knock-finish');
+  assert.equal(detail.durationMs > 0, true);
+  assert.equal(detail.candyDelta, 1);
+  assert.equal(detail.hostCandyDelta, -1);
+  await act(admin, { type: 'event-stop' });
+});
+
 async function player(prefix) {
   const account = await signup({ nickname: `${prefix}${randomUUID().slice(0, 8)}`, password: 'game-password-8' });
   const response = await fetch(`http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}/identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=demo-api-key`, {
