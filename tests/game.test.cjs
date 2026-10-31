@@ -267,7 +267,7 @@ test('the first brew is a quest step, and the next goal then keeps showing the c
   assert.match(detail(), /솥이 준비됐어요! 광장 솥으로 가세요/);
   g.run('S.players.me.brewAt = Date.now(); renderQuest()');
   assert.equal(quest.dataset.brew, 'cooling');
-  assert.match(detail(), /솥이 식는 중 · 10분 뒤/);
+  assert.match(detail(), /솥이 식는 중 · 5분 뒤/);
 });
 
 test('knock prerequisites and ended event disable the action', () => {
@@ -934,7 +934,7 @@ test('brewing spends thirty pumpkins, adds rolled candy, keeps the basket and co
   assert.match(g.run('messages.join(" ")'), /사탕 2개가 떠올랐어요/);
   g.run('S.players.me.pumpkins = 60; S.nearCauldron = true; renderAction()');
   assert.equal(g.elements.get('act-btn').disabled, true);
-  assert.match(g.elements.get('act-sub').textContent, /식는 중 · 10분 뒤/);
+  assert.match(g.elements.get('act-sub').textContent, /식는 중 · 5분 뒤/);
   await g.finish(g.run('brew()'));
   assert.equal(g.run('candiesOf("me")'), 12);
   assert.match(g.elements.get('toast').textContent, /식는 중/);
