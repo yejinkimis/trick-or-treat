@@ -1604,6 +1604,11 @@ function draw() {
     if (decor) drawDecor(decor, s.hx * T, s.hy * T);
   }
   for (const p of S.pumpkins) drawSpr(TILE_SPR.pumpkin, p.tx * T, p.ty * T);
+  for (const d of rainDrops()) {
+    if (d.left < 4000 && Math.floor(d.left / 250) % 2) continue;
+    const fall = Math.max(0, 1 - d.age / RAIN_FALL_MS);
+    drawSpr(TILE_SPR.candy, d.x - TILE_SPR.candy.width / 2, d.y - TILE_SPR.candy.height / 2 - fall * 60);
+  }
   const now = Date.now();
   for (const g of ghosts.values()) actors.push({ a: g, key: g.c, name: g.by ? nameOf(g.by) : '이웃', color: '#c3b4da', fx: g.by ? activeFx(g.by) : null, stun: g.stunUntil > now, basket: hasBasket(g.by), said: bubbleOf(g.bot ? g.by : g.peer), doodle: g.by ? doodleSprite(S.players[g.by]?.doodle, g.c) : null });
   if (S.npc) actors.push({ a: { ...S.npc, f: 1, m: false, walk: 0 }, key: S.npc.c, name: '' });
@@ -1652,6 +1657,7 @@ function frame(now) {
   lastT = now;
   syncPeers();
   update(dt);
+  pickRain();
   renderMovementHint();
   draw();
   positionActorBubbles();
@@ -1659,6 +1665,7 @@ function frame(now) {
   if (sec !== hudSecond) {
     hudSecond = sec;
     noticeEventTurn();
+    noticeRain();
     renderHud();
     renderAction();
     S.account?.promptDuel?.();
@@ -1816,6 +1823,69 @@ function growPumpkins(dt) {
     return;
   }
 }
+// 사탕 비: 서버가 알려 준 시각마다 내 화면에만 사탕이 떨어진다. 자리는 시작 시각과 순번으로 정해 풀밭 칸에 놓는다.
+const RAIN_FALL_MS = 700;
+const pickedDrops = new Set(), rainNoticed = new Set();
+const rainSeat = (at, i) => {
+  let h = Math.imul(Math.floor(at / 1000) ^ Math.imul(i + 1, 0x9e3779b1), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+};
+const serverNowMs = () => Date.now() + (S.clockOffset || 0);
+const activeRain = (now) => (S.mode === 'firebase' && eventState() !== 'ended' ? (S.rain || []).find((r) => now >= r.at && now < r.at + r.ms + r.life) : null);
+function rainDrops(now = serverNowMs()) {
+  const rain = MAP.grass.length ? activeRain(now) : null;
+  if (!rain) return [];
+  const got = S.ownPrivate?.rain?.at === rain.at ? S.ownPrivate.rain.got || [] : [];
+  const drops = [];
+  for (let i = 0; i * rain.every < rain.ms; i++) {
+    const at = rain.at + i * rain.every, id = `${rain.at}-${i}`;
+    if (at > now) break;
+    if (now >= at + rain.life || got.includes(i) || pickedDrops.has(id)) continue;
+    const g = MAP.grass[rainSeat(rain.at, i) % MAP.grass.length];
+    drops.push({ id, age: now - at, left: at + rain.life - now, x: g.tx * T + 8, y: g.ty * T + 10 });
+  }
+  return drops;
+}
+function pickRain() {
+  if (S.busy || S.readOnly || !myCostume() || modalOpen()) return;
+  const drop = rainDrops().find((d) => d.age > RAIN_FALL_MS && Math.hypot(S.pos.x - d.x, S.pos.y - d.y) < 12);
+  if (drop) void catchDrop(drop);
+}
+// 서버가 멀어 응답이 늦어도 바로 주운 것처럼 보여 주고, 서버가 거절하면 개수를 되돌린다.
+async function catchDrop(d) {
+  pickedDrops.add(d.id);
+  S.players[S.me] = { ...S.players[S.me], round: currentRound(), candies: candiesOf(S.me) + 1 };
+  S.floats.push({ text: '사탕 +1', x: d.x, y: d.y - 12, t: 0, life: 0.9 });
+  playSfx('catch');
+  render();
+  try {
+    const saved = await gameRequest({ type: 'rain-pick', drop: d.id });
+    S.players[S.me] = { ...S.players[S.me], round: currentRound(), candies: saved.candies };
+  } catch (error) {
+    if (error.status !== 409) pickedDrops.delete(d.id);
+    S.players[S.me] = { ...S.players[S.me], candies: Math.max(0, candiesOf(S.me) - 1) };
+    if (error.status !== 409) toast(error.message);
+  }
+  render();
+}
+function noticeRain() {
+  const now = serverNowMs();
+  if (S.mode !== 'firebase' || eventState() === 'ended') return;
+  for (const r of S.rain || []) {
+    const phase = now >= r.at + r.ms ? 'end' : now >= r.at ? 'start' : now >= r.at - 60000 ? 'soon' : null;
+    if (!phase || rainNoticed.has(`${r.at}:${phase}`)) continue;
+    rainNoticed.add(`${r.at}:${phase}`);
+    const min = Math.round(r.ms / 60000);
+    if (phase === 'soon') toast(`1분 뒤 사탕 비가 내려요! ${min}분 동안 떨어지는 사탕을 주우면 1개씩 받아요.`, { duration: 5000 });
+    if (phase === 'start') toast(`사탕 비 시작! ${min}분 동안 마을에 떨어지는 사탕으로 걸어가면 주워요.`, { duration: 5000 });
+    if (phase === 'end' && now < r.at + r.ms + r.life + 30000) toast('사탕 비가 그쳤어요.');
+  }
+}
+const rainLine = () => {
+  const now = serverNowMs(), rain = activeRain(now);
+  return rain && now < rain.at + rain.ms ? ` · 사탕 비 ${fmtLeft(rain.at + rain.ms - now)} 남음` : '';
+};
 const hasBasket = (id) => Boolean(id) && (S.players[id]?.basket === true || (S.players[id]?.pumpkins || 0) >= BASKET_PUMPKINS);
 const brewWait = (id) => Math.max(0, (S.players[id]?.brewAt || 0) + BREW_COOLDOWN_MS - Date.now());
 function rollBrew() {
@@ -2049,7 +2119,7 @@ function eventLine() {
     const top = list[0];
     return top ? `이벤트 끝 · 우승 ${nameOf(top.id)} (사탕 ${top.n}개)${mine}` : '이벤트 끝';
   }
-  return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${mine}`;
+  return `이벤트 ${fmtLeft(S.event.endsAt - Date.now())} 남음${rainLine()}${mine}`;
 }
 // 별도 퀘스트 잔액을 저장하지 않고 기존 호박 수와 노크 기록으로 진행도를 복원한다.
 function renderQuest() {
@@ -2682,7 +2752,7 @@ function renderCrew() {
   if (html !== renderCrew.last) $('#cr-list').innerHTML = renderCrew.last = html;
 }
 
-const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', 'item-buy': '아이템 구매', 'item-use': '아이템 사용', 'duel-offer': '1대1 대전 신청', 'duel-accept': '1대1 대전 수락', 'duel-decline': '1대1 대전 거절', 'duel-cancel': '1대1 대전 취소', 'duel-expire': '1대1 대전 만료', 'duel-hit': '1대1 대전 뿅망치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
+const adminActivityLabel = (item) => ({ harvest: '호박 수확', brew: '연금술', decor: '장식 설치', 'item-buy': '아이템 구매', 'item-use': '아이템 사용', 'rain-pick': '사탕 비 줍기', 'duel-offer': '1대1 대전 신청', 'duel-accept': '1대1 대전 수락', 'duel-decline': '1대1 대전 거절', 'duel-cancel': '1대1 대전 취소', 'duel-expire': '1대1 대전 만료', 'duel-hit': '1대1 대전 뿅망치', mural: '지붕 그림 변경', doodle: '몸 낙서 변경', note: '방명록 작성', 'knock-start': '집에 도전', 'knock-finish': item.outcome === 'win' ? '도전 성공' : '도전 실패', 'knock-leave': item.outcome === 'lose' ? '도전 중단 후 실패' : '도전 취소', 'event-start': '이벤트 시작', 'event-stop': '이벤트 종료' }[item.type] || item.type);
 const adminSeconds = (ms) => ms == null ? '-' : `${(ms / 1000).toFixed(1)}초`;
 const signed = (n) => (n > 0 ? `+${n}` : String(n));
 const adminDelta = (value) => Number.isFinite(value) ? `${signed(value)}개` : null;
@@ -4455,7 +4525,7 @@ async function connectFirebaseGame(uid) {
   const a = S.account, fs = a.firestoreSdk, rt = a.databaseSdk;
   const token = await a.auth.currentUser.getIdToken();
   const session = await accountRequest('/api/game/session', { method: 'POST', headers: { authorization: `Bearer ${token}` } });
-  S.mode = 'firebase'; S.isOwner = session.isAdmin; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
+  S.mode = 'firebase'; S.isOwner = session.isAdmin; S.rain = Array.isArray(session.rain) ? session.rain : []; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
   duelStartTimers.forEach(clearTimeout);
   duelStartTimers = [];
   Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [], announcement: null, announcementUnread: false, duels: [], duel: null, duelActionPending: false, dismissedDuelIds: new Set(), duelExpiryRequestedIds: new Set(), duelStartId: null, duelReadyUntil: 0 });

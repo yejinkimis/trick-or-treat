@@ -9,7 +9,7 @@
 - 현재 배포: https://trick-or-treat-gpln.vercel.app/prototype/trick-or-treat.html
 - 이 변경 배포 후 기본 주소: https://trick-or-treat-gpln.vercel.app/
 - 기존 `/prototype/trick-or-treat.html` 링크는 `/`로 임시 리다이렉트한다.
-- 동료가 설정한 흐름: PR에 Preview 주소 생성 → 확인 → `main` 머지 시 Production 자동 배포.
+- `main` 머지 때만 Production으로 자동 배포한다. Hobby 플랜은 하루 배포 100번 한도가 있고 브랜치 push마다 생기던 Preview가 한도를 다 써서, `vercel.json`의 `git.deploymentEnabled`로 다른 브랜치 배포를 껐다. Preview도 운영 Firebase를 써서 테스트에는 쓰지 않는다. 확인은 로컬 에뮬레이터에서 한다.
 - 실제 PR #2에서는 Vercel이 커밋 작성자 `choubung`을 Hobby 운영 계정의 구성원으로 인식하지 못해 Preview를 차단했다. Preview 자동 생성은 현재 보장되지 않으며, 배포 담당자가 운영 계정에서 배포 권한과 진행 방법을 확인해야 한다. GitHub PR: https://github.com/yejinkimis/trick-or-treat/pull/2
 - Firebase 프로젝트 ID: `trick-or-treat-89de3`
 - RTDB: https://trick-or-treat-89de3-default-rtdb.asia-southeast1.firebasedatabase.app/
@@ -45,6 +45,7 @@ Vercel Project Settings → Environment Variables에 등록한 뒤 다시 배포
 | FIREBASE_DATABASE_URL | https://trick-or-treat-89de3-default-rtdb.asia-southeast1.firebasedatabase.app |
 | GAME_ADMIN_UIDS | 이벤트 운영자 계정의 Firebase UID. 여러 명이면 쉼표로 구분 |
 | GAME_MINIGAMES | 선택. 노크 때 랜덤으로 낼 게임을 쉼표로 제한한다(`fish,whack,spell,catch`). 비우면 네 개 모두, 문제가 생긴 게임은 빼고 재배포한다 |
+| GAME_CANDY_RAIN_AT | 선택. 사탕 비 시각을 '시작 시각/분'으로 쉼표로 잇는다(`2026-10-31T22:30:00+09:00/90`). 설정하지 않으면 기본값(10/31 22:30~24:00), 빈 문자열이면 끈다 |
 | FIREBASE_SERVICE_ACCOUNT_JSON | 프로젝트 설정 → 서비스 계정 → Firebase Admin SDK의 서비스 계정 JSON 전체 |
 
 Web 설정은 공개 설정이고 `FIREBASE_SERVICE_ACCOUNT_JSON`은 서버 전용 비밀값이다. JSON 키는 Vercel 환경변수에서만 관리하며 Git이나 PR 본문에 올리지 않는다. `/api/firebase-config`는 이 비밀값을 반환하지 않는다.
@@ -59,7 +60,7 @@ Firestore가 `asia-northeast3`(서울)에 있어서 `vercel.json`의 `regions`�
 
 1. 대상 프로젝트가 `trick-or-treat-89de3`인지 확인하고 `firestore.rules`와 `firestore.indexes.json`을 Firestore에, `database.rules.json`의 rules 내용을 Realtime Database에 게시한다. 한쪽만 적용하면 실시간 게임이 정상 동작하지 않는다. 캐릭터 위치·뿅망치 경로가 `presence/{마을}`·`events/{마을}`로, 채팅이 `chat`, 접속자 목록이 `online`으로 바뀌므로, 규칙과 새 배포를 같은 때에 반영한다. 이전 화면을 띄워 둔 사람은 새로고침해야 접속된다.
 2. 서비스 계정 JSON을 Vercel 환경변수에 등록한다. JSON의 `project_id`와 `FIREBASE_PROJECT_ID`가 일치해야 한다.
-3. PR Preview에서 가입 → 분장 선택 → 로그아웃 → 같은 계정 로그인 → 다른 브라우저 로그인 순으로 확인한다. 중복 닉네임과 잘못된 비밀번호도 거부되어야 한다.
+3. 로컬 에뮬레이터에서 가입 → 분장 선택 → 로그아웃 → 같은 계정 로그인 → 다른 브라우저 로그인 순으로 확인한다. 중복 닉네임과 잘못된 비밀번호도 거부되어야 한다.
 4. `/`에서 게임이 열리고 기존 HTML 링크가 `/`로 연결되는지 확인한다. `/api/firebase-config`는 200이어야 하며 비밀 키가 없어야 한다.
 5. 운영자도 일반 가입 화면으로 가입한다. Firebase Authentication의 해당 계정 UID를 `GAME_ADMIN_UIDS`에 등록하고 재배포한다. 등록한 계정에만 순위 창의 시작·종료 버튼이 나타난다. 닉네임을 넣으면 권한이 생기지 않는다.
 6. 두 계정으로 로그인해 서로의 캐릭터 이동·채팅·노크 결과와 순위를 확인한다. 이벤트 시작 전 기록은 연습 라운드로 저장되며, 시작 버튼을 누르면 모두 사탕 10개로 새 라운드를 시작한다. 종료 후 노크·구매를 거부하고 최종 사탕 순위를 보존한다. 시간이 다 되어 자연 종료되면 운영자의 ‘결과 확정’ 버튼으로 보관한다. 새 라운드를 시작해도 이전 결과는 `gameRounds/{라운드 ID}`에 남는다.
