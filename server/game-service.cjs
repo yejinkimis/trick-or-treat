@@ -18,6 +18,15 @@ const DUEL_BONK_RANGE = 22, DUEL_BONK_COOLDOWN_MS = 600, DUEL_BONK_RESET_MS = 60
 const TRICK_KINDS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
 const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 10, BREW_COOLDOWN_MS = 5 * 60 * 1000;
 const BREW_TABLE = [{ n: 2, weight: 80 }, { n: 5, weight: 14 }, { n: 10, weight: 5 }, { n: 20, weight: 1 }];
+// 룰렛 가중치는 100,000 단위로 두어 +100의 0.05% 확률을 정확히 표현한다.
+// Firestore transactions allow 500 writes; reserve one for the event and one for the caller's receipt.
+const ROULETTE_SCALE = 100_000, ROULETTE_MAX_PLAYERS = 498;
+const ROULETTE_ODDS = Object.freeze({
+  top: Object.freeze([[0, 25_000], [5, 45_000], [10, 20_000], [20, 7_000], [50, 2_950], [100, 50]]),
+  middle: Object.freeze([[0, 15_000], [5, 40_000], [10, 25_000], [20, 13_000], [50, 6_950], [100, 50]]),
+  bottom: Object.freeze([[0, 5_000], [5, 35_000], [10, 30_000], [20, 20_000], [50, 9_950], [100, 50]]),
+  zero: Object.freeze([[10, 55_000], [20, 30_000], [50, 14_950], [100, 50]]),
+});
 const hasBasket = (player) => player.basket === true || (player.pumpkins || 0) >= BASKET_PUMPKINS;
 // 호박은 서버가 밭에 심어 둔 것만 딸 수 있다. 화면은 자리 번호(s)를 마을 풀밭 칸으로 바꿔 그린다.
 const MAX_CHALLENGE_LOG = 50, HARVEST_HOURS_KEPT = 25;
@@ -38,6 +47,22 @@ function brewGain(roll = randomInt(100)) {
     roll -= weight;
   }
   return 0;
+}
+function rouletteGain(tier, roll = randomInt(ROULETTE_SCALE)) {
+  let remaining = roll;
+  for (const [gain, weight] of ROULETTE_ODDS[tier] || ROULETTE_ODDS.top) {
+    if (remaining < weight) return gain;
+    remaining -= weight;
+  }
+  return 0;
+}
+function rankRoulette(players) {
+  const topEnd = Math.ceil(players.length / 3), middleEnd = Math.ceil(players.length * 2 / 3);
+  return players.map((player, index) => {
+    const tier = player.n === 0 ? 'zero' : index < topEnd ? 'top' : index < middleEnd ? 'middle' : 'bottom';
+    const award = rouletteGain(tier);
+    return { ...player, rank: index + 1, tier, award, before: player.n, after: player.n + award };
+  });
 }
 // 예약된 이벤트는 시작 시각 전까지 연습 기록으로 돈다. 시작 시각이 되면 문서를 바꾸지 않아도 모두 새 라운드(사탕 10개)가 된다.
 const roundOf = (event, now = Date.now()) => (event?.id && now >= (event.startedAt || 0) ? event.id : 'practice');
@@ -245,7 +270,27 @@ async function action(authorization, input) {
     const type = input.type;
     let result = {};
     let activityDetails = {};
-    if (type === 'event-start' || type === 'event-stop') {
+    if (type === 'rank-roulette') {
+      if (!isAdmin(uid)) fail('운영자만 룰렛을 실행할 수 있어요.', 403);
+      if (!event || event.results || now < event.startedAt || now >= event.endsAt) fail('진행 중인 이벤트에서만 룰렛을 실행할 수 있어요.');
+      if (event.roulette?.id) fail('이번 이벤트 룰렛은 이미 끝났어요.');
+      const playerSnapshot = await tx.get(db.collection('gamePlayers'));
+      const ranked = rankPlayers(playerSnapshot.docs, event, now);
+      if (!ranked.length) fail('룰렛에 참여할 분장한 사람이 없어요.');
+      if (ranked.length > ROULETTE_MAX_PLAYERS) fail(`한 번에 ${ROULETTE_MAX_PLAYERS}명까지 룰렛을 실행할 수 있어요.`);
+      const rouletteId = randomUUID();
+      const drawn = rankRoulette(ranked);
+      const roulette = { id: rouletteId, at: now, count: drawn.length };
+      for (const player of drawn) {
+        tx.update(db.collection('gamePlayers').doc(player.id), {
+          round, candies: player.after,
+          roulette: { id: rouletteId, roundId: event.id, at: now, rank: player.rank, tier: player.tier,
+            award: player.award, before: player.before, after: player.after },
+        });
+      }
+      tx.update(eventRef, { roulette });
+      result = { roulette, rouletteResult: drawn.find((player) => player.id === uid) || null };
+    } else if (type === 'event-start' || type === 'event-stop') {
       if (!isAdmin(uid)) fail('운영자만 이벤트를 변경할 수 있어요.', 403);
       const settlement = await readDuelSettlement(tx, db, event, now);
       if (settlement.hasLiveDuels) fail('진행 중인 1대1 대전이 끝난 뒤 이벤트를 바꿀 수 있어요.', 409);
@@ -641,6 +686,7 @@ async function action(authorization, input) {
         ...(type === 'harvest' ? { pumpkinDelta: 1 } : {}),
         ...(type === 'brew' ? { candyDelta: result.gain, pumpkinDelta: -BREW_COST } : {}),
         ...(type === 'decor' ? { item: input.item, candyDelta: -PRICES[input.item] } : {}),
+        ...(type === 'rank-roulette' && result.rouletteResult ? { candyDelta: result.rouletteResult.award } : {}),
         ...(type === 'knock-finish' && result.entry ? { host: result.entry.h, outcome: result.entry.r, moved: result.entry.moved, level: result.entry.level, ...activityDetails } : {}),
         ...(type === 'knock-leave' ? { host: result.host, outcome: result.penalized ? 'lose' : 'quit', moved: false, level: result.level } : {}) };
       tx.set(privateRef, { ...mine, ...privateUpdate,
@@ -652,8 +698,11 @@ async function action(authorization, input) {
   // 같은 요청을 다시 보내 영수증으로 돌려준 결과에는 공지를 또 띄우지 않는다. 공지가 실패해도 연금술 결과는 그대로다.
   if (brewNews) await services().database.ref('announcements').push({ kind: 'brew', ...brewNews }).catch(() => {});
   // 이벤트를 바꾼 서버는 기억해 둔 이벤트를 버려 바로 다음 호박 따기부터 새 이벤트를 읽게 한다.
-  if (input.type === 'event-start' || input.type === 'event-stop') eventMemo = null;
+  if (input.type === 'event-start' || input.type === 'event-stop' || input.type === 'rank-roulette') {
+    eventMemo = null;
+    leaderboardMemo = null;
+  }
   return done;
 }
 
-module.exports = { TRICK_KINDS, PRICES, ITEMS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { TRICK_KINDS, PRICES, ITEMS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, rouletteGain, rankRoulette, ROULETTE_ODDS, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
