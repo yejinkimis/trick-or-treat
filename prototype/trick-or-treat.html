@@ -1708,9 +1708,7 @@ function bonk() {
     if (g.bot || g.by !== opponent) { toast('대전 상대에게만 뿅망치가 닿아요.'); return; }
     gameRequest({ type: 'duel-hit', duelId: duel.id, victim: g.by, attackerPeer: S.myPeer, victimPeer: g.peer })
       .then((result) => {
-        const hitCount = result.hitCount || BONK_TO_STUN;
-        onBonk({ data: { to: g.peer, duelId: duel.id, hitCount }, by: S.me });
-        S.room.emit('bonk', { to: g.peer, duelId: duel.id, hitCount }).catch(() => {});
+        showDuelHit(duel, g.by, { count: result.hitCount || BONK_TO_STUN, at: result.hitAt });
         track('bonk_sent', { target_is_bot: false, duel: true });
         if (result.status === 'completed') toast(`기절 성공! 사탕 ${duel.stake * 2}개를 가져갔어요.`);
       })
@@ -1723,6 +1721,37 @@ function bonk() {
     .catch(() => { track('action_failed', { action: 'bonk', status: 0 }); toast('뿅망치가 안 닿았어요. 잠시 뒤 다시 해 보세요.'); });
 }
 
+// The API response and duel snapshots share the server hit timestamp, so either may arrive first.
+const duelHitEffects = new Map();
+function showDuelHit(duel, victimUid, hit) {
+  if (!duel?.players?.includes(S.me) || !duel.players.includes(victimUid)) return;
+  const at = Number(hit?.at), count = Math.min(BONK_TO_STUN, Number(hit?.count) || 0);
+  if (!Number.isFinite(at) || at <= 0 || count < 1) return;
+  const key = `${duel.id}:${victimUid}`;
+  if ((duelHitEffects.get(key) || 0) >= at) return;
+  duelHitEffects.set(key, at);
+  if (duelHitEffects.size > 80) duelHitEffects.delete(duelHitEffects.keys().next().value);
+  const isMe = victimUid === S.me;
+  const victim = isMe ? S.pos : [...ghosts.values()].find((ghost) => ghost.by === victimUid);
+  if (!victim) return;
+  S.swings.push({ x: victim.x, y: victim.y, t: 0 });
+  playSfx(count >= BONK_TO_STUN && isMe ? 'stun' : 'hit');
+  S.floats.push({ text: count >= BONK_TO_STUN ? '기절!' : `뿅! ${count}/${BONK_TO_STUN}`,
+    x: victim.x + 8, y: victim.y - 20, t: 0, life: count >= BONK_TO_STUN ? 1.2 : 0.7 });
+}
+
+function syncDuelHitEffects(duel, previousDuel) {
+  if (!duel || !['active', 'completed'].includes(duel.status)) return;
+  const now = Date.now() + (Number(S.clockOffset) || 0);
+  for (const uid of duel.players || []) {
+    const hit = duel.hits?.[uid];
+    if ((Number(hit?.at) || 0) <= (Number(previousDuel?.hits?.[uid]?.at) || 0)) continue;
+    // Reconnecting should not replay old hits; a newly received live hit still appears.
+    if (!previousDuel && now - (Number(hit?.at) || 0) > 3000) continue;
+    showDuelHit(duel, uid, hit);
+  }
+}
+
 function onBonk(msg) {
   const to = msg?.data?.to;
   if (typeof to !== 'string') return;
@@ -1732,18 +1761,7 @@ function onBonk(msg) {
   if (!victim) return;
   const duel = activeOrRecentDuel();
   const duelHit = typeof msg.data.duelId === 'string';
-  if (duelHit) {
-    if (msg.by === S.me && msg.data.id) return;
-    if (!duel || msg.data.duelId !== duel.id) return;
-    const victimUid = to.slice(0, to.indexOf(':'));
-    const opponent = duel?.players?.find((id) => id !== S.me);
-    if (!opponent || ![S.me, opponent].includes(victimUid) || ![S.me, opponent].includes(msg.by)) return;
-    const count = Math.max(1, Math.min(BONK_TO_STUN, Number(msg.data.hitCount) || Number(duel.hits?.[victimUid]?.count) || 1));
-    S.swings.push({ x: victim.x, y: victim.y, t: 0 });
-    if (isMe || msg.by === S.me) playSfx(count >= BONK_TO_STUN && isMe ? 'stun' : 'hit');
-    S.floats.push({ text: count >= BONK_TO_STUN ? '기절!' : `뿅! ${count}/${BONK_TO_STUN}`, x: victim.x + 8, y: victim.y - 20, t: 0, life: count >= BONK_TO_STUN ? 1.2 : 0.7 });
-    return;
-  } else if (duel?.status === 'active') return;
+  if (duelHit || duel?.status === 'active') return;
   const tally = isMe ? S : victim;
   if ((tally.stunUntil || 0) > now) return;
   tally.hits = now - (tally.lastHit || 0) > BONK_RESET_MS ? 1 : (tally.hits || 0) + 1;
@@ -1758,7 +1776,7 @@ function onBonk(msg) {
   if (isMe) {
     S.target = null;
     shake();
-    toast(duelHit ? `대전 중 기절! ${nameOf(msg.by)} 님이 이겼어요.` : `${msg.by ? nameOf(msg.by) : '누군가'}한테 뿅망치 ${BONK_TO_STUN}대 맞고 기절! 3초 동안 못 움직여요`);
+    toast(`${msg.by ? nameOf(msg.by) : '누군가'}한테 뿅망치 ${BONK_TO_STUN}대 맞고 기절! 3초 동안 못 움직여요`);
   }
 }
 
@@ -4551,6 +4569,7 @@ async function connectFirebaseGame(uid) {
   S.mode = 'firebase'; S.isOwner = session.isAdmin; S.rain = Array.isArray(session.rain) ? session.rain : []; S.raid = Array.isArray(session.raid) ? session.raid : []; S.firebasePlayers = {}; S.players = S.players[uid] ? { [uid]: S.players[uid] } : {};
   duelStartTimers.forEach(clearTimeout);
   duelStartTimers = [];
+  duelHitEffects.clear();
   Object.assign(S, { ownPlayer: null, ownPrivate: null, strangers: {}, villages: {}, village: null, rankList: null, rankAt: 0, online: [], excluded: [], announcement: null, announcementUnread: false, duels: [], duel: null, duelActionPending: false, dismissedDuelIds: new Set(), duelExpiryRequestedIds: new Set(), duelStartId: null, duelReadyUntil: 0 });
   ghosts.clear(); chatBubbles.clear(); chatLog.length = 0;
   Object.assign(chatHistory, { more: false, oldest: null, loading: false, loadOlder: null }); renderChatLog();
@@ -4562,12 +4581,13 @@ async function connectFirebaseGame(uid) {
     S.duels = duels;
     S.duel = activeOrRecentDuel();
     const previousDuel = S.duels.length ? previousDuels.find((duel) => duel.id === S.duel?.id) : null;
+    syncDuelHitEffects(S.duel, previousDuel);
     if (S.duel?.status === 'active') {
       const hitCount = Number(S.duel.hits?.[uid]?.count) || 0;
       if (hitCount > (Number(previousDuel?.hits?.[uid]?.count) || 0)) S.lastHit = Date.now();
       S.hits = hitCount;
       if (previousDuel?.status !== 'active') startDuelCountdown(S.duel);
-    } else if (S.duel?.status === 'completed' && S.duel.loser === uid && previousDuel?.status === 'active') {
+    } else if (S.duel?.status === 'completed' && S.duel.loser === uid && previousDuel && previousDuel.status !== 'completed') {
       S.hits = 0;
       S.stunUntil = Date.now() + STUN_MS;
       S.target = null;

@@ -563,13 +563,13 @@ async function action(authorization, input) {
           const winnerLockRef = db.collection('gameDuelLocks').doc(winner);
           const loserLockRef = db.collection('gameDuelLocks').doc(loser);
           tx.delete(winnerLockRef); tx.delete(loserLockRef);
-          result = { id: duel.id, status, winner, loser, knockedOut: victimUid, hits: DUEL_BONK_TO_STUN, candies: winnings };
+          result = { id: duel.id, status, winner, loser, knockedOut: victimUid, hits: DUEL_BONK_TO_STUN, hitAt: now, candies: winnings };
         } else {
           tx.update(duelRef, { hits, lastHitAt, updatedAt: now, expiresAt });
           const lockUpdate = { duelId: duel.id, status: 'active', until: expiresAt };
           tx.set(db.collection('gameDuelLocks').doc(uid), lockUpdate);
           tx.set(db.collection('gameDuelLocks').doc(victimUid), lockUpdate);
-          result = { id: duel.id, status: 'active', hitCount: hit.count, remaining: DUEL_BONK_TO_STUN - hit.count, expiresAt };
+          result = { id: duel.id, status: 'active', hitCount: hit.count, hitAt: now, remaining: DUEL_BONK_TO_STUN - hit.count, expiresAt };
         }
       } else if (type === 'mural') {
         if (typeof input.mural !== 'string' || !/^[.1-8]{288}$/.test(input.mural)) fail('지붕 그림을 확인해 주세요.');
