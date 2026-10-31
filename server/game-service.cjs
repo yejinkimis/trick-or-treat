@@ -7,6 +7,12 @@ const { readVillagePlan } = require('./village.cjs');
 const { hourOf } = require('./watch.cjs');
 
 const PRICES = { lantern: 2, web: 2, pumpkin: 3, cauldron: 4, bats: 5 };
+const ITEMS = Object.freeze({
+  'house-ward': Object.freeze({ price: 5, durationMs: 5 * 60 * 1000, cooldownMs: 20 * 60 * 1000 }),
+});
+const ITEM_INVENTORY_MAX = 99, MAX_ITEM_PURCHASES = 200;
+const DUEL_MAX_STAKE = 10, DUEL_INVITE_MS = 60 * 1000, DUEL_IDLE_MS = 30 * 1000, DUEL_MAX_MS = 90 * 1000;
+const DUEL_BONK_RANGE = 22, DUEL_BONK_COOLDOWN_MS = 600, DUEL_BONK_RESET_MS = 6000, DUEL_BONK_TO_STUN = 5;
 // 사탕 잡기에 실패하면 사탕은 그대로 두고 장난 하나를 당한다. 화면의 TRICKS와 이름이 같아야 한다.
 const TRICK_KINDS = ['doodle', 'reverse', 'slow', 'poop', 'dark'];
 const BASKET_PUMPKINS = 3, PUMPKIN_HOLD_MAX = 100, BREW_COST = 30, BREW_COOLDOWN_MS = 5 * 60 * 1000;
@@ -23,7 +29,7 @@ const fieldOf = (player, now) => (Array.isArray(player.field) && player.field.le
 const MAX_RECEIPTS = 20, MAX_ACTIVITY = 30;
 const privateState = (doc, player, now) => (doc.exists ? doc.data() : {
   pumpkins: Number(player?.pumpkins) || 0, harvestAt: player?.harvestAt || 0, field: fieldOf(player || {}, now),
-  harvestHours: player?.harvestHours || {}, receipts: [], activity: [],
+  harvestHours: player?.harvestHours || {}, inventory: {}, receipts: [], activity: [],
 });
 function brewGain(roll = randomInt(100)) {
   for (const { n, weight } of BREW_TABLE) {
@@ -43,6 +49,24 @@ const lockAlive = (lock, now, slack = 0) => Boolean(lock?.createdAt)
 const balance = (player, event, now = Date.now()) => player.round === roundOf(event, now) ? player.candies : 10;
 const isAdmin = (uid) => (process.env.GAME_ADMIN_UIDS || '').split(',').map((id) => id.trim()).includes(uid);
 const fail = (message, status = 400) => { throw new AuthError(status, 'game-action-rejected', message); };
+const duelRefFor = (db, input) => {
+  if (typeof input?.duelId !== 'string' || !/^[A-Za-z0-9]{20}$/.test(input.duelId)) fail('대전 번호를 확인해 주세요.');
+  return db.collection('gameDuels').doc(input.duelId);
+};
+const duelPeer = (value, uid) => {
+  if (typeof value !== 'string') return null;
+  const [owner, sid, ...rest] = value.split(':');
+  return owner === uid && !rest.length && /^[0-9a-f-]{36}$/i.test(sid) ? sid : null;
+};
+async function duelPresence(database, village, peer, uid, now) {
+  const sid = duelPeer(peer, uid);
+  if (!sid) return null;
+  const snapshot = await database.ref(`presence/${village}/${uid}/${sid}`).get();
+  const presence = snapshot.val();
+  const at = Number(presence?.at), x = Number(presence?.x), y = Number(presence?.y);
+  if (!presence || !Number.isFinite(at) || at > now + 1000 || now - at > 25000 || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
 const MAX_GUESTS = 100;
 // 다른 마을 방문자의 문서는 집주인이 구독하지 않으므로 집주인 문서에도 방문 기록을 남긴다.
 const withGuest = (host, guest) => [...(host.guests || []), guest].slice(-MAX_GUESTS);
@@ -50,9 +74,56 @@ const rankPlayers = (docs, event, cutoff, includeExcluded = false) => docs.map((
   .filter((p) => p.costume && (includeExcluded || (!p.banned && !p.rankExcluded)) && (p.readyAt || p.joinedAt || 0) <= cutoff)
   .map((p) => ({ id: p.id, nick: p.nick, costume: p.costume, n: balance(p, event) }))
   .sort((a, b) => b.n - a.n || a.nick.localeCompare(b.nick, 'ko'));
-async function finalResults(tx, db, event, cutoff) {
+async function finalResults(tx, db, event, cutoff, suppliedPlayers = null) {
   if (event.results) return event.results;
-  return rankPlayers((await tx.get(db.collection('gamePlayers'))).docs, event, cutoff, true);
+  return rankPlayers((suppliedPlayers || (await tx.get(db.collection('gamePlayers'))).docs), event, cutoff, true);
+}
+
+// Event changes and natural result freezes settle escrow even when both clients have disconnected.
+async function readDuelSettlement(tx, db, event, now, { force = false } = {}) {
+  const duels = await tx.get(db.collection('gameDuels').where('status', '==', 'active'));
+  if (duels.empty) return { players: null, hasLiveDuels: false, apply() {} };
+  const expiredDuels = duels.docs.filter((doc) => {
+    const duel = doc.data();
+    return force || now >= duel.expiresAt || now >= duel.hardDeadline;
+  });
+  const hasLiveDuels = expiredDuels.length < duels.docs.length;
+  if (hasLiveDuels) return { players: null, hasLiveDuels, apply() {} };
+  if (!expiredDuels.length) return { players: null, hasLiveDuels, apply() {} };
+  const playerDocs = await tx.get(db.collection('gamePlayers'));
+  const playerById = new Map(playerDocs.docs.map((doc) => [doc.id, doc]));
+  const ids = [...new Set(expiredDuels.flatMap((doc) => doc.data().players || []))];
+  const lockRefs = ids.map((id) => db.collection('gameDuelLocks').doc(id));
+  const locks = await Promise.all(lockRefs.map((ref) => tx.get(ref)));
+  const refunds = new Map();
+  for (const duelDoc of expiredDuels) {
+    const duel = duelDoc.data();
+    for (const id of duel.players || []) {
+      const playerDoc = playerById.get(id);
+      if (!playerDoc) continue;
+      const stake = Number(duel.stake);
+      if (Number.isSafeInteger(stake) && stake > 0) refunds.set(id, (refunds.get(id) || 0) + stake);
+    }
+  }
+  const updates = new Map([...refunds].map(([id, amount]) => {
+    const player = playerById.get(id).data();
+    return [id, { round: roundOf(event, now), candies: balance(player, event, now) + amount }];
+  }));
+  const players = playerDocs.docs.map((doc) => ({ id: doc.id, data: () => ({ ...doc.data(), ...(updates.get(doc.id) || {}) }) }));
+  return {
+    players,
+    hasLiveDuels,
+    apply() {
+      for (const [id, update] of updates) tx.update(db.collection('gamePlayers').doc(id), update);
+      for (const duelDoc of expiredDuels) {
+        tx.update(duelDoc.ref, { status: 'expired', updatedAt: now, completedAt: now, winner: null, loser: null, refunded: true });
+      }
+      const activeIds = new Set(expiredDuels.map((duel) => duel.id));
+      for (let i = 0; i < lockRefs.length; i++) {
+        if (activeIds.has(locks[i].data()?.duelId)) tx.delete(lockRefs[i]);
+      }
+    },
+  };
 }
 
 const LEADERBOARD_MS = 3 * 60 * 1000;
@@ -85,7 +156,9 @@ async function freezeResults(db) {
     const doc = await tx.get(eventRef);
     const event = doc.exists ? doc.data() : null;
     if (!event || event.results || event.endsAt > Date.now()) return event?.results || null;
-    const results = await finalResults(tx, db, event, event.endsAt);
+    const settlement = await readDuelSettlement(tx, db, event, Date.now(), { force: true });
+    const results = await finalResults(tx, db, event, event.endsAt, settlement.players);
+    settlement.apply();
     tx.set(eventRef, { ...event, results });
     tx.set(db.collection('gameRounds').doc(event.id), { ...event, results });
     return results;
@@ -97,11 +170,12 @@ async function freezeResults(db) {
 // 밴되었거나 순위에서 빠진 계정과 끝난 이벤트는 채우지 않는다. 시각은 GAME_REFILL_AT으로 바꿀 수 있다.
 const REFILL_ID = 'refill-1031-1500', REFILL_CANDIES = 10;
 const refillAt = () => Date.parse(process.env.GAME_REFILL_AT || '2026-10-31T15:00:00+09:00');
-function refillOf(player, event, now) {
+function refillOf(player, event, now, escrowedCandies = 0) {
   if (now < refillAt() || !player?.costume || player.banned || player.rankExcluded) return null;
-  const have = balance(player, event, now);
+  const have = balance(player, event, now) + escrowedCandies;
   if ((event && event.endsAt <= now) || player.refill?.id === REFILL_ID || have >= REFILL_CANDIES) return null;
-  return { round: roundOf(event, now), candies: REFILL_CANDIES, refill: { id: REFILL_ID, at: now, n: REFILL_CANDIES - have } };
+  return { round: roundOf(event, now), candies: Math.max(0, REFILL_CANDIES - escrowedCandies),
+    refill: { id: REFILL_ID, at: now, n: REFILL_CANDIES - have } };
 }
 
 async function session(authorization) {
@@ -109,12 +183,22 @@ async function session(authorization) {
   const { db } = services();
   const ref = db.collection('gamePlayers').doc(profile.uid);
   const privateRef = db.collection('gamePrivate').doc(profile.uid);
+  const duelLockRef = db.collection('gameDuelLocks').doc(profile.uid);
   const village = await db.runTransaction(async (tx) => {
     const now = Date.now();
-    const [existing, privateDoc, eventDoc] = await Promise.all([tx.get(ref), tx.get(privateRef), tx.get(db.doc('game/event'))]);
+    const [existing, privateDoc, eventDoc, duelLockDoc] = await Promise.all([
+      tx.get(ref), tx.get(privateRef), tx.get(db.doc('game/event')), tx.get(duelLockRef),
+    ]);
     const event = eventDoc.exists ? eventDoc.data() : null;
     const prior = existing.exists ? existing.data() : null;
-    const refill = refillOf(prior, event, now) || {};
+    const duelLock = duelLockDoc.data();
+    let escrowedCandies = 0;
+    if (duelLock?.status === 'active' && /^[A-Za-z0-9]{20}$/.test(duelLock.duelId || '')) {
+      const duelDoc = await tx.get(db.collection('gameDuels').doc(duelLock.duelId));
+      const duel = duelDoc.exists ? duelDoc.data() : null;
+      if (duel?.status === 'active' && duel.players?.includes(profile.uid)) escrowedCandies = Number(duel.stake) || 0;
+    }
+    const refill = refillOf(prior, event, now, escrowedCandies) || {};
     const readyAt = prior?.readyAt || (profile.costume ? Date.now() : 0);
     const plan = await readVillagePlan(tx, db, profile.costume && !prior?.village ? { id: profile.uid, readyAt } : null);
     const home = prior?.village || plan.villageOf.get(profile.uid);
@@ -155,6 +239,8 @@ async function action(authorization, input) {
     let result = {};
     if (type === 'event-start' || type === 'event-stop') {
       if (!isAdmin(uid)) fail('운영자만 이벤트를 변경할 수 있어요.', 403);
+      const settlement = await readDuelSettlement(tx, db, event, now);
+      if (settlement.hasLiveDuels) fail('진행 중인 1대1 대전이 끝난 뒤 이벤트를 바꿀 수 있어요.', 409);
       if (type === 'event-start') {
         if (event && event.endsAt > now) fail(now < event.startedAt ? '이미 예약된 이벤트가 있어요. 취소한 뒤 다시 예약해 주세요.' : '이벤트가 이미 진행 중이에요.');
         // 시작·종료 시각을 주면 예약하고, 없으면 지금부터 24시간이다.
@@ -163,26 +249,29 @@ async function action(authorization, input) {
         if (!Number.isSafeInteger(startedAt) || !Number.isSafeInteger(endsAt) || startedAt < now - 60000
           || endsAt <= Math.max(startedAt, now) || endsAt - startedAt > EVENT_MAX_MS) fail('이벤트 시작·종료 시각을 확인해 주세요.');
         if (event) {
-          const results = await finalResults(tx, db, event, event.endsAt);
+          const results = await finalResults(tx, db, event, event.endsAt, settlement.players);
           tx.set(db.collection('gameRounds').doc(event.id), { ...event, results });
         }
         result.event = { id: randomUUID(), startedAt, endsAt };
+        settlement.apply();
         tx.set(eventRef, result.event);
       } else if (event && !event.results && now < event.startedAt) {
         // 시작 전인 예약은 결과 없이 취소한다. 그동안의 기록은 연습 기록으로 남는다.
+        settlement.apply();
         tx.delete(eventRef);
         result.event = null;
       } else {
         if (!event || event.results) fail('진행 중인 이벤트가 없어요.');
         const cutoff = Math.min(event.endsAt, now);
-        const results = await finalResults(tx, db, event, cutoff);
+        const results = await finalResults(tx, db, event, cutoff, settlement.players);
         result.event = { ...event, endsAt: cutoff, results };
+        settlement.apply();
         tx.set(db.collection('gameRounds').doc(event.id), result.event);
         tx.set(eventRef, result.event);
       }
     } else {
       if (!player.costume) fail('분장을 먼저 골라 주세요.');
-      if (event && event.endsAt <= now && type !== 'knock-leave') fail('이벤트가 끝났어요. 결과가 보존됩니다.');
+      if (event && event.endsAt <= now && !['knock-leave', 'duel-cancel', 'duel-decline', 'duel-expire'].includes(type)) fail('이벤트가 끝났어요. 결과가 보존됩니다.');
       if (type === 'harvest') {
         if (now - (mine.harvestAt || 0) < 1500) fail('조금 뒤 다른 호박을 따 주세요.', 429);
         if ((player.pumpkins || 0) >= PUMPKIN_HOLD_MAX) fail(`바구니가 꽉 찼어요. 호박은 ${PUMPKIN_HOLD_MAX}개까지 들 수 있어요.`);
@@ -219,6 +308,190 @@ async function action(authorization, input) {
         if (count < price) fail('사탕이 부족해요.');
         tx.update(playerRef, { round, candies: count - price, decor: { ...(player.decor || {}), [input.item]: { at: now, round } } });
         result = { candies: count - price };
+      } else if (type === 'item-buy') {
+        if (typeof input.item !== 'string' || !Object.hasOwn(ITEMS, input.item)) fail('아이템을 확인해 주세요.');
+        const item = ITEMS[input.item];
+        const inventory = mine.inventory && typeof mine.inventory === 'object' && !Array.isArray(mine.inventory) ? { ...mine.inventory } : {};
+        const held = Number(inventory[input.item] || 0);
+        if (!Number.isSafeInteger(held) || held < 0 || held >= ITEM_INVENTORY_MAX) fail(`아이템은 ${ITEM_INVENTORY_MAX}개까지 보유할 수 있어요.`);
+        if (count < item.price) fail('사탕이 부족해요.');
+        const purchase = { item: input.item, price: item.price, at: now, round };
+        inventory[input.item] = held + 1;
+        tx.update(playerRef, { round, candies: count - item.price,
+          itemPurchases: [...(player.itemPurchases || []), purchase].slice(-MAX_ITEM_PURCHASES) });
+        privateUpdate = { inventory };
+        result = { candies: count - item.price, inventory, purchase, round };
+      } else if (type === 'item-use') {
+        if (typeof input.item !== 'string' || !Object.hasOwn(ITEMS, input.item)) fail('아이템을 확인해 주세요.');
+        const item = ITEMS[input.item];
+        const inventory = mine.inventory && typeof mine.inventory === 'object' && !Array.isArray(mine.inventory) ? { ...mine.inventory } : {};
+        const held = Number(inventory[input.item] || 0);
+        if (!Number.isSafeInteger(held) || held <= 0) fail('사용할 아이템이 없어요.');
+        const usedAt = Number(mine.houseGuardUsedAt) || 0;
+        const wait = usedAt + item.cooldownMs - now;
+        if (wait > 0) fail(`호박 수호 부적은 아직 다시 쓸 수 없어요. ${Math.ceil(wait / 60000)}분 뒤 사용해 주세요.`, 429);
+        if ((Number(player.guardUntil) || 0) > now) fail('호박 수호 부적이 이미 작동 중이에요.', 429);
+        inventory[input.item] = held - 1;
+        const guardUntil = now + item.durationMs;
+        tx.update(playerRef, { guardUntil });
+        privateUpdate = { inventory, houseGuardUsedAt: now };
+        result = { inventory, usedAt: now, guardUntil };
+      } else if (type === 'duel-offer') {
+        const targetUid = input.opponent;
+        const stake = input.stake;
+        const village = input.village;
+        if (typeof targetUid !== 'string' || !/^[a-f0-9]{32}$/.test(targetUid) || targetUid === uid) fail('대전 상대를 확인해 주세요.');
+        if (!Number.isSafeInteger(stake) || stake < 1 || stake > DUEL_MAX_STAKE) fail(`사탕은 1개부터 ${DUEL_MAX_STAKE}개까지 걸 수 있어요.`);
+        if (!Number.isSafeInteger(village) || village < 1 || village > 9999) fail('같은 마을에 있는 사람에게만 대전을 신청할 수 있어요.');
+        const targetRef = db.collection('gamePlayers').doc(targetUid);
+        const senderLockRef = db.collection('gameDuelLocks').doc(uid);
+        const targetLockRef = db.collection('gameDuelLocks').doc(targetUid);
+        const [targetDoc, senderLockDoc, targetLockDoc] = await Promise.all([tx.get(targetRef), tx.get(senderLockRef), tx.get(targetLockRef)]);
+        if (!targetDoc.exists || !targetDoc.data().costume || targetDoc.data().houseHidden || targetDoc.data().banned) fail('대전 상대를 찾을 수 없어요.');
+        const { database } = services();
+        const [challengerPresence, opponentPresence] = await Promise.all([
+          duelPresence(database, village, input.challengerPeer, uid, now),
+          duelPresence(database, village, input.opponentPeer, targetUid, now),
+        ]);
+        if (!challengerPresence || !opponentPresence
+          || Math.hypot(challengerPresence.x - opponentPresence.x, challengerPresence.y - opponentPresence.y) > DUEL_BONK_RANGE) {
+          fail('같은 마을에서 상대 캐릭터 가까이 다가가 주세요.', 409);
+        }
+        const unavailable = (doc) => doc.exists && (doc.data().status === 'active' || (doc.data().status === 'pending' && doc.data().until > now));
+        if (unavailable(senderLockDoc)) fail('이미 대기 중이거나 진행 중인 대전이 있어요.', 409);
+        if (unavailable(targetLockDoc)) fail('상대가 이미 대기 중이거나 진행 중인 대전이 있어요.', 409);
+        if (count < stake) fail(`사탕이 ${stake}개 있어야 해요.`);
+        const duelRef = db.collection('gameDuels').doc();
+        const duel = { id: duelRef.id, players: [uid, targetUid], challenger: uid, opponent: targetUid, stake,
+          round, village, challengerPeer: input.challengerPeer, opponentPeer: input.opponentPeer,
+          status: 'pending', createdAt: now, updatedAt: now, expiresAt: now + DUEL_INVITE_MS };
+        tx.create(duelRef, duel);
+        tx.set(senderLockRef, { duelId: duel.id, status: 'pending', until: duel.expiresAt });
+        tx.set(targetLockRef, { duelId: duel.id, status: 'pending', until: duel.expiresAt });
+        result = duel;
+      } else if (type === 'duel-accept') {
+        const duelRef = duelRefFor(db, input);
+        const duelDoc = await tx.get(duelRef);
+        const duel = duelDoc.exists ? duelDoc.data() : null;
+        if (!duel || duel.status !== 'pending' || duel.opponent !== uid) fail('받을 수 있는 대전 신청이 없어요.', 409);
+        if (duel.expiresAt <= now) fail('대전 신청 시간이 끝났어요.', 409);
+        if (duel.round !== round || input.village !== duel.village) fail('마을이나 이벤트가 바뀌어 대전을 시작할 수 없어요.', 409);
+        const challengerRef = db.collection('gamePlayers').doc(duel.challenger);
+        const challengerLockRef = db.collection('gameDuelLocks').doc(duel.challenger);
+        const opponentLockRef = db.collection('gameDuelLocks').doc(uid);
+        const [challengerDoc, challengerLockDoc, opponentLockDoc] = await Promise.all([
+          tx.get(challengerRef), tx.get(challengerLockRef), tx.get(opponentLockRef),
+        ]);
+        if (!challengerDoc.exists || !challengerDoc.data().costume || challengerDoc.data().banned || challengerDoc.data().houseHidden) fail('대전 상대를 찾을 수 없어요.');
+        if (challengerLockDoc.data()?.duelId !== duel.id || opponentLockDoc.data()?.duelId !== duel.id) fail('대전 신청이 이미 바뀌었어요.', 409);
+        const { database } = services();
+        const [challengerPresence, opponentPresence] = await Promise.all([
+          duelPresence(database, duel.village, duel.challengerPeer, duel.challenger, now),
+          duelPresence(database, duel.village, input.peer, uid, now),
+        ]);
+        if (!challengerPresence || !opponentPresence
+          || Math.hypot(challengerPresence.x - opponentPresence.x, challengerPresence.y - opponentPresence.y) > DUEL_BONK_RANGE) {
+          fail('두 사람 모두 같은 마을에서 가까이 있어야 해요.', 409);
+        }
+        const challengerBalance = balance(challengerDoc.data(), event, now);
+        if (count < duel.stake || challengerBalance < duel.stake) fail('두 사람 모두 걸 사탕이 충분해야 해요.');
+        const roundBoundary = event ? (event.startedAt > now ? event.startedAt : event.endsAt) : Infinity;
+        const hardDeadline = Math.min(now + DUEL_MAX_MS, roundBoundary - 5000);
+        if (hardDeadline - now < DUEL_MAX_MS) fail('이벤트 종료가 가까워 새 대전을 시작할 수 없어요.', 409);
+        const expiresAt = Math.min(now + DUEL_IDLE_MS, hardDeadline);
+        const hits = { [duel.challenger]: { count: 0, at: 0 }, [uid]: { count: 0, at: 0 } };
+        tx.update(playerRef, { round, candies: count - duel.stake });
+        tx.update(challengerRef, { round, candies: challengerBalance - duel.stake });
+        tx.update(duelRef, { status: 'active', acceptedAt: now, updatedAt: now, hits, lastHitAt: {}, hardDeadline, expiresAt });
+        tx.set(challengerLockRef, { duelId: duel.id, status: 'active', until: expiresAt });
+        tx.set(opponentLockRef, { duelId: duel.id, status: 'active', until: expiresAt });
+        result = { ...duel, status: 'active', acceptedAt: now, hits, hardDeadline, expiresAt };
+      } else if (type === 'duel-decline' || type === 'duel-cancel') {
+        const duelRef = duelRefFor(db, input);
+        const duelDoc = await tx.get(duelRef);
+        const duel = duelDoc.exists ? duelDoc.data() : null;
+        const allowed = duel?.status === 'pending' && (type === 'duel-decline' ? duel.opponent === uid : duel.challenger === uid);
+        if (!allowed) fail('취소할 수 있는 대전 신청이 없어요.', 409);
+        const challengerLockRef = db.collection('gameDuelLocks').doc(duel.challenger);
+        const opponentLockRef = db.collection('gameDuelLocks').doc(duel.opponent);
+        const [challengerLockDoc, opponentLockDoc] = await Promise.all([tx.get(challengerLockRef), tx.get(opponentLockRef)]);
+        const status = type === 'duel-cancel' ? 'cancelled' : 'declined';
+        tx.update(duelRef, { status, updatedAt: now, completedAt: now });
+        if (challengerLockDoc.data()?.duelId === duel.id) tx.delete(challengerLockRef);
+        if (opponentLockDoc.data()?.duelId === duel.id) tx.delete(opponentLockRef);
+        result = { id: duel.id, status };
+      } else if (type === 'duel-expire') {
+        const duelRef = duelRefFor(db, input);
+        const duelDoc = await tx.get(duelRef);
+        const duel = duelDoc.exists ? duelDoc.data() : null;
+        if (!duel || !duel.players?.includes(uid) || !['pending', 'active'].includes(duel.status)) fail('끝낼 대전이 없어요.', 409);
+        if (now < duel.expiresAt) fail('대전 제한 시간이 아직 남아 있어요.', 409);
+        const challengerRef = db.collection('gamePlayers').doc(duel.challenger);
+        const opponentRef = db.collection('gamePlayers').doc(duel.opponent);
+        const challengerLockRef = db.collection('gameDuelLocks').doc(duel.challenger);
+        const opponentLockRef = db.collection('gameDuelLocks').doc(duel.opponent);
+        const [challengerDoc, opponentDoc, challengerLockDoc, opponentLockDoc] = await Promise.all([
+          tx.get(challengerRef), tx.get(opponentRef), tx.get(challengerLockRef), tx.get(opponentLockRef),
+        ]);
+        if (duel.status === 'active') {
+          if (!challengerDoc.exists || !opponentDoc.exists) fail('두 사람의 사탕을 돌려주지 못했어요. 운영자에게 알려 주세요.', 409);
+          const challengerBalance = balance(challengerDoc.data(), event, now) + duel.stake;
+          const opponentBalance = balance(opponentDoc.data(), event, now) + duel.stake;
+          tx.update(challengerRef, { round: duel.round, candies: challengerBalance });
+          tx.update(opponentRef, { round: duel.round, candies: opponentBalance });
+        }
+        tx.update(duelRef, { status: 'expired', updatedAt: now, completedAt: now, winner: null, loser: null, refunded: duel.status === 'active' });
+        if (challengerLockDoc.data()?.duelId === duel.id) tx.delete(challengerLockRef);
+        if (opponentLockDoc.data()?.duelId === duel.id) tx.delete(opponentLockRef);
+        result = { id: duel.id, status: 'expired', refunded: duel.status === 'active' };
+      } else if (type === 'duel-hit') {
+        const duelRef = duelRefFor(db, input);
+        const duelDoc = await tx.get(duelRef);
+        const duel = duelDoc.exists ? duelDoc.data() : null;
+        if (!duel || duel.status !== 'active' || !duel.players?.includes(uid)) fail('진행 중인 대전이 없어요.', 409);
+        const victimUid = duel.players.find((id) => id !== uid);
+        if (input.victim !== victimUid) fail('대전 상대를 확인해 주세요.');
+        if (now >= duel.hardDeadline || now >= duel.expiresAt) fail('대전 시간이 끝났어요. 사탕을 돌려받을게요.', 409);
+        const victimRef = db.collection('gamePlayers').doc(victimUid);
+        const victimDoc = await tx.get(victimRef);
+        if (!victimDoc.exists) fail('상대 정보를 찾을 수 없어 대전을 끝낼 수 없어요.', 409);
+        const { database } = services();
+        const [attackerPresence, victimPresence] = await Promise.all([
+          duelPresence(database, duel.village, input.attackerPeer, uid, now),
+          duelPresence(database, duel.village, input.victimPeer, victimUid, now),
+        ]);
+        if (!attackerPresence || !victimPresence
+          || Math.hypot(attackerPresence.x - victimPresence.x, attackerPresence.y - victimPresence.y) > DUEL_BONK_RANGE) {
+          fail('상대가 뿅망치 거리 안에 없어요.', 409);
+        }
+        const lastHitAt = { ...(duel.lastHitAt || {}) };
+        if (now - (Number(lastHitAt[uid]) || 0) < DUEL_BONK_COOLDOWN_MS) fail('뿅망치가 아직 식는 중이에요.', 429);
+        lastHitAt[uid] = now;
+        const hits = { ...(duel.hits || {}) };
+        const prior = hits[victimUid] || { count: 0, at: 0 };
+        const hit = { count: now - (prior.at || 0) > DUEL_BONK_RESET_MS ? 1 : prior.count + 1, at: now };
+        hits[victimUid] = hit;
+        const knockedOut = hit.count >= DUEL_BONK_TO_STUN;
+        const expiresAt = Math.min(now + DUEL_IDLE_MS, duel.hardDeadline);
+        if (knockedOut) {
+          const winner = uid, loser = victimUid;
+          const winnerDoc = winner === uid ? player : victimDoc.data();
+          const winnings = balance(winnerDoc, event, now) + duel.stake * 2;
+          const winnerRef = winner === uid ? playerRef : victimRef;
+          tx.update(winnerRef, { round: duel.round, candies: winnings });
+          const status = 'completed';
+          tx.update(duelRef, { status, winner, loser, hits, lastHitAt, updatedAt: now, completedAt: now, expiresAt: now });
+          const winnerLockRef = db.collection('gameDuelLocks').doc(winner);
+          const loserLockRef = db.collection('gameDuelLocks').doc(loser);
+          tx.delete(winnerLockRef); tx.delete(loserLockRef);
+          result = { id: duel.id, status, winner, loser, knockedOut: victimUid, hits: DUEL_BONK_TO_STUN, candies: winnings };
+        } else {
+          tx.update(duelRef, { hits, lastHitAt, updatedAt: now, expiresAt });
+          const lockUpdate = { duelId: duel.id, status: 'active', until: expiresAt };
+          tx.set(db.collection('gameDuelLocks').doc(uid), lockUpdate);
+          tx.set(db.collection('gameDuelLocks').doc(victimUid), lockUpdate);
+          result = { id: duel.id, status: 'active', hitCount: hit.count, remaining: DUEL_BONK_TO_STUN - hit.count, expiresAt };
+        }
       } else if (type === 'mural') {
         if (typeof input.mural !== 'string' || !/^[.1-8]{288}$/.test(input.mural)) fail('지붕 그림을 확인해 주세요.');
         tx.update(playerRef, { mural: input.mural });
@@ -242,6 +515,7 @@ async function action(authorization, input) {
         ]);
         const lockDoc = await tx.get(lockRef);
         if (!host.exists || !host.data().costume || host.data().houseHidden || host.data().banned) fail('집을 찾을 수 없어요.');
+        if ((Number(host.data().guardUntil) || 0) > now) fail('호박 수호 부적이 이 집을 지키고 있어요.', 429);
         if (now - (player.knockAt || 0) < 2000) fail('잠시 뒤 다시 노크해 주세요.', 429);
         const prior = pending.exists ? pending.data() : {};
         const priorAge = now - (prior.createdAt || 0);
@@ -300,12 +574,14 @@ async function action(authorization, input) {
         if (!outcome.finished) fail('도전이 아직 끝나지 않았어요.');
         const win = outcome.won;
         const hostCount = balance(hostDoc.data(), event, now);
-        const moved = win && hostCount > 0;
+        const protectedByGuard = win && (Number(hostDoc.data().guardUntil) || 0) > now;
+        const moved = win && !protectedByGuard && hostCount > 0;
         const nextLevelByHost = challenge.streakRound === round && challenge.nextLevelByHost
           ? { ...challenge.nextLevelByHost } : {};
         if (win) nextLevelByHost[challenge.host] = Math.min(MAX_LEVEL, challenge.level + 1);
         else delete nextLevelByHost[challenge.host];
         const entry = { h: challenge.host, r: win ? 'win' : 'lose', at: now, c: player.costume, round, moved, level: challenge.level,
+          ...(protectedByGuard ? { protected: true } : {}),
           ...(win ? {} : { k: TRICK_KINDS[randomInt(TRICK_KINDS.length)] }) };
         const playerUpdate = { round, candies: count + (moved ? 1 : 0), knockAt: now,
           challenges: [...(player.challenges || []), { at: now, h: challenge.host, w: win, ms: outcome.at, lv: challenge.level, m: moved }].slice(-MAX_CHALLENGE_LOG) };
@@ -364,4 +640,4 @@ async function action(authorization, input) {
   return done;
 }
 
-module.exports = { TRICK_KINDS, PRICES, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
+module.exports = { TRICK_KINDS, PRICES, ITEMS, FIELD_SIZE, LEADERBOARD_MS, leaderboard, session, action, balance, roundOf, evaluateCandyChallenge, brewGain, BREW_COST, BREW_COOLDOWN_MS, PUMPKIN_HOLD_MAX };
