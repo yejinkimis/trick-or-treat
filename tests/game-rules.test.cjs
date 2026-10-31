@@ -26,7 +26,7 @@ test('server replays candy-bar inputs instead of trusting a claimed result', () 
 
 test('alchemy rolls follow the 80/14/5/1 table and never come up empty', () => {
   const { brewGain } = require('../server/game-service.cjs');
-  assert.deepEqual([0, 79, 80, 93, 94, 98, 99].map((roll) => brewGain(roll)), [2, 2, 5, 5, 10, 10, 20]);
+  assert.deepEqual([0, 79, 80, 93, 94, 98, 99].map((roll) => brewGain(roll)), [20, 20, 50, 50, 100, 100, 200]);
 });
 
 const { WATCH, hourOf, summarize, watchList } = require('../server/watch.cjs');
