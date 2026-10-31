@@ -130,3 +130,43 @@ test('the server only picks games the knocking page can play', () => {
   process.env.GAME_MINIGAMES = 'whack';
   try { assert.equal(pickGame(['spell', 'whack']), 'whack'); } finally { delete process.env.GAME_MINIGAMES; }
 });
+
+test('candy rain runs from 22:30 to midnight, and can be changed or turned off', () => {
+  const { rainSchedule, checkDrop } = require('../server/candy-rain.cjs');
+  const before = process.env.GAME_CANDY_RAIN_AT;
+  try {
+    delete process.env.GAME_CANDY_RAIN_AT;
+    const rains = rainSchedule();
+    assert.deepEqual(rains.map((rain) => [new Date(rain.at).toISOString(), rain.ms / 60000]), [['2026-10-31T13:30:00.000Z', 90]]);
+    const [last] = rains;
+    assert.equal(last.at + last.ms, Date.parse('2026-11-01T00:00:00+09:00'));
+    assert.deepEqual(checkDrop(`${last.at}-1349`, last.at + 1349 * 4000), { rain: last.at, i: 1349 });
+    assert.ok(checkDrop(`${last.at}-1350`, last.at + 1350 * 4000).error, 'no drop after midnight');
+    process.env.GAME_CANDY_RAIN_AT = '';
+    assert.deepEqual(rainSchedule(), []);
+    process.env.GAME_CANDY_RAIN_AT = '2026-10-31T20:00:00+09:00';
+    assert.equal(rainSchedule()[0].ms, 10 * 60000);
+  } finally {
+    if (before === undefined) delete process.env.GAME_CANDY_RAIN_AT; else process.env.GAME_CANDY_RAIN_AT = before;
+  }
+});
+
+test('rich raid runs from 23:00 to midnight and takes five to ten percent, at least one candy', () => {
+  const { raidSchedule, raidActive, raidTake } = require('../server/rich-raid.cjs');
+  const before = process.env.GAME_RICH_RAID_AT;
+  try {
+    delete process.env.GAME_RICH_RAID_AT;
+    assert.deepEqual(raidSchedule(), [{ at: Date.parse('2026-10-31T23:00:00+09:00'), ms: 60 * 60000 }]);
+    assert.equal(raidActive(Date.parse('2026-10-31T22:59:59+09:00')), false);
+    assert.equal(raidActive(Date.parse('2026-10-31T23:00:00+09:00')), true);
+    assert.equal(raidActive(Date.parse('2026-11-01T00:00:00+09:00')), false);
+    assert.equal(raidTake(273, 10), 27);
+    assert.equal(raidTake(100, 5), 5);
+    assert.equal(raidTake(10, 5), 1, 'a small bag still loses one');
+    for (let i = 0; i < 50; i++) assert.ok([5, 6, 7, 8, 9, 10].includes(raidTake(100)));
+    process.env.GAME_RICH_RAID_AT = '';
+    assert.equal(raidActive(Date.parse('2026-10-31T23:30:00+09:00')), false);
+  } finally {
+    if (before === undefined) delete process.env.GAME_RICH_RAID_AT; else process.env.GAME_RICH_RAID_AT = before;
+  }
+});

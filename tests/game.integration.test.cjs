@@ -452,6 +452,73 @@ test('after three o\'clock a reconnect tops a bag up to ten once, and skips bags
   }
 });
 
+test('candy rain gives one candy per fallen drop, each once, only while it lies on the ground and the event runs', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, picker] = await Promise.all(['비관', '줍기'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const { event } = await act(admin, { type: 'event-start' });
+  const start = Date.now() - 31000;
+  const pick = (i) => act(picker, { type: 'rain-pick', drop: `${start}-${i}` });
+  process.env.GAME_CANDY_RAIN_AT = `${new Date(start).toISOString()}/1`;
+  try {
+    const [rain] = (await session(picker.authorization)).rain;
+    assert.deepEqual([rain.at, rain.ms], [start, 60000]);
+    const latest = Math.floor(29000 / rain.every), ahead = Math.ceil(34000 / rain.every);
+    await services().db.collection('gamePlayers').doc(picker.uid).update({ round: event.id, candies: 0 });
+    await assert.rejects(pick(0), (e) => e.status === 409 && /녹아/.test(e.message), 'a drop that fell 31 seconds ago has melted');
+    const { Transaction } = require('@google-cloud/firestore');
+    const { get } = Transaction.prototype;
+    const events = [];
+    Transaction.prototype.get = function (ref) { if (ref?.path === 'game/event') events.push(ref.path); return get.call(this, ref); };
+    try { assert.equal((await pick(latest - 1)).candies, 1); } finally { Transaction.prototype.get = get; }
+    assert.equal(events.length, 0, 'a pick reuses the event the previous request just read');
+    await assert.rejects(pick(latest - 1), (e) => e.status === 409 && /이미/.test(e.message));
+    assert.equal((await pick(latest)).candies, 2);
+    await assert.rejects(pick(ahead), (e) => e.status === 409 && /아직/.test(e.message));
+    await assert.rejects(pick(60000 / rain.every), (e) => e.status === 400, 'a one-minute rain has no drop after its last');
+    await assert.rejects(act(picker, { type: 'rain-pick', drop: '../x' }), (e) => e.status === 400);
+    assert.equal((await saved(picker)).candies, 2);
+    assert.deepEqual((await secret(picker)).rain, { at: start, got: [latest - 1, latest] });
+    await act(admin, { type: 'event-stop' });
+    await assert.rejects(pick(ahead), /이벤트가 끝났/, 'an event stop applies to the very next pick');
+  } finally {
+    delete process.env.GAME_CANDY_RAIN_AT;
+    await services().db.doc('game/event').delete();
+  }
+});
+
+test('during the rich raid a win at a top-five house takes five to ten percent, and other houses still give one', async () => {
+  await services().db.doc('game/event').delete();
+  const [admin, raider, rich, poor] = await Promise.all(['털이관', '도둑', '부자', '서민'].map(player));
+  process.env.GAME_ADMIN_UIDS = admin.uid;
+  const { event } = await act(admin, { type: 'event-start' });
+  const players = services().db.collection('gamePlayers');
+  process.env.GAME_RICH_RAID_AT = `${new Date(Date.now() - 60000).toISOString()}/10`;
+  assert.equal((await session(raider.authorization)).raid.length, 1);
+  await Promise.all([
+    players.doc(raider.uid).update({ basket: true, round: event.id, candies: 0 }),
+    players.doc(rich.uid).update({ round: event.id, candies: 100000 }),
+    players.doc(poor.uid).update({ round: event.id, candies: 0 }),
+  ]);
+  try {
+    await leaderboard(Date.now() + LEADERBOARD_MS);
+    const big = await act(raider, { type: 'knock-finish', ...(await winningChallenge(raider, rich)) });
+    assert.equal(big.entry.rich, true);
+    assert.ok(big.entry.n >= 5000 && big.entry.n <= 10000, `took ${big.entry.n}`);
+    assert.equal(big.candies, big.entry.n);
+    assert.equal((await saved(rich)).candies, 100000 - big.entry.n);
+    await players.doc(raider.uid).update({ knockAt: 0 });
+    await assert.rejects(act(raider, { type: 'knock-start', host: rich.uid }), (e) => e.status === 429 && /3분에 한 번/.test(e.message), 'the same rich house waits three minutes');
+    await players.doc(poor.uid).update({ candies: 3 });
+    const small = await act(raider, { type: 'knock-finish', ...(await winningChallenge(raider, poor)) });
+    assert.equal(small.entry.rich, undefined, 'a house outside the top five gives one candy as usual');
+    assert.equal(small.candies, big.entry.n + 1);
+  } finally {
+    delete process.env.GAME_RICH_RAID_AT;
+    await services().db.doc('game/event').delete();
+  }
+});
+
 test('public scores are readable but direct client edits and private challenge reads are denied', async () => {
   const [p, other] = await Promise.all([player('규'), player('남')]);
   const base = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-trick-or-treat/databases/(default)/documents`;

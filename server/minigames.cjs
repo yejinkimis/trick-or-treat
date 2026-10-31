@@ -18,15 +18,15 @@ function miniPlan(game, level, seed) {
   const between = (a, b) => a + Math.floor(random() * (b - a + 1));
   if (game === 'whack') {
     // 유령 사이에 똥이 섞여 나온다. 똥을 누르면 실수다.
-    const show = 900 - L * 100, items = [];
+    const show = 650 - L * 70, items = [];
     let t = 1000;
     for (let i = 0; i < 18 + L * 2; i++) {
       let k = between(0, 8);
       while (items.slice(-2).some((item) => item.k === k)) k = (k + 1) % 9;
-      items.push({ t, k, from: t, to: t + show, bad: i > 0 && random() < .3 });
-      t += between(600 - L * 60, 950 - L * 80);
+      items.push({ t, k, from: t, to: t + show, bad: i > 0 && random() < .35 });
+      t += between(450 - L * 50, 800 - L * 80);
     }
-    const allowed = Math.max(1, 5 - L);
+    const allowed = Math.max(0, 3 - L);
     return { items, need: items.filter((item) => !item.bad).length - allowed, allowed, end: items[items.length - 1].to };
   }
   if (game === 'spell') {
@@ -38,11 +38,11 @@ function miniPlan(game, level, seed) {
   if (game === 'catch') {
     // 사탕은 가만히 있으면 못 받게 매번 옆으로 옮기되, 바구니가 따라갈 수 있는 거리까지만 옮긴다.
     // 똥은 앞뒤 사탕을 잇는 길에서 지나온 쪽으로 비켜 떨어뜨려, 사탕을 제때 쫓아가면 피하게 한다.
-    const fall = 1800 - L * 150, reach = .13 - L * .01, speed = 1.5, count = 16 + L * 2, items = [];
+    const fall = 1500 - L * 130, reach = .12 - L * .01, speed = 1.7, count = 16 + L * 2, items = [];
     let t = 800;
     for (let i = 0; i < count; i++) {
       items.push({ t: t + fall, from: t, x: .5, bad: i > 0 && i < count - 1 && random() < .3 });
-      t += between(550 - L * 50, 850 - L * 70);
+      t += between(480 - L * 45, 750 - L * 65);
     }
     const good = items.filter((item) => !item.bad);
     good.forEach((item, i) => {
@@ -58,7 +58,7 @@ function miniPlan(game, level, seed) {
       item.x = line - Math.sign(b.x - a.x || 1) * (reach + .12);
       if (item.x < .06 || item.x > .94) { item.bad = false; item.x = line; }
     });
-    const allowed = Math.max(1, 4 - L);
+    const allowed = Math.max(0, 3 - L);
     return { items, fall, reach, speed, need: Math.max(1, items.filter((item) => !item.bad).length - allowed), allowed, end: items[items.length - 1].t };
   }
   return null;
