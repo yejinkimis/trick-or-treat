@@ -1841,3 +1841,32 @@ test('online exits settle through the leave action and display the server penalt
     assert.equal(g.run('S.busy'), false);
   }
 });
+
+test('build ships the village report as static files but keeps personal wrap images out of dist', () => {
+  const root = path.join(__dirname, '..');
+  const vercel = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+  assert.equal(vercel.functions['api/game/wrap.js'].includeFiles, 'wrap/**');
+  assert.equal(vercel.outputDirectory, 'dist');
+  assert.match(fs.readFileSync(path.join(root, 'scripts/build.cjs'), 'utf8'), /'report'/);
+  assert.doesNotMatch(fs.readFileSync(path.join(root, 'scripts/build.cjs'), 'utf8'), /'wrap'/);
+});
+
+test('wrap images are sealed so the public repo shows neither the picture nor whose it is', () => {
+  const { randomBytes } = require('node:crypto');
+  const { wrapKey, wrapFileName, sealWrap, openWrap } = require('../server/wrap-service.cjs');
+  const key = randomBytes(32);
+  const uid = '0123456789abcdef0123456789abcdef';
+  const png = Buffer.from('\x89PNG fake image bytes');
+  const sealed = sealWrap(key, png);
+  assert.equal(sealed.includes(png), false);
+  assert.deepEqual(openWrap(key, sealed), png);
+  assert.throws(() => openWrap(randomBytes(32), sealed));
+  const tampered = Buffer.from(sealed);
+  tampered[tampered.length - 1] ^= 1;
+  assert.throws(() => openWrap(key, tampered));
+  assert.match(wrapFileName(key, uid, 'cert'), /^[0-9a-f]{32}\.bin$/);
+  assert.equal(wrapFileName(key, uid, 'cert').includes(uid.slice(0, 8)), false);
+  assert.notEqual(wrapFileName(key, uid, 'cert'), wrapFileName(key, uid, 'mine'));
+  assert.throws(() => wrapKey('short'), (error) => error.status === 503);
+  assert.equal(fs.readdirSync(path.join(__dirname, '..', 'wrap')).every((name) => /^[0-9a-f]{32}\.bin$/.test(name)), true);
+});

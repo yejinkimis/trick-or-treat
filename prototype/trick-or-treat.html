@@ -70,6 +70,11 @@ img.px-img{image-rendering:pixelated;display:block}
 
 .quest[data-step="knock"],.quest[data-brew="ready"]{border-color:var(--gold)}
 .book-tabs .pbtn{flex:1}
+.wrap-pane{display:flex;flex-direction:column;gap:12px}
+.wrap-pane img{display:block;width:100%;height:auto;border:3px solid var(--edge)}
+.wrap-pane .pbtn{align-self:center}
+.wrap-thanks{margin:4px 0 8px;text-align:center;font-size:1.3rem;color:var(--gold)}
+.wrap-thanks small{display:block;margin-top:6px;font-size:.95rem;color:var(--muted)}
 .book-tabs .pbtn[aria-pressed="true"]{background:var(--panel);color:var(--gold);border-color:var(--gold)}
 #quest-detail{white-space:pre-line;word-break:keep-all}
 .me .status{grid-column:1/-1;font-size:.8rem;color:var(--muted)}
@@ -313,6 +318,7 @@ textarea:focus{outline:none;border-color:var(--gold)}
   <button class="pbtn" id="open-wardrobe" type="button">옷장</button>
   <button class="pbtn" id="open-home" type="button">우리 집</button>
   <button class="pbtn" id="open-rank" type="button">순위</button>
+  <button class="pbtn hot" id="open-wrap" type="button" hidden>결산</button>
   <button class="pbtn" id="open-crew" type="button">크루 찾기</button>
   <button class="pbtn" id="open-chat" type="button">채팅</button>
   <button class="pbtn hot" id="open-duel" type="button" hidden>1대1 대전</button>
@@ -469,6 +475,37 @@ textarea:focus{outline:none;border-color:var(--gold)}
       </div>
       <span class="note">순위 룰렛은 이벤트 중 1회 실행해요. 21:30에 누르면 실행 직전 순위 기준으로 모두 한 번씩 돌리고 사탕을 지급합니다.</span>
       <button class="pbtn hot" id="ev-roulette" type="button">모두 룰렛 돌리기</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="wrap" hidden>
+  <div class="px sheet" role="dialog" aria-modal="true" aria-labelledby="wr-title">
+    <div class="sheet-head">
+      <h2 id="wr-title">할로윈 결산<small>우아한 trick or treat · 10월 31일</small></h2>
+      <button class="pbtn" type="button" data-close="wrap">닫기</button>
+    </div>
+    <div class="row book-tabs" role="group" aria-label="결산 보기"><button class="pbtn" type="button" data-wrap-tab="cert" aria-pressed="true">수료증</button><button class="pbtn" type="button" data-wrap-tab="mine" aria-pressed="false">내 리포트</button><button class="pbtn" type="button" data-wrap-tab="report" aria-pressed="false">마을 리포트</button></div>
+    <div class="wrap-pane" id="wr-cert">
+      <p class="note" id="wr-cert-note">불러오는 중이에요.</p>
+      <img id="wr-cert-img" alt="내 수료증" hidden>
+      <button class="pbtn hot" type="button" data-wrap-save="cert" hidden>이미지 저장</button>
+    </div>
+    <div class="wrap-pane" id="wr-mine" hidden>
+      <p class="note" id="wr-mine-note">불러오는 중이에요.</p>
+      <img id="wr-mine-img" alt="내 리포트" hidden>
+      <button class="pbtn hot" type="button" data-wrap-save="mine" hidden>이미지 저장</button>
+    </div>
+    <div class="wrap-pane" id="wr-report" hidden>
+      <img loading="lazy" src="/report/1-podium.png" alt="시상식"><button class="pbtn" type="button" data-wrap-save="1-podium">이 장 저장</button>
+      <img loading="lazy" src="/report/2-drama.png" alt="역전 드라마"><button class="pbtn" type="button" data-wrap-save="2-drama">이 장 저장</button>
+      <img loading="lazy" src="/report/3-awards.png" alt="올해의 할로윈 상"><button class="pbtn" type="button" data-wrap-save="3-awards">이 장 저장</button>
+      <img loading="lazy" src="/report/4-play.png" alt="이 정도면 직업"><button class="pbtn" type="button" data-wrap-save="4-play">이 장 저장</button>
+      <img loading="lazy" src="/report/5-games.png" alt="미니게임 성적표"><button class="pbtn" type="button" data-wrap-save="5-games">이 장 저장</button>
+      <img loading="lazy" src="/report/6-guestbook.png" alt="방명록 명예의 전당"><button class="pbtn" type="button" data-wrap-save="6-guestbook">이 장 저장</button>
+      <img loading="lazy" src="/report/7-ranking.png" alt="최종 순위"><button class="pbtn" type="button" data-wrap-save="7-ranking">이 장 저장</button>
+      <img loading="lazy" src="/report/8-crew.png" alt="함께한 마을 주민 57명">
+      <p class="wrap-thanks">같이 즐겨주셔서 감사합니다!<small>파도 · 코코 드림</small></p>
     </div>
   </div>
 </div>
@@ -749,7 +786,7 @@ async function showBrewNews() {
   brewNews.showing = false;
 }
 const BONK_RANGE = 22, BONK_COOLDOWN = 600, STUN_MS = 3000, BONK_TO_STUN = 5, BONK_RESET_MS = 6000;
-const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'duel', 'note', 'sound', 'announcement', 'auth', 'intro'];
+const MODALS = ['wardrobe', 'house', 'rank', 'crew', 'admin', 'online', 'duel', 'note', 'sound', 'announcement', 'wrap', 'auth', 'intro'];
 const MAX_NOTES = 100, NOTE_MAX = 80;
 const MURAL_W = 24, MURAL_H = 12, MURAL_CELLS = MURAL_W * MURAL_H;
 const MURAL_PAL = ['#1c1424', '#fff4e2', '#f28a2e', '#ffd166', '#8bd450', '#79a6e6', '#ff6fa8', '#7a4bb8'];
@@ -856,7 +893,7 @@ const S = {
   candyControl: null, miniControl: null, localKnockStreaks: { challenger: null, round: null, byHost: {} },
   pos: { x: SPAWN.x, y: SPAWN.y, f: 1, walk: 0, moving: false }, target: null, stuck: 0,
   near: null, openDoor: null, shakeDoor: null, npc: null, floats: [], hintHidden: false,
-  pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1', doodleDraft: null, doodleColor: '1',
+  pumpkins: [], nearPumpkin: null, nearCauldron: false, noteHost: null, bonus: {}, muralDraft: null, muralColor: '1', doodleDraft: null, doodleColor: '1', wrapShown: false, wrapLoad: null, wrapBlobs: {},
   myPeer: null, nearPeer: null, stunUntil: 0, hits: 0, lastHit: 0, lastBonk: 0, swings: [],
   village: null, villages: {}, rankList: null, online: [],
   duels: [], duel: null, duelActionPending: false, dismissedDuelIds: new Set(), duelExpiryRequestedIds: new Set(), duelStartId: null, duelReadyUntil: 0,
@@ -2236,6 +2273,8 @@ function renderHud() {
   announcementButton.textContent = S.announcementUnread ? '📣 새 공지' : '📣 공지';
   announcementButton.classList.toggle('hot', S.announcementUnread);
   announcementButton.setAttribute('aria-label', S.announcementUnread ? '새 마을 공지 확인' : '마을 공지 확인');
+  $('#open-wrap').hidden = !wrapReady();
+  if (wrapReady() && !S.wrapShown && !modalOpen() && !S.busy) { S.wrapShown = true; openModal('wrap'); }
   const duel = activeOrRecentDuel();
   $('#bonk-btn').disabled = duel?.status === 'active' && Date.now() < S.duelReadyUntil;
   $('#open-duel').hidden = S.mode !== 'firebase';
@@ -4055,6 +4094,7 @@ function openModal(id) {
   }
   if (id === 'announcement') { S.announcementUnread = false; renderAnnouncement(); renderHud(); }
   if (id === 'note') renderNote();
+  if (id === 'wrap') { showWrapTab('cert'); void loadWrap(); }
   if (id === 'sound') renderSound();
   $(`#${id}`).hidden = false;
   if (!modalOpenedAt.has(id)) {
@@ -4063,6 +4103,54 @@ function openModal(id) {
   }
   keys.clear();
   if (id !== 'intro') $(`#${id} .pbtn`).focus();
+}
+// 10/31 이벤트 결산: 수료증과 내 리포트는 본인 것만 API로 받고, 마을 리포트는 모두 같은 정적 이미지다.
+const wrapReady = () => S.mode === 'firebase' && eventState() === 'ended' && Boolean(S.event?.results);
+const WRAP_NAMES = { cert: '수료증', mine: '내-리포트' };
+function loadWrap() {
+  S.wrapLoad ??= (async () => {
+    const token = await S.account.auth.currentUser.getIdToken();
+    for (const kind of ['cert', 'mine']) {
+      const response = await fetch(`/api/game/wrap?kind=${kind}`, { headers: { authorization: `Bearer ${token}` } });
+      if (response.ok) {
+        S.wrapBlobs[kind] = await response.blob();
+        $(`#wr-${kind}-img`).src = URL.createObjectURL(S.wrapBlobs[kind]);
+      } else if (response.status !== 404) throw new Error(`wrap ${response.status}`);
+      $(`#wr-${kind}-img`).hidden = $(`[data-wrap-save="${kind}"]`).hidden = !response.ok;
+      $(`#wr-${kind}-note`).hidden = response.ok;
+      $(`#wr-${kind}-note`).textContent = '10/31 이벤트 기록이 없어 만들어진 이미지가 없어요.';
+    }
+  })().catch(() => {
+    S.wrapLoad = null;
+    for (const kind of ['cert', 'mine']) $(`#wr-${kind}-note`).textContent = '이미지를 받지 못했어요. 닫았다가 다시 열어 주세요.';
+  });
+  return S.wrapLoad;
+}
+// 휴대폰은 공유 창에서 '이미지 저장'으로 사진첩에 넣을 수 있게 하고, 공유를 못 쓰면 파일로 내려받는다.
+async function saveWrapImage(key) {
+  try {
+    const blob = S.wrapBlobs[key] || await fetch(`/report/${key}.png`).then((response) => {
+      if (!response.ok) throw new Error(`report ${response.status}`);
+      return response.blob();
+    });
+    const name = `우아한-trick-or-treat-${WRAP_NAMES[key] || `마을-리포트-${key}`}.png`;
+    const file = new File([blob], name, { type: 'image/png' });
+    if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; }
+      catch (error) { if (error.name === 'AbortError') return; }
+    }
+    const url = URL.createObjectURL(blob);
+    const link = Object.assign(document.createElement('a'), { href: url, download: name });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch { toast('이미지를 저장하지 못했어요. 이미지를 길게 눌러 저장해 주세요.'); }
+}
+function showWrapTab(tab) {
+  for (const button of document.querySelectorAll('[data-wrap-tab]')) button.setAttribute('aria-pressed', String(button.dataset.wrapTab === tab));
+  for (const pane of ['cert', 'mine', 'report']) $(`#wr-${pane}`).hidden = tab !== pane;
+  $('#wrap .sheet').scrollTop = 0;
 }
 function closeModal(id) {
   $(`#${id}`).hidden = true;
@@ -4273,6 +4361,9 @@ document.addEventListener('click', (e) => {
   else if (t.id === 'open-home') void goHome();
   else if (t.id === 'open-rank' || t.id === 'board-open') openModal('rank');
   else if (t.id === 'open-crew') openModal('crew');
+  else if (t.id === 'open-wrap') openModal('wrap');
+  else if (t.dataset.wrapTab) showWrapTab(t.dataset.wrapTab);
+  else if (t.dataset.wrapSave) void saveWrapImage(t.dataset.wrapSave);
   else if (t.id === 'open-admin' && S.isOwner) openModal('admin');
   else if (t.id === 'open-announcement') openModal('announcement');
   else if (t.id === 'ad-announcement-publish') adminAnnouncementAction('publish').catch((error) => toast(error.message));
@@ -5004,6 +5095,7 @@ async function logoutAccount() {
     modalOpenedAt.clear();
     for (const id of MODALS) if (id !== 'auth') $(`#${id}`).hidden = true;
     S.me = null;
+    Object.assign(S, { wrapShown: false, wrapLoad: null, wrapBlobs: {} });
     S.players = {};
     S.names = {};
     S.accountProfile = null;
