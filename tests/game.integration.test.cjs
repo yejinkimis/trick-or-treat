@@ -984,3 +984,41 @@ test('leaving enforces the server five-second boundary, preserves levels and set
     await act(owner, { type: 'event-stop' });
   }
 });
+
+test('wrap API returns only the signed-in player\'s own result image', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { randomBytes } = require('node:crypto');
+  const wrapApi = require('../api/game/wrap.js');
+  const { wrapFileName, sealWrap } = require('../server/wrap-service.cjs');
+  const [owner, stranger] = await Promise.all(['결산', '결산외'].map(player));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-'));
+  const key = randomBytes(32);
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+  fs.writeFileSync(path.join(dir, wrapFileName(key, owner.uid, 'cert')), sealWrap(key, png));
+  process.env.GAME_WRAP_DIR = dir;
+  const call = async (kind, authorization) => {
+    const res = { headers: {}, setHeader(name, value) { this.headers[name] = value; }, end(body) { this.body = body; } };
+    await wrapApi({ method: 'GET', url: `/api/game/wrap?kind=${kind}`, headers: authorization ? { authorization } : {} }, res);
+    return res;
+  };
+  try {
+    delete process.env.GAME_WRAP_KEY;
+    assert.equal((await call('cert', owner.authorization)).statusCode, 503);
+    process.env.GAME_WRAP_KEY = key.toString('base64');
+    const mine = await call('cert', owner.authorization);
+    assert.equal(mine.statusCode, 200);
+    assert.equal(mine.headers['content-type'], 'image/png');
+    assert.equal(mine.headers['cache-control'], 'private, no-store');
+    assert.deepEqual(mine.body, png);
+    assert.equal((await call('cert', stranger.authorization)).statusCode, 404);
+    assert.equal((await call('mine', owner.authorization)).statusCode, 404);
+    assert.equal((await call('cert')).statusCode, 401);
+    assert.equal((await call('../cert', owner.authorization)).statusCode, 400);
+  } finally {
+    delete process.env.GAME_WRAP_DIR;
+    delete process.env.GAME_WRAP_KEY;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

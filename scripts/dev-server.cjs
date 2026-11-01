@@ -23,6 +23,7 @@ const api = new Map([
   ['/api/game/action', require('../api/game/action.js')],
   ['/api/game/leaderboard', require('../api/game/leaderboard.js')],
   ['/api/game/admin', require('../api/game/admin.js')],
+  ['/api/game/wrap', require('../api/game/wrap.js')],
 ]);
 
 const server = http.createServer((req, res) => {
@@ -46,6 +47,13 @@ const server = http.createServer((req, res) => {
     const html = fs.readFileSync(htmlPath, 'utf8').replace('<!-- POSTHOG_ANALYTICS -->',
       analyticsBundle ? '<script src="/analytics.js"></script>' : '');
     res.end(html);
+    return;
+  }
+
+  const report = /^\/report\/([\w-]+\.png)$/.exec(pathname);
+  if (req.method === 'GET' && report && fs.existsSync(path.join(root, 'report', report[1]))) {
+    res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-store' });
+    res.end(fs.readFileSync(path.join(root, 'report', report[1])));
     return;
   }
 

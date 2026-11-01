@@ -54,6 +54,14 @@ function send(res, status, value, cacheControl = 'no-store, max-age=0') {
   res.end(JSON.stringify(value));
 }
 
+function sendBytes(res, status, bytes, contentType, cacheControl = 'no-store, max-age=0') {
+  res.statusCode = status;
+  res.setHeader('content-type', contentType);
+  res.setHeader('cache-control', cacheControl);
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.end(bytes);
+}
+
 function apiHandler(methods, run, deadlineMs = DEADLINE_MS) {
   return async (req, res) => {
     if (!methods.includes(req.method)) {
@@ -62,6 +70,7 @@ function apiHandler(methods, run, deadlineMs = DEADLINE_MS) {
     }
     try {
       const result = await withDeadline(run(req), deadlineMs);
+      if (Buffer.isBuffer(result.body)) return sendBytes(res, result.status || 200, result.body, result.contentType, result.cacheControl);
       return send(res, result.status || 200, result.body, result.cacheControl);
     } catch (error) {
       if (error instanceof AuthError) return send(res, error.status, { error: error.code, message: error.message });

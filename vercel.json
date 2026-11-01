@@ -2,7 +2,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": null,
-  "regions": ["icn1"],
+  "regions": [
+    "icn1"
+  ],
   "git": {
     "deploymentEnabled": {
       "main": true,
@@ -11,6 +13,15 @@
     }
   },
   "redirects": [
-    { "source": "/prototype/trick-or-treat.html", "destination": "/", "permanent": false }
-  ]
+    {
+      "source": "/prototype/trick-or-treat.html",
+      "destination": "/",
+      "permanent": false
+    }
+  ],
+  "functions": {
+    "api/game/wrap.js": {
+      "includeFiles": "wrap/**"
+    }
+  }
 }
